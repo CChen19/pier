@@ -15,7 +15,17 @@
  *  - tool-result details persist in session JSONL, and getBranch() replay implements branch rollback.
  */
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { Type } from 'typebox';
+import {
+  ASK_PARAMETERS,
+  ASK_PROMPT_GUIDELINES,
+  ASK_TOOL_DESCRIPTION,
+  ASK_TOOL_NAME,
+  gateLabel,
+  hasAskUi,
+  noUiResult,
+  prepareAsk,
+  runAsk,
+} from './ask-user.ts';
 import { pipeNameFor, pipeRequest, startPipeServer } from './pipe-channel.ts';
 import {
   TODO_EDIT_CUSTOM_TYPE,
@@ -434,36 +444,24 @@ export default async function (pi: ExtensionAPI) {
   /* ── Tool: ask_user_question (v1.3 M8 human gate, available to master and subagents) ── */
 
   pi.registerTool({
-    name: 'ask_user_question',
+    name: ASK_TOOL_NAME,
     label: 'Ask User',
-    description: [
-      'Ask the human a question and wait for their typed answer.',
-      'Use this when you genuinely need a human decision (approval, direction, trade-off choice) — not for information you can find yourself.',
-      'While waiting, the pane shows as blocked in herdr (the human sees it and can step in).',
-      'The answer comes back as the tool result; then continue your work.',
-    ].join(' '),
-    parameters: Type.Object({
-      question: Type.String({ description: 'The question to ask the human' }),
-    }),
-    async execute(_tc, params, _sig, _upd, ctx) {
-      const question = String(params?.question ?? '').trim();
-      if (!question) {
-        return { content: [{ type: 'text', text: 'Error: `question` must be a non-empty string' }], details: {} };
-      }
-      const ui = (ctx as {
-        ui?: { input?: (title: string, placeholder?: string) => Promise<string | undefined> };
-      }).ui;
-      publishHerdrBlocked(true, question);
+    description: ASK_TOOL_DESCRIPTION,
+    promptGuidelines: ASK_PROMPT_GUIDELINES,
+    parameters: ASK_PARAMETERS,
+    async execute(_tc, params, signal, _upd, ctx) {
+      const prepared = prepareAsk(params);
+      if (!prepared.ok) return prepared.result;
+      const ui = ctx && typeof ctx === 'object' && 'ui' in ctx ? ctx.ui : undefined;
+      if (!hasAskUi(ui)) return noUiResult();
+      const label = gateLabel(prepared.spec);
+      publishHerdrBlocked(true, label);
       // Fallback when herdr:pi is absent: a one-shot pi-herdr blocked report can lose
       // to later working reports; refresh while the gate is open. Do not re-emit
       // herdr:blocked here — official blockedCount is edge-triggered.
-      const hb = setInterval(() => { reportAgent('blocked', question); }, 5000);
+      const hb = setInterval(() => { reportAgent('blocked', label); }, 5000);
       try {
-        const answer = await ui?.input?.(question, 'your answer');
-        return {
-          content: [{ type: 'text', text: `The human answered: ${answer ?? '(no answer given)'}` }],
-          details: { question, answer: answer ?? null },
-        };
+        return await runAsk(prepared.spec, ui, signal instanceof AbortSignal ? signal : undefined);
       } finally {
         clearInterval(hb);
         publishHerdrBlocked(false, null);

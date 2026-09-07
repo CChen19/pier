@@ -90,7 +90,7 @@ Call: `subagent(action: "resume", taskId: "<uuid>")`
 
 ## 3. Human gate
 
-- For a human decision (approval, tradeoff, direction), use `ask_user_question` (this plugin). While waiting, your pane is **blocked** in herdr so the human can see and intervene. The answer comes back as the tool result, then you continue.
+- For a human decision (approval, tradeoff, direction), use `ask_user_question` (this plugin). Prefer 2-5 options with short labels and tradeoffs in `description`. Do **not** author an "Other" option — the UI appends "Other (type your own)". Use `recommended` (0-based) for the default and `questions` to batch related decisions (max 4). While waiting, your pane is **blocked** in herdr so the human can see and intervene. The answer comes back as the tool result, then you continue.
 - A human can enter a subagent pane directly. Write the delegation `description` (pane label) so a human understands it at a glance.
 
 ## 4. Multi-agent engineering rules

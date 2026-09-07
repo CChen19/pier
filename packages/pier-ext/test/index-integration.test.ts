@@ -179,7 +179,7 @@ test('ask_user_question emits herdr:blocked once around ui.input (official herdr
 
   resolveInput!('ok');
   const result = await running as { content: Array<{ text: string }> };
-  assert.match(result.content[0]?.text ?? '', /The human answered: ok/);
+  assert.match(result.content[0]?.text ?? '', /"deploy staging\?"="ok"/);
 
   const all = pi.events.emitted.filter((e) => e.channel === 'herdr:blocked');
   assert.equal(all.length, 2);
@@ -195,6 +195,97 @@ test('ask_user_question empty question does not emit herdr:blocked', withCleanup
     ui: { input: async () => 'nope' },
   }) as { content: Array<{ text: string }> };
   assert.match(result.content[0]?.text ?? '', /must be a non-empty string/);
+  assert.equal(pi.events.emitted.filter((e) => e.channel === 'herdr:blocked').length, 0);
+}));
+
+test('ask_user_question reserved Other does not emit herdr:blocked', withCleanup(async (cleanup) => {
+  const pi = await workerPier(cleanup);
+  const exec = pi.tools.get('ask_user_question')?.execute;
+  assert.ok(exec);
+  const result = await exec!({}, {
+    question: 'Which database?',
+    options: [
+      { label: 'Redis', description: 'mem' },
+      { label: 'Other', description: 'typed' },
+    ],
+  }, undefined, undefined, {
+    ui: { input: async () => 'nope' },
+  }) as { content: Array<{ text: string }>; details: { error?: string } };
+  assert.equal(result.details.error, 'reserved_label');
+  assert.equal(pi.events.emitted.filter((e) => e.channel === 'herdr:blocked').length, 0);
+}));
+
+test('ask_user_question options path emits herdr:blocked once around select', withCleanup(async (cleanup) => {
+  const pi = await workerPier(cleanup);
+  const exec = pi.tools.get('ask_user_question')?.execute;
+  assert.ok(exec);
+  let resolveSelect: ((value: string) => void) | undefined;
+  const select = new Promise<string>((resolve) => { resolveSelect = resolve; });
+  const running = exec!({}, {
+    question: 'Which database?',
+    options: [
+      { label: 'Redis', description: 'mem' },
+      { label: 'Postgres', description: 'rel' },
+    ],
+  }, undefined, undefined, {
+    ui: {
+      select: async (_title: string, options: string[]) => {
+        await select;
+        return options[0];
+      },
+      input: async () => { throw new Error('input must not run for an authored pick'); },
+    },
+  });
+  const blocked = pi.events.emitted.filter((e) => e.channel === 'herdr:blocked');
+  assert.equal(blocked.length, 1);
+  assert.deepEqual(blocked[0]?.data, { active: true, label: 'Which database?' });
+  resolveSelect!('first');
+  const result = await running as { content: Array<{ text: string }>; details: { cancelled: boolean } };
+  assert.equal(result.details.cancelled, false);
+  assert.match(result.content[0]?.text ?? '', /"Which database\?"="Redis"/);
+  const all = pi.events.emitted.filter((e) => e.channel === 'herdr:blocked');
+  assert.equal(all.length, 2);
+  assert.deepEqual(all[1]?.data, { active: false });
+}));
+
+test('ask_user_question questions batch keeps one herdr:blocked around both selects', withCleanup(async (cleanup) => {
+  const pi = await workerPier(cleanup);
+  const exec = pi.tools.get('ask_user_question')?.execute;
+  assert.ok(exec);
+  let selects = 0;
+  const running = exec!({}, {
+    questions: [
+      { question: 'Cache?', options: [{ label: 'Redis', description: 'mem' }, { label: 'Memcached', description: 'dist' }] },
+      { question: 'SQL?', options: [{ label: 'Postgres', description: 'rel' }, { label: 'SQLite', description: 'file' }] },
+    ],
+  }, undefined, undefined, {
+    ui: {
+      select: async (_title: string, options: string[]) => {
+        selects += 1;
+        const mid = pi.events.emitted.filter((e) => e.channel === 'herdr:blocked');
+        assert.equal(mid.length, 1, 'gate stays open between questions');
+        return options[0];
+      },
+      input: async () => { throw new Error('input must not run'); },
+    },
+  });
+  const result = await running as { content: Array<{ text: string }> };
+  assert.equal(selects, 2);
+  assert.match(result.content[0]?.text ?? '', /"Cache\?"="Redis"/);
+  assert.match(result.content[0]?.text ?? '', /"SQL\?"="Postgres"/);
+  const all = pi.events.emitted.filter((e) => e.channel === 'herdr:blocked');
+  assert.equal(all.length, 2);
+}));
+
+test('ask_user_question without ui does not emit herdr:blocked', withCleanup(async (cleanup) => {
+  const pi = await workerPier(cleanup);
+  const exec = pi.tools.get('ask_user_question')?.execute;
+  assert.ok(exec);
+  const result = await exec!({}, { question: 'deploy staging?' }, undefined, undefined, {}) as {
+    content: Array<{ text: string }>;
+    details: { error?: string };
+  };
+  assert.equal(result.details.error, 'no_ui');
   assert.equal(pi.events.emitted.filter((e) => e.channel === 'herdr:blocked').length, 0);
 }));
 

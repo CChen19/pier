@@ -1,0 +1,408 @@
+/**
+ * ask_user_question I/O: normalize params, select+Other dialog, result envelope.
+ *
+ * Why: the herdr gate (blocked / pi-ask / widget collapse) stays in index.ts.
+ * This module is the questionnaire — authored options plus a runtime Other row —
+ * so the model cannot forget a free-text escape and Esc is a real decline.
+ */
+import { Type } from 'typebox';
+
+export const ASK_TOOL_NAME = 'ask_user_question';
+export const OTHER_OPTION = 'Other (type your own)';
+export const OTHER_ANSWER = 'Other';
+export const RECOMMENDED_SUFFIX = ' (Recommended)';
+export const MIN_OPTIONS = 2;
+export const MAX_OPTIONS = 5;
+export const MAX_QUESTIONS = 4;
+export const MAX_LABEL_CHARS = 60;
+
+export const DECLINE_TEXT =
+  'User declined to answer the questions. Continue with your best judgment, or ask different questions.';
+export const NO_UI_TEXT =
+  'Error: UI not available (running in non-interactive mode). The user never saw the questions — do NOT treat this as a decline. Ask the questions as plain chat text instead, without using this tool.';
+
+const CUSTOM_ANSWER_TITLE = 'Type your answer:';
+const MULTI_INSTRUCTIONS =
+  'Enter the numbers of all that apply, comma-separated (e.g. "1,3"), or type a custom answer as plain text.';
+const NUMBERED_HINT = 'Enter a number, or type a custom answer.';
+
+const RESERVED_LOWER: Record<string, true> = {
+  [OTHER_OPTION.toLowerCase()]: true,
+  other: true,
+  'type something.': true,
+  next: true,
+  'next →': true,
+};
+
+const OptionSchema = Type.Object({
+  label: Type.String({ description: 'Short display label (1-5 words)' }),
+  description: Type.Optional(Type.String({ description: 'Tradeoff / meaning of this choice' })),
+});
+
+export const ASK_PARAMETERS = Type.Object({
+  question: Type.Optional(Type.String({ description: 'The question to ask the human. Required unless questions is set.' })),
+  options: Type.Optional(Type.Array(OptionSchema, {
+    description: '2-5 authored choices. Do NOT include Other; the UI appends it.',
+  })),
+  multi: Type.Optional(Type.Boolean({ description: 'Allow multiple selections (default false)' })),
+  recommended: Type.Optional(Type.Number({ description: '0-based index of the recommended option; UI adds (Recommended)' })),
+  questions: Type.Optional(Type.Array(
+    Type.Object({
+      id: Type.Optional(Type.String({ description: 'Stable id for mapping answers' })),
+      question: Type.String({ description: 'Question text' }),
+      options: Type.Array(OptionSchema, {
+        description: '2-5 authored choices. Do NOT include Other; the UI appends it.',
+      }),
+      multi: Type.Optional(Type.Boolean({ description: 'Allow multiple selections (default false)' })),
+      recommended: Type.Optional(Type.Number({ description: '0-based recommended option index' })),
+    }),
+    { description: '1-4 related questions in one call. Wins over top-level question/options when set.' },
+  )),
+});
+
+export const ASK_TOOL_DESCRIPTION = [
+  'Ask the human a question and wait for their answer.',
+  'Use this when you genuinely need a human decision (approval, direction, trade-off) — not for information you can find yourself.',
+  'While waiting, the pane shows as blocked in herdr (the human sees it and can step in).',
+  'Prefer 2-5 options with short labels; put tradeoffs in description.',
+  'Do NOT include an "Other" option — the UI appends "Other (type your own)" automatically.',
+  'Use recommended (0-based) to mark the default; "(Recommended)" is added automatically.',
+  'Use multi: true when several options can apply. Group related questions in questions (max 4) rather than calling this tool repeatedly.',
+  'The answer comes back as the tool result; then continue your work.',
+].join(' ');
+
+export const ASK_PROMPT_GUIDELINES = [
+  'Default to action. Ask only when options have materially different tradeoffs the user must decide.',
+  'Do NOT include "Other" in options; the UI appends it.',
+  'Short option labels; explanatory tradeoffs in description.',
+];
+
+export type AskOption = { label: string; description?: string };
+export type AskQuestion = {
+  id?: string;
+  question: string;
+  options: AskOption[];
+  multi: boolean;
+  recommended?: number;
+};
+export type AskSpec =
+  | { mode: 'freeform'; question: string }
+  | { mode: 'questionnaire'; questions: AskQuestion[] };
+
+export type AskAnswer = {
+  question: string;
+  id?: string;
+  kind: 'option' | 'custom' | 'multi';
+  answer: string | null;
+  selected?: string[];
+  customInput?: string;
+};
+
+export type AskDetails = {
+  answers: AskAnswer[];
+  cancelled: boolean;
+  error?: string;
+};
+
+export type AskToolResult = {
+  content: Array<{ type: 'text'; text: string }>;
+  details: AskDetails;
+};
+
+export type AskUi = {
+  select?: (title: string, options: string[], opts?: { signal?: AbortSignal }) => Promise<string | undefined>;
+  input: (title: string, placeholder?: string, opts?: { signal?: AbortSignal }) => Promise<string | undefined>;
+};
+
+export type PrepareAskResult =
+  | { ok: true; spec: AskSpec }
+  | { ok: false; result: AskToolResult };
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function fail(text: string, code: string): { ok: false; result: AskToolResult } {
+  return { ok: false, result: errorResult(text, code) };
+}
+
+function errorResult(text: string, code: string): AskToolResult {
+  return {
+    content: [{ type: 'text', text }],
+    details: { answers: [], cancelled: true, error: code },
+  };
+}
+
+function okResult(details: AskDetails): AskToolResult {
+  return {
+    content: [{ type: 'text', text: formatAskContent(details) }],
+    details,
+  };
+}
+
+export function noUiResult(): AskToolResult {
+  return errorResult(NO_UI_TEXT, 'no_ui');
+}
+
+export function hasAskUi(ui: unknown): ui is AskUi {
+  return typeof (ui as { input?: unknown } | null | undefined)?.input === 'function';
+}
+
+function parseRecommended(raw: unknown, count: number): number | undefined {
+  if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 0 || raw >= count) return undefined;
+  return raw;
+}
+
+function parseOptions(raw: unknown): { ok: true; options: AskOption[] } | { ok: false; result: AskToolResult } {
+  if (!Array.isArray(raw)) {
+    return fail('Error: `options` must be an array of 2-5 choices', 'empty_options');
+  }
+  if (raw.length < MIN_OPTIONS) {
+    return fail(`Error: each question needs ${MIN_OPTIONS}-${MAX_OPTIONS} options`, 'empty_options');
+  }
+  if (raw.length > MAX_OPTIONS) {
+    return fail(`Error: each question needs ${MIN_OPTIONS}-${MAX_OPTIONS} options`, 'too_many_options');
+  }
+  const options: AskOption[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    const rec = asRecord(item);
+    const label = typeof rec?.label === 'string' ? rec.label.trim() : '';
+    if (!label) return fail('Error: each option needs a non-empty label', 'empty_options');
+    if (label.length > MAX_LABEL_CHARS) {
+      return fail(`Error: option label exceeds ${MAX_LABEL_CHARS} characters`, 'label_too_long');
+    }
+    if (RESERVED_LOWER[label.toLowerCase()]) {
+      return fail(
+        `Error: option label "${label}" is reserved — the UI appends "${OTHER_OPTION}" automatically`,
+        'reserved_label',
+      );
+    }
+    if (seen.has(label)) {
+      return fail(`Error: duplicate option label "${label}"`, 'duplicate_option_label');
+    }
+    seen.add(label);
+    const description = typeof rec?.description === 'string' ? rec.description.replace(/\s+/g, ' ').trim() : '';
+    options.push(description ? { label, description } : { label });
+  }
+  return { ok: true, options };
+}
+
+function parseQuestion(raw: unknown): { ok: true; question: AskQuestion } | { ok: false; result: AskToolResult } {
+  const rec = asRecord(raw);
+  if (!rec) return fail('Error: each questions[] entry must be an object', 'empty_question');
+  const question = typeof rec.question === 'string' ? rec.question.trim() : '';
+  if (!question) return fail('Error: `question` must be a non-empty string', 'empty_question');
+  const parsed = parseOptions(rec.options);
+  if (!parsed.ok) return parsed;
+  const recommended = parseRecommended(rec.recommended, parsed.options.length);
+  const id = typeof rec.id === 'string' && rec.id.trim() ? rec.id.trim() : undefined;
+  return {
+    ok: true,
+    question: {
+      question,
+      options: parsed.options,
+      multi: rec.multi === true,
+      ...(id ? { id } : {}),
+      ...(recommended !== undefined ? { recommended } : {}),
+    },
+  };
+}
+
+export function prepareAsk(params: unknown): PrepareAskResult {
+  const rec = asRecord(params);
+  if (!rec) return fail('Error: `question` must be a non-empty string', 'empty_question');
+
+  if ('questions' in rec && rec.questions !== undefined) {
+    if (!Array.isArray(rec.questions)) {
+      return fail('Error: `questions` must be an array of 1-4 questions', 'no_questions');
+    }
+    if (rec.questions.length < 1) {
+      return fail('Error: `questions` must contain 1-4 entries', 'no_questions');
+    }
+    if (rec.questions.length > MAX_QUESTIONS) {
+      return fail('Error: `questions` must contain 1-4 entries', 'too_many_questions');
+    }
+    const questions: AskQuestion[] = [];
+    const seen = new Set<string>();
+    for (const item of rec.questions) {
+      const parsed = parseQuestion(item);
+      if (!parsed.ok) return parsed;
+      if (seen.has(parsed.question.question)) {
+        return fail(`Error: duplicate question "${parsed.question.question}"`, 'duplicate_question');
+      }
+      seen.add(parsed.question.question);
+      questions.push(parsed.question);
+    }
+    return { ok: true, spec: { mode: 'questionnaire', questions } };
+  }
+
+  const question = typeof rec.question === 'string' ? rec.question.trim() : '';
+  if (!question) return fail('Error: `question` must be a non-empty string', 'empty_question');
+  if (rec.options === undefined) {
+    return { ok: true, spec: { mode: 'freeform', question } };
+  }
+  const parsed = parseOptions(rec.options);
+  if (!parsed.ok) return parsed;
+  const recommended = parseRecommended(rec.recommended, parsed.options.length);
+  return {
+    ok: true,
+    spec: {
+      mode: 'questionnaire',
+      questions: [{
+        question,
+        options: parsed.options,
+        multi: rec.multi === true,
+        ...(recommended !== undefined ? { recommended } : {}),
+      }],
+    },
+  };
+}
+
+export function gateLabel(spec: AskSpec): string {
+  if (spec.mode === 'freeform') return spec.question;
+  const first = spec.questions[0]?.question ?? '';
+  const extra = spec.questions.length - 1;
+  return extra > 0 ? `${first} (+${extra})` : first;
+}
+
+export function formatAuthoredLine(option: AskOption, index: number, recommended?: number): string {
+  const rec = recommended === index ? RECOMMENDED_SUFFIX : '';
+  const desc = option.description ? ` — ${option.description}` : '';
+  return `${index + 1}. ${option.label}${rec}${desc}`;
+}
+
+export function optionLines(question: AskQuestion): string[] {
+  const lines = question.options.map((option, i) => formatAuthoredLine(option, i, question.recommended));
+  lines.push(`${question.options.length + 1}. ${OTHER_OPTION}`);
+  return lines;
+}
+
+export function parseChoice(chosen: string, lines: readonly string[]): number | null {
+  const trimmed = chosen.trim();
+  const exact = lines.indexOf(trimmed);
+  if (exact >= 0) return exact;
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!Number.isFinite(parsed)) return null;
+  const idx = parsed - 1;
+  return idx >= 0 && idx < lines.length ? idx : null;
+}
+
+function withId(question: AskQuestion, answer: AskAnswer): AskAnswer {
+  return question.id ? { ...answer, id: question.id } : answer;
+}
+
+async function askSingle(ui: AskUi, question: AskQuestion, signal?: AbortSignal): Promise<AskAnswer | undefined> {
+  const lines = optionLines(question);
+  const opts = signal ? { signal } : undefined;
+  const chosen = ui.select
+    ? await ui.select(question.question, lines, opts)
+    : await ui.input(`${question.question}\n\n${lines.join('\n')}\n\n${NUMBERED_HINT}`, '1', opts);
+  if (chosen == null) return undefined;
+  const trimmed = chosen.trim();
+  if (!trimmed) return undefined;
+  const idx = parseChoice(trimmed, lines);
+  if (idx != null && idx < question.options.length) {
+    return withId(question, {
+      question: question.question,
+      kind: 'option',
+      answer: question.options[idx]!.label,
+    });
+  }
+  if (idx === question.options.length) {
+    const typed = await ui.input(`${question.question}\n\n${CUSTOM_ANSWER_TITLE}`, '', opts);
+    if (typed == null || !typed.trim()) return undefined;
+    return withId(question, {
+      question: question.question,
+      kind: 'custom',
+      answer: OTHER_ANSWER,
+      customInput: typed.trim(),
+    });
+  }
+  if (!ui.select) {
+    return withId(question, {
+      question: question.question,
+      kind: 'custom',
+      answer: OTHER_ANSWER,
+      customInput: trimmed,
+    });
+  }
+  return undefined;
+}
+
+async function askMulti(ui: AskUi, question: AskQuestion, signal?: AbortSignal): Promise<AskAnswer | undefined> {
+  const list = question.options
+    .map((option, i) => formatAuthoredLine(option, i, question.recommended))
+    .join('\n');
+  const value = await ui.input(
+    `${question.question}\n\n${list}\n\n${MULTI_INSTRUCTIONS}`,
+    '1,3',
+    signal ? { signal } : undefined,
+  );
+  if (value == null) return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return withId(question, { question: question.question, kind: 'multi', answer: null, selected: [] });
+  }
+  const tokens = trimmed.split(/[,\s]+/).filter((tok) => tok.length > 0);
+  const indices = tokens.map((tok) => {
+    if (!/^\d+\.?$/.test(tok)) return null;
+    const idx = Number.parseInt(tok, 10) - 1;
+    return idx >= 0 && idx < question.options.length ? idx : null;
+  });
+  if (indices.every((i): i is number => i != null)) {
+    const selected: string[] = [];
+    for (const i of indices) {
+      const label = question.options[i]!.label;
+      if (!selected.includes(label)) selected.push(label);
+    }
+    return withId(question, { question: question.question, kind: 'multi', answer: null, selected });
+  }
+  return withId(question, {
+    question: question.question,
+    kind: 'custom',
+    answer: OTHER_ANSWER,
+    customInput: trimmed,
+  });
+}
+
+export function formatAskContent(details: AskDetails): string {
+  if (details.cancelled || details.answers.length === 0) return DECLINE_TEXT;
+  const entries = details.answers.map((answer) => {
+    if (answer.kind === 'custom' && answer.answer === OTHER_ANSWER) {
+      const notes = answer.customInput ? ` user notes: ${answer.customInput}` : '';
+      return `"${answer.question}"="${OTHER_ANSWER}"${notes}`;
+    }
+    if (answer.kind === 'multi') {
+      const labels = answer.selected?.length ? answer.selected.join(', ') : '(none)';
+      return `"${answer.question}"="${labels}"`;
+    }
+    return `"${answer.question}"="${answer.answer ?? ''}"`;
+  });
+  return `User has answered your questions: ${entries.join(', ')}. You can now continue with the user's answers in mind.`;
+}
+
+export async function runAsk(spec: AskSpec, ui: AskUi, signal?: AbortSignal): Promise<AskToolResult> {
+  if (spec.mode === 'freeform') {
+    const answer = await ui.input(spec.question, 'your answer', signal ? { signal } : undefined);
+    if (answer == null || !answer.trim()) {
+      return okResult({ answers: [], cancelled: true });
+    }
+    const trimmed = answer.trim();
+    return okResult({
+      answers: [{ question: spec.question, kind: 'custom', answer: trimmed, customInput: trimmed }],
+      cancelled: false,
+    });
+  }
+  const answers: AskAnswer[] = [];
+  for (const question of spec.questions) {
+    const answer = question.multi
+      ? await askMulti(ui, question, signal)
+      : await askSingle(ui, question, signal);
+    if (!answer) return okResult({ answers, cancelled: true });
+    answers.push(answer);
+  }
+  return okResult({ answers, cancelled: false });
+}
