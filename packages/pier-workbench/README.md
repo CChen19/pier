@@ -13,9 +13,9 @@
 ## 安装
 
 ```sh
-# 用户模式（重装即更新）
+# User mode (reinstall to update)
 herdr plugin install July24/pier/packages/pier-workbench --yes
-# 开发模式（本地 link，改码即生效）
+# Dev mode (local link, edits take effect immediately)
 herdr plugin link /path/to/pier/packages/pier-workbench   # Windows: F:\path\to\pier\packages\pier-workbench
 ```
 

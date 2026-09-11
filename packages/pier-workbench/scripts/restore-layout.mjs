@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * v1.3 M7 布局恢复（D28）：herdr 插件 [[startup]] 钩子（会话恢复 + socket 就绪后跑一次）。
- * 读 HERDR_PLUGIN_STATE_DIR/boot.jsonl（bootstrap 追加的引导记录），对每条：
- *  - tab 已消失 → workspace 还活着就 layout.apply 重建 main tab（cwd 来自记录）；
- *  - tab 在、pane 没了 → focus+split 新 pane 重灌启动命令；
- *  - pane 在且已是 pi → 跳过；pane 在但被重置（非 pi）→ 重灌启动命令。
- * one-shot：跑完退出（herdr 官方 startup 语义：不是守护进程）。
+ * v1.3 M7 layout restore (D28): herdr plugin [[startup]] hook (runs once after session restore + socket ready).
+ * Reads HERDR_PLUGIN_STATE_DIR/boot.jsonl (bootstrap records appended during workspace bootstrap); for each entry:
+ *  - tab has disappeared -> rebuild main tab via layout.apply if workspace is still alive (cwd from record);
+ *  - tab exists but pane is gone -> focus + split a new pane and reinject launch command;
+ *  - pane exists and is already pi -> skip; pane exists but was reset (non-pi) -> reinject launch command.
+ * one-shot: exits after running (official herdr startup semantics: not a persistent daemon).
  */
 import * as net from 'node:net';
 import * as fs from 'node:fs';
@@ -15,10 +15,10 @@ import { fileURLToPath } from 'node:url';
 
 const SOCKET = process.env.HERDR_SOCKET_PATH;
 const here = path.dirname(fileURLToPath(import.meta.url));
-// 与 bootstrap 同约定：~/.pi/agent/herdr-pi/boot.jsonl（实测 HERDR_PLUGIN_STATE_DIR 未注入）。
+// Same convention as bootstrap: ~/.pi/agent/herdr-pi/boot.jsonl (empirically confirmed HERDR_PLUGIN_STATE_DIR was not injected).
 const BOOT_FILE = path.join(os.homedir(), '.pi', 'agent', 'herdr-pi', 'boot.jsonl');
 
-// 配置解析与 bootstrap 同约定：HERDR_PLUGIN_CONFIG_DIR（用户模式）→ scripts/（dev 模式）。
+// Config resolution follows same convention as bootstrap: HERDR_PLUGIN_CONFIG_DIR (user mode) -> scripts/ (dev mode).
 let config = null;
 try {
   const candidates = [
@@ -26,7 +26,7 @@ try {
     path.join(here, 'boot-config.json'),
   ].filter(Boolean);
   for (const f of candidates) {
-    try { config = JSON.parse(fs.readFileSync(f, 'utf8')); break; } catch { /* 下一处 */ }
+    try { config = JSON.parse(fs.readFileSync(f, 'utf8')); break; } catch { /* next candidate */ }
   }
   if (!config) throw new Error('no boot-config.json in HERDR_PLUGIN_CONFIG_DIR or scripts/');
 } catch (e) {
@@ -73,7 +73,7 @@ function readBootRecords() {
   }
 }
 
-/** 深度优先找第一个字符串字段（herdr 信封形状多样，id 位置不一；取代 JSON 正则）。 */
+/** Depth-first search for the first matching string field (handles diverse herdr envelope shapes where ID positions vary; replaces regex parsing). */
 function deepFindId(obj, key, depth = 0) {
   if (!obj || typeof obj !== 'object' || depth > 6) return null;
   if (typeof obj[key] === 'string') return obj[key];
@@ -84,7 +84,7 @@ function deepFindId(obj, key, depth = 0) {
   return null;
 }
 
-/** master 启动 argv（D97：默认 fullscreen，PI_HERDR_TUI=regular 逃生）。 */
+/** Master launch argv (D97: default fullscreen; PI_HERDR_TUI=regular escape hatch). */
 function masterCommand() {
   const parts = [config.piNode, config.piCli];
   if (process.env.PI_HERDR_TUI !== 'regular') parts.push('--tui-mode', 'fullscreen');
@@ -93,7 +93,7 @@ function masterCommand() {
 }
 
 async function relaunchInPane(paneId) {
-  // 裸 argv → 平台 shell 语法（win32=PowerShell `&`+`''` 转义，POSIX=sh 单引号 `'\''` 转义）
+  // Raw argv -> platform shell syntax (win32=PowerShell `&`+`''` escaping, POSIX=sh single-quote `'\''` escaping)
   const quote = (s) => (process.platform === 'win32' ? `'${s.replace(/'/g, "''")}'` : `'${s.replace(/'/g, `'\\''`)}'`);
   const launch = (process.platform === 'win32' ? '& ' : '') + masterCommand().map(quote).join(' ');
   await request('pane.send_text', { pane_id: paneId, text: launch + '\r' });
@@ -107,17 +107,18 @@ async function main() {
   for (const rec of records) {
     const wsPanes = panes.filter((p) => p.workspace_id === rec.workspace_id);
     let tab = null;
-    try { tab = (await request('tab.get', { tab_id: rec.tab_id }))?.tab ?? null; } catch { /* tab 没了 */ }
+    try { tab = (await request('tab.get', { tab_id: rec.tab_id }))?.tab ?? null; } catch { /* tab gone */ }
 
     if (!tab) {
-      // 主 tab 消失：workspace 还活着就重建（关最后一个 tab 会连 workspace 一起关，故仅剩重建路径）
+      // Main tab disappeared: rebuild if workspace is still alive (closing the last tab closes the workspace, so rebuild is the only remaining path)
       let ws = null;
-      try { ws = (await request('workspace.get', { workspace_id: rec.workspace_id }))?.workspace ?? null; } catch { /* ws 没了 */ }
+      try { ws = (await request('workspace.get', { workspace_id: rec.workspace_id }))?.workspace ?? null; } catch { /* workspace gone */ }
       if (!ws) { console.log(`[restore-layout] ws ${rec.workspace_id} gone; skip`); continue; }
       const cwd = rec.cwd || process.cwd();
       let created = null;
       try {
         created = await request('layout.apply', {
+          workspace_id: rec.workspace_id,
           tab_label: config.mainTabLabel,
           root: { type: 'pane', command: masterCommand(), cwd },
         });
@@ -131,7 +132,7 @@ async function main() {
 
     const paneAlive = wsPanes.some((p) => p.pane_id === rec.pane_id);
     if (!paneAlive) {
-      // tab 在、pane 没了 → 新 pane 重灌
+      // Tab exists, pane is gone -> reinject into new pane
       const anchor = wsPanes.find((p) => p.tab_id === rec.tab_id);
       if (!anchor) continue;
       try {
@@ -146,7 +147,7 @@ async function main() {
       continue;
     }
 
-    // pane 活着：没跑 pi（被重置成 shell）→ 重灌
+    // Pane is alive: not running pi (reset to raw shell) -> reinject
     const p = wsPanes.find((x) => x.pane_id === rec.pane_id);
     const isPi = p?.agent === 'pi' || (typeof p?.title === 'string' && /⏳|▶/.test(p.title));
     if (!isPi) {

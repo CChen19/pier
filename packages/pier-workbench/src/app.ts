@@ -1,17 +1,17 @@
 /**
- * 档1 收尾：workbench（herdr 侧）第二棵树 —— D78 树边界=进程边界 的另半区。
+ * Tier 1 wrap-up: workbench (herdr side) second tree — the other half of D78 tree boundary = process boundary.
  *
- * 配方同 pi-herdr/bootstrap.ts（狗粮验收），但按 D81 三分法裁剪：
- * workbench 钩子脚本 = **one-shot 短命进程**（worker 原型）——裸 Context 根 +
- * 手动 mount，**无 loader/hmr/timer**（热换只属于长命的 master 进程）。
+ * Recipe follows pi-herdr/bootstrap.ts (dogfood acceptance), but trimmed down per D81 trichotomy:
+ * workbench hook scripts = **one-shot short-lived processes** (worker archetype) — bare Context root +
+ * manual mount, **no loader/hmr/timer** (hot reloading belongs only to long-lived master processes).
  *
- * 插件形态模块（src/reflow.ts 等）经服务注入拿依赖（`workbench.deps`），
- * 进程退出前 dispose——与 master 侧同一纪律。
+ * Plugin-style modules (src/reflow.ts, etc.) obtain dependencies via service injection (`workbench.deps`),
+ * and dispose before process exit — following the same discipline as the master side.
  */
 import { Context } from '@deepseek-ai/cordis';
 
 export interface WorkbenchApp {
-  /** 树根（one-shot：挂插件 → 跑完 → dispose → 退出）。 */
+  /** Root context (one-shot: mount plugins -> run to completion -> dispose -> exit). */
   root: Context;
 }
 
