@@ -41,5 +41,5 @@ test('B2 语义（gc-core 侧）：无活动预算不进 GC 判定——shouldCl
 test('B1 语义锁定：常量经环境变量可调，默认 600s（无活动窗口）', () => {
   // 源常量在模块顶层读 env；此处锁语义文档：超时基准 = 距最近活动，而非 poller 起点。
   // （pollLoop 是带 30s 切片的事件循环，单测直驱会引入真实等待——由 spawn 集成链覆盖。）
-  assert.ok(Number(process.env.PI_HERDR_SUBAGENT_TIMEOUT_MS ?? 600000) >= 600000);
+  assert.ok(Number(process.env.PIER_SUBAGENT_TIMEOUT_MS ?? 600000) >= 600000);
 });
