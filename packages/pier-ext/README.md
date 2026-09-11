@@ -45,11 +45,14 @@ The installer also verifies node / pi / herdr versions, probes local paths, and 
 | `todo_write` | Full-replacement todo list. Session JSONL is the single source of truth; correct rollback on branch switches. Projected live onto the pane title (`▶i ○p ■b ✓c (N/M) · current task`). `/todos` command to view/edit/unblock |
 | `subagent` | Delegate self-contained subtasks to an isolated pi session in its own herdr pane. Actions: `spawn` (default; foreground / parallel / background), `list`, `send`, `interrupt`, `resume` |
 | `terminal` | Persistent interactive shells in dedicated herdr panes. Actions: `open`, `send`, `read`, `signal`, `close`, `list` |
-| `ask_user_question` | Human gate: structured options plus Other; pane shows blocked in herdr while waiting |
+| `ask_user_question` | Human gate: 2-5 authored options plus a trailing free-text row (`allowOther: false` for pure choice); multiple related questions per call. A `multi: true` question opens an interactive toggle list (space toggles, `a` all, enter confirms, esc declines); pane shows blocked in herdr while waiting |
 
 ### Behaviors
 
 - **Human-in-the-loop**: every subagent is a visible, interactive TUI pane — step into it anytime to talk directly (fix bugs, take over, answer its `ask_user_question`). Blocked gates raise sidebar markers + notifications
+- **Any dialog blocks the pane**: pi's `ui_prompt_start` / `ui_prompt_end` events cover every blocking `ctx.ui` prompt, so a `confirm` / `select` / `input` / `custom` from any extension (not only pier's own ask tool) reports the pane as blocked and emits the `herdr:blocked` edge; nested gates are coalesced
+- **Role gate stops early**: a tool call denied by the role manifest returns `terminate`, so a batch whose results are all terminating ends without another model round trip
+- **Readable transcript**: pier's own session entries (todo edits, subagent/terminal registries, role manifests, soft approvals) and its reminder messages render as compact cards instead of raw JSON
 - **Soft locks**: write paths lock per-pane; conflicts warn/block instead of racing
 - **Role profiles**: built-in `master` / `worker-default`; custom roles mount from `.pi-herdr/roles/<name>.json`. Toolsets converge per role — deny rules cannot be bypassed
 - **Settlement notices folded**: background subagent completions inject between turns (max 3 shown, rest collapsed) instead of flood-filling at run end
@@ -61,7 +64,8 @@ This extension mutates the pi session even outside herdr. After `pi install npm:
 | Surface | Bare `pi` (no `HERDR_ENV`) | Inside herdr |
 |---|---|---|
 | `todo_write`, `/todos`, widget, anti-freeze, stop reminder | live | live |
-| `ask_user_question` | live (TUI select/input) | live + blocked marker |
+| `ask_user_question` | live (TUI select/input; multi questions use the toggle list) | live + blocked marker |
+| Blocked reporting for any `ctx.ui` dialog (`ui_prompt_start/end`) | live | live + blocked marker |
 | Hidden inject (`before_agent_start` todo-read; settle reminder) | live | live |
 | `subagent`, `terminal` | **not registered** | live |
 | `/locks`, write-lock on `write`/`edit` | not installed | live |
@@ -99,7 +103,7 @@ pi overwrites tools/commands by name; event listeners stack.
 ```sh
 git clone https://github.com/July24/pier && cd pier
 npm install --ignore-scripts
-npm test   # node --test, ~250 unit tests
+npm test   # node --test, ~560 unit tests
 ```
 
 See the [monorepo README](https://github.com/July24/pier) for design principles, the herdr-plugin half, and the one-shot installer.
