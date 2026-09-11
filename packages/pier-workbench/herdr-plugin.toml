@@ -132,19 +132,17 @@ platforms = ["windows"]
 command = ["powershell.exe", "-Command", "$r = $env:HERDR_PLUGIN_ROOT; if ($r.Length -gt 4 -and $r[0] -eq [char]92 -and $r[1] -eq [char]92) { $r = $r.Substring(4) }; & node ($r + '/scripts/restore-layout.mjs')"]
 
 # ── Plugin Panes: Pier Ops Dashboard (0.9.0) ────────────────────────
+# One entry only: a pane id is the entrypoint used by `herdr plugin pane open --entrypoint dashboard`,
+# and herdr rejects a manifest that declares the same id twice (verified live: "duplicate pane id").
+# Unlike the event hooks above, this command needs no HERDR_PLUGIN_ROOT rewriting — the dashboard
+# reads HERDR_SOCKET_PATH from the environment and resolves everything else from cwd (plugin root).
+# [[panes]] entries are definitions, not autostart: the pane opens only on demand.
 [[panes]]
 id = "dashboard"
 title = "Pier Dashboard"
-placement = "overlay"
-platforms = ["linux", "macos"]
+placement = "tab"
+platforms = ["linux", "macos", "windows"]
 command = ["node", "scripts/dashboard.mjs"]
-
-[[panes]]
-id = "dashboard"
-title = "Pier Dashboard"
-placement = "overlay"
-platforms = ["windows"]
-command = ["powershell.exe", "-Command", "$r = $env:HERDR_PLUGIN_ROOT; if ($r.Length -gt 4 -and $r[0] -eq [char]92 -and $r[1] -eq [char]92) { $r = $r.Substring(4) }; & node ($r + '/scripts/dashboard.mjs')"]
 
 
 # ── Link handlers: recognize pi: session links and navigate to corresponding pane (M3, skeleton) ──
