@@ -1,24 +1,24 @@
 #!/usr/bin/env node
 /**
- * pier 一键安装/卸载/更新/查版本（跨平台：macOS / Linux / Windows）。
+ * pier one-shot installer / uninstaller / updater / version inspector (cross-platform: macOS / Linux / Windows).
  *
- * 用法：
- *   node install.mjs install  [--dev] [--hmr-dev] [--force]   # 安装（默认命令，可省略 install）
- *   node install.mjs update   [--dev] [--hmr-dev]             # 原地刷新两半区到最新发行（不先卸载）
- *   node install.mjs version  [--json]                        # 本地 vs npm latest
- *   node install.mjs uninstall [--dev] [--purge]              # 卸载；--purge 连 boot-config.json 一起删
- *   node install.mjs --prepare                                # npm prepare：hooksPath + 仓库根 bin 链接
+ * Usage:
+ *   node install.mjs install  [--dev] [--hmr-dev] [--force]   # Install (default command, 'install' can be omitted)
+ *   node install.mjs update   [--dev] [--hmr-dev]             # Refresh both halves in place to latest release (no prior uninstall)
+ *   node install.mjs version  [--json]                        # Local vs npm latest
+ *   node install.mjs uninstall [--dev] [--purge]              # Uninstall; --purge deletes boot-config.json as well
+ *   node install.mjs --prepare                                # npm prepare: hooksPath + repo root bin link
  *   node install.mjs --help
  *
- * 模式：
- *   用户模式（默认）：pi install npm:pi-pier
+ * Modes:
+ *   User mode (default): pi install npm:pi-pier
  *                   + herdr plugin install July24/pier/packages/pier-workbench --yes
- *                   boot-config.json 写 herdr plugin config-dir；extPath 指向 pi 已安装的
- *                   pi-pier（~/.pi/agent/npm/...），不是 pier-setup 包内的仓库路径。
- *   --dev 开发模式：pi install <repo>/packages/pier-ext + herdr plugin link <repo>/packages/pier-workbench
- *                   （link 目录是活的，改码即生效；update 只重写 boot-config）。
- * 发行规格可用 --pi-spec= / --herdr-spec= 覆盖（npm 发布或 fork 场景）。
- * 失败语义：每步给出手动等价命令；步骤失败不阻断报告（exitCode=1）。
+ *                   boot-config.json written to herdr plugin config-dir; extPath points to pi-installed
+ *                   pi-pier (~/.pi/agent/npm/...), not the repo path inside pier-setup package.
+ *   --dev Development mode: pi install <repo>/packages/pier-ext + herdr plugin link <repo>/packages/pier-workbench
+ *                   (linked directory is live; code edits take effect immediately; update only rewrites boot-config).
+ * Distribution specs can be overridden via --pi-spec= / --herdr-spec= (for npm publish or fork scenarios).
+ * Failure semantics: Each step provides manual equivalent command; step failure does not abort reporting (exitCode=1).
  */
 import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -66,17 +66,17 @@ const command = COMMANDS.includes(argv[0]) ? argv.shift() : null;
 const flags = new Set(argv.filter((a) => (a.startsWith('--') && !a.includes('=')) || a === '-h' || a === '-v'));
 const optValue = (name) => argv.find((a) => a.startsWith(`--${name}=`))?.split('=').slice(1).join('=') ?? null;
 const dev = flags.has('--dev');
-const PI_SPEC = optValue('pi-spec') ?? 'npm:pi-pier';   // 用户模式默认 npm 发行版；--pi-spec=git:github.com/July24/pier 可跟随仓库 main
+const PI_SPEC = optValue('pi-spec') ?? 'npm:pi-pier';   // User mode defaults to npm release; --pi-spec=git:github.com/July24/pier tracks repo main
 const HERDR_SPEC = optValue('herdr-spec') ?? 'July24/pier/packages/pier-workbench';
 
 const log = (m) => console.log(m);
 const die = (m) => { console.error(`✗ ${m}`); process.exit(1); };
 
-/* ── 工具函数 ────────────────────────────────────────────────────── */
+/* ── Utility functions ────────────────────────────────────────────── */
 function which(bin) {
   try {
     const out = execFileSync(IS_WIN ? 'where' : 'which', [bin], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-    // where 可能多行（PATH 逐条命中），取第一条存在的
+    // 'where' may return multiple lines (one per PATH hit); pick the first existing line
     for (const line of out.split('\n').map((l) => l.trim()).filter(Boolean)) {
       if (existsSync(line)) return line;
     }
@@ -87,9 +87,9 @@ function which(bin) {
 }
 
 function run(cmd, args, opts = {}) {
-  // win32: npm 全局 bin 是 .cmd shim，无 shell 直接 spawn 会 ENOENT/EINVAL，须走 cmd.exe；
-  // 且 shell:true 时 Node 把 args 按空格裸拼接（不加引号），含空格的路径参数会被拆碎，故预拼接并加引号。
-  // POSIX 走原生分支，保持 execFileSync(cmd, args) 原语义。
+  // win32: npm global bin is a .cmd shim; spawning directly without shell triggers ENOENT/EINVAL, must run via cmd.exe;
+  // also when shell:true, Node concatenates args with bare spaces (unquoted), breaking path args with spaces, so pre-join and quote.
+  // POSIX uses native branch, preserving execFileSync(cmd, args) semantics.
   if (IS_WIN) {
     const cmdline = [cmd, ...args]
       .map((a) => (/[\s"]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a))
@@ -141,50 +141,50 @@ function npmLatest(name) {
   }
 }
 
-/** herdr 插件配置目录（用户模式 boot-config 落点；插件已注册才存在路径语义）。 */
+/** Herdr plugin config directory (boot-config destination in user mode; semantic path exists once plugin is registered). */
 function herdrConfigDir() {
   try { return run('herdr', ['plugin', 'config-dir', 'pier.workbench']); } catch { return null; }
 }
 
-/* ── 环境校验（install 前置） ────────────────────────────────────── */
+/* ── Environment check (pre-install) ────────────────────────────────── */
 function checkEnv() {
   const [major] = process.versions.node.split('.').map(Number);
   if (major < 22) die(`node ≥ 22 required, found ${process.versions.node}`);
   log(`✓ node ${process.versions.node}`);
   const piVersion = (() => { try { return parseVersion(run('pi', ['--version'])); } catch { return null; } })();
-  if (!piVersion || !geVersion(piVersion, [0, 84, 0])) {
-    die(`pi ≥ 0.84 required${piVersion ? `, found ${piVersion.join('.')}` : ' (pi not found or not runnable)'}. Install: npm i -g @earendil-works/pi-coding-agent`);
+  if (!piVersion || !geVersion(piVersion, [0, 84, 4])) {
+    die(`pi ≥ 0.84.4 required${piVersion ? `, found ${piVersion.join('.')}` : ' (pi not found or not runnable)'}. Install: npm i -g @earendil-works/pi-coding-agent`);
   }
   log(`✓ pi ${piVersion.join('.')}`);
   const herdrVersion = (() => { try { return parseVersion(run('herdr', ['--version'])); } catch { return null; } })();
-  if (!herdrVersion || !geVersion(herdrVersion, [0, 8, 0])) {
-    die(`herdr ≥ 0.8.0 required${herdrVersion ? `, found ${herdrVersion.join('.')}` : ' (herdr not found)'}. Install: https://herdr.dev/`);
+  if (!herdrVersion || !geVersion(herdrVersion, [0, 9, 0])) {
+    die(`herdr ≥ 0.9.0 required${herdrVersion ? `, found ${herdrVersion.join('.')}` : ' (herdr not found)'}. Install: https://herdr.dev/`);
   }
   log(`✓ herdr ${herdrVersion.join('.')}`);
   return { piVersion, herdrVersion };
 }
 
-/** pi 半区源：用户模式 git 规格，dev 模式本地目录。 */
+/** pi extension source: user mode uses git/npm spec, dev mode uses local directory. */
 const piSource = () => (dev ? EXT_DIR : PI_SPEC);
 
-/* ── boot-config 探测与写入 ──────────────────────────────────────── */
+/* ── boot-config detection and writing ────────────────────────────── */
 function probePiRuntime() {
   const piBin = which('pi');
-  // bin 是 node shim：realpath 落到 .../pi-coding-agent/dist/cli.js（npm 布局，win/posix 同构）
+  // bin is a node shim: realpath resolves to .../pi-coding-agent/dist/cli.js (npm layout, isomorphic win/posix)
   if (piBin) {
     try {
       const real = realpathSync(piBin);
       if (real.endsWith('cli.js') && existsSync(real)) {
         return { piCli: real, piNode: process.execPath };
       }
-    } catch { /* 落到兜底 */ }
+    } catch { /* fall back to fallback */ }
   }
-  // npm root -g 兜底：pi 不在 PATH（nvm shim 等）时按全局布局拼
+  // npm root -g fallback: when pi is not in PATH (e.g. nvm shim), construct from global npm layout
   try {
     const gRoot = run('npm', ['root', '-g']);
     const cand = join(gRoot, '@earendil-works', 'pi-coding-agent', 'dist', 'cli.js');
     if (existsSync(cand)) return { piCli: cand, piNode: process.execPath };
-  } catch { /* npm 不可用 */ }
+  } catch { /* npm unavailable */ }
   return null;
 }
 
@@ -192,9 +192,9 @@ function piAgentDir() {
   return process.env.PI_CODING_AGENT_DIR || join(homedir(), '.pi', 'agent');
 }
 
-/* ── 旧版 git 模式注册迁移 ──────────────────────────────────────── */
-// 早期 `pi install git:github.com/July24/pier` 的遗留注册与 npm:pi-pier 并存时，
-// 两份扩展会注册同名工具（todo_write / ask_user_question…），pi 启动即报 conflict。
+/* ── Legacy git-mode registration migration ────────────────────────── */
+// When legacy `pi install git:github.com/July24/pier` coexists with npm:pi-pier,
+// both extensions register identical tools (todo_write / ask_user_question...), causing conflict at pi launch.
 const LEGACY_GIT_SPEC = 'git:github.com/July24/pier';
 
 function registeredPiPackages() {
@@ -203,7 +203,7 @@ function registeredPiPackages() {
   } catch { return []; }
 }
 
-/** install/update 前清理旧 git 模式注册；--pi-spec 显式指定该 git 源时视为目标源，不动。 */
+/** Clean up legacy git-mode registration before install/update; if --pi-spec explicitly specifies that git source, treat it as target and keep it. */
 function removeLegacyGitRegistration() {
   if (piSource() === LEGACY_GIT_SPEC) return;
   if (!registeredPiPackages().includes(LEGACY_GIT_SPEC)) return;
@@ -284,7 +284,7 @@ function writeBootConfig(hmrDev, force) {
   const target = dev ? DEV_BOOT_CONFIG : join(herdrConfigDir() ?? die('cannot resolve herdr plugin config-dir (is pier.workbench installed?)'), 'boot-config.json');
   if (existsSync(target) && !force) {
     let existing = null;
-    try { existing = JSON.parse(readFileSync(target, 'utf8')); } catch { /* 视为损坏 */ }
+    try { existing = JSON.parse(readFileSync(target, 'utf8')); } catch { /* treated as corrupted */ }
     if (existing) {
       log(`• ${target} exists, diff (existing → new):`);
       for (const k of Object.keys(config)) {
@@ -339,7 +339,7 @@ function collectStatus() {
   };
 }
 
-/* ── 命令 ────────────────────────────────────────────────────────── */
+/* ── Commands ─────────────────────────────────────────────────────── */
 function usage() {
   log(`pier-setup — install / update / inspect pier (pi-pier + pier.workbench)
 

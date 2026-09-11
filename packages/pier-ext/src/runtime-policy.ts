@@ -12,8 +12,6 @@ export interface RuntimePolicy {
   readonly gcTickMs: number
   /** Poll interval for subagent state observation (ms) */
   readonly pollIntervalMs: number
-  /** Stale check cadence (turns) */
-  readonly staleCadenceTurns: number
   /** Settlement notice window / machine-inject grace / takeover idle (ms) */
   readonly settlementWindowMs: number
   /** Post-settle observation window before auto-consume (ms) */
@@ -22,8 +20,6 @@ export interface RuntimePolicy {
   readonly foregroundPatienceMs: number
   /** Default session TTL (seconds) */
   readonly sessionTtlSeconds: number
-  /** Terminal read maximum bytes */
-  readonly terminalReadMaxBytes: number
   /** Git operation timeout (ms) */
   readonly gitTimeoutMs: number
   /** Subagent pane pipe readiness wait (ms) */
@@ -48,12 +44,10 @@ export function createRuntimePolicy(overrides?: Partial<RuntimePolicy>): Runtime
     subagentTimeoutMs: overrides?.subagentTimeoutMs ?? parseEnvInt('PIER_SUBAGENT_TIMEOUT_MS', 600_000, 1000),
     gcTickMs: overrides?.gcTickMs ?? parseEnvInt('PIER_GC_TICK_MS', 30_000, 1000),
     pollIntervalMs: overrides?.pollIntervalMs ?? parseEnvInt('PIER_POLL_INTERVAL_MS', 30_000, 1000),
-    staleCadenceTurns: overrides?.staleCadenceTurns ?? parseEnvInt('PIER_STALE_CADENCE_TURNS', 3, 1),
     settlementWindowMs: overrides?.settlementWindowMs ?? parseEnvInt('PIER_SETTLEMENT_WINDOW_MS', 60_000, 0),
     observationWindowMs: overrides?.observationWindowMs ?? parseEnvInt('PIER_OBSERVATION_WINDOW_MS', 30_000, 0),
     foregroundPatienceMs: overrides?.foregroundPatienceMs ?? parseEnvInt('PIER_FOREGROUND_PATIENCE_MS', 300_000, 0),
     sessionTtlSeconds: overrides?.sessionTtlSeconds ?? parseEnvInt('PIER_SESSION_TTL_SECONDS', 600, 0),
-    terminalReadMaxBytes: overrides?.terminalReadMaxBytes ?? parseEnvInt('TERM_READ_MAX', 4096, 1),
     gitTimeoutMs: overrides?.gitTimeoutMs ?? parseEnvInt('PIER_GIT_TIMEOUT_MS', 10_000, 1),
     readinessTimeoutMs: overrides?.readinessTimeoutMs ?? parseEnvInt('PIER_READY_TIMEOUT_MS', 30_000, 1000),
   }

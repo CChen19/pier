@@ -12,7 +12,7 @@ id = "pier.workbench"
 name = "pier-workbench"
 version = "0.1.0"
 description = "pier × herdr 工作台融合：主 tab 引导、blocked 通知、焦点热力布局"
-min_herdr_version = "0.8.0"
+min_herdr_version = "0.9.0"
 platforms = ["linux", "macos", "windows"]
 
 # ── 事件钩子：子代理 blocked → 通知（人类闸门；M4）─────────────────

@@ -91,8 +91,8 @@ pi overwrites tools/commands by name; event listeners stack.
 ## Requirements
 
 - Node ≥ 22
-- pi ≥ 0.84 (`@earendil-works/pi-coding-agent`)
-- **herdr ≥ 0.8.0** — required for subagents / pane integration / notifications (see the IMPORTANT note above); without it only the todo loop and `ask_user_question` load
+- pi ≥ 0.84.4 (`@earendil-works/pi-coding-agent`)
+- **herdr ≥ 0.9.0** — required for subagents / pane integration / notifications (see the IMPORTANT note above); without it only the todo loop and `ask_user_question` load
 
 ## Development
 

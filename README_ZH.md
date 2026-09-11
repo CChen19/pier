@@ -30,7 +30,7 @@ pier 由**两个半区**组成，各装一处：
 - **角色档案**：`master` / `worker-default` 内置，自定义 role 按 `.pi-herdr/roles/<name>.json` 挂载；工具集按角色收敛（deny 规则不可绕过）
 - **人类闸门**：子代理 `ask_user_question` → 侧边栏 blocked 标记 + 通知；用户手动接管（ESC 打断后输入）→ 启发式检测自动暂停/归还 master 管理
 - **焦点热力布局**：聚焦 pane 原地放大（0.72 目标），blocked / ask / working / idle 按权重分大小，多余 pane 自动压成 title 条
-- **长任务生命周期（01a03c0d 复盘）**：观察超时改「无活动预算」（working 心跳续命，>10min 健康任务不再误杀）；follow_up 以 steer 间隙投递（补充契约秒级到达，不再排队整个 run）；GC 等结算通知送达再回收 pane；接管判定先归因机器注入；台账 via 标记 + closed 行 outcome 继承 + 僵尸 running 清扫；SUBS 快照哈希门控。可调：`PI_HERDR_SUBAGENT_TIMEOUT_MS`（无活动秒数）、`PI_HERDR_INJECT_GRACE_MS`、`PI_HERDR_OBSERVE_MS`
+- **长任务生命周期（01a03c0d 复盘）**：观察超时改「无活动预算」（working 心跳续命，>10min 健康任务不再误杀）；follow_up 以 steer 间隙投递（补充契约秒级到达，不再排队整个 run）；GC 等结算通知送达再回收 pane；接管判定先归因机器注入；台账 via 标记 + closed 行 outcome 继承 + 僵尸 running 清扫；SUBS 快照哈希门控。可调：`PIER_SUBAGENT_TIMEOUT_MS`（无活动毫秒数）、`PIER_SETTLEMENT_WINDOW_MS`（ms）、`PIER_OBSERVATION_WINDOW_MS`（ms）
 - **结算通知折叠**：后台子代理结算不再攒到 run 结束洪水回填——turn 间隙注入，最多 3 条逐条展示、其余折叠指路
 
 ## 安装
@@ -38,8 +38,8 @@ pier 由**两个半区**组成，各装一处：
 ### 环境要求
 
 - Node ≥ 22
-- pi ≥ 0.84（`@earendil-works/pi-coding-agent`）
-- herdr ≥ 0.8.0（macOS / Linux / Windows；Windows 为 preview beta）
+- pi ≥ 0.84.4（`@earendil-works/pi-coding-agent`）
+- herdr ≥ 0.9.0（macOS / Linux / Windows；Windows 为 preview beta）
 
 ### 一键安装（推荐）
 
@@ -151,8 +151,25 @@ docs/              # 安装手册、role 档案说明、侧边栏 role 配置
 
 ```sh
 npm install --ignore-scripts
-npm test          # node --test，278 项单测（规划器 / todo 重放 / 反冻结陈旧度 / 会话尾 / GC / 生命周期）
+npm test          # node --test，466 项单测（规划器 / todo 重放 / 反冻结陈旧度 / 会话尾 / GC / 生命周期）
 ```
+
+## 配置与环境变量
+
+运行策略与超时参数由 `runtime-policy.ts` 集中管理（终端读取上限由 `terminal.ts` 管理）。除特殊标明外，时间单位均为毫秒（ms）：
+
+| 环境变量 | 默认值 | 单位 | 作用 |
+|---|---|---|---|
+| `PIER_SUBAGENT_TIMEOUT_MS` | `600000` | ms | 子代理无活动超时预算（超时强行终止） |
+| `PIER_SETTLEMENT_WINDOW_MS` | `60000` | ms | 结算通知窗口、机器注入宽限期及接管空闲判定阈值 |
+| `PIER_OBSERVATION_WINDOW_MS` | `30000` | ms | 结算后观察窗口（超时前自动消费） |
+| `PIER_FOREGROUND_PATIENCE_MS` | `300000` | ms | 前台等待耐心阈值（超时自动切入后台） |
+| `PIER_GC_TICK_MS` | `30000` | ms | 子代理垃圾回收轮询间隔 |
+| `PIER_POLL_INTERVAL_MS` | `30000` | ms | 子代理状态观测轮询间隔 |
+| `PIER_READY_TIMEOUT_MS` | `30000` | ms | 子代理 pane 管道就绪等待超时 |
+| `PIER_SESSION_TTL_SECONDS` | `600` | 秒 | 子代理进程退出后会话保留 TTL（超时清理） |
+| `PIER_GIT_TIMEOUT_MS` | `10000` | ms | Git 命令超时（worktree 创建、diff 汇总、清理） |
+| `PI_HERDR_TERM_READ_MAX` | `4096` | 字符 | 终端单次读取缓冲区字符上限 |
 
 ## 设计原则
 
@@ -167,6 +184,6 @@ MIT
 
 ---
 
-> 💡 **开发说明**：`.gitignore` 刻意**不提交**到本仓库（本地资产忽略规则属个人环境）。贡献者请基于 `README.md` / `README_ZH.md` 自行维护忽略规则；`packages/pier-workbench/scripts/boot-config.json` 亦为本机配置（模板见 `.example.json`）。
+> 💡 **开发说明**：`.gitignore` 目前已入库跟踪。注意 `packages/pier-workbench/scripts/boot-config.json` 属于本机专属配置（模板见 `.example.json`）；`docs/research/` 内为本地调研文档，已被 `.gitignore` 忽略。
 >
 > **命名约定**：品牌名 **pier**（仓库/包/插件），运行时协议标识保留 **`pi-herdr`** 前缀（`.pi-herdr/roles/` 目录、`pi-herdr.subs` 等会话 custom 条目、`~/.pi/agent/herdr-pi/roles/` 用户目录）——它们随用户会话/配置文件持久化，改动会破坏既有数据，属兼容层。
