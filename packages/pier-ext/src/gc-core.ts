@@ -54,3 +54,88 @@ export function shouldClosePane(opts: {
   if (opts.herdrStatus !== 'idle' && opts.herdrStatus !== 'done') return false;
   return (opts.consumedAt ?? 0) > 0 && opts.consumedAt! < opts.prevTurnStart;
 }
+
+/* ── Isolate worktree collection (why the rules are this narrow) ──────
+ * The first version treated ANY branch under `refs/heads/pier/` as pier-owned, so
+ * every pier master session swept the whole namespace. A worker session lives in
+ * exactly such a worktree, and its own branch is trivially an ancestor of its own
+ * HEAD and clean once it commits — so the sweep deleted the worktree the process
+ * was running in (observed twice: 01a06ae3-era workers and the env-hook worker).
+ * Ownership must therefore be explicit: only branches registered in THIS session's
+ * subagent registry are candidates, the current working directory is never a
+ * candidate, and untracked `pier/*` branches require an explicit opt-in.
+ */
+
+/** True when `path` is `parent` or lives inside it (both resolved, no I/O). */
+export function isPathInside(path: string, parent: string): boolean {
+  const norm = (p: string): string => p.replace(/[\\/]+/g, '/').replace(/\/+$/, '');
+  const child = norm(path);
+  const base = norm(parent);
+  if (!child || !base) return false;
+  return child === base || child.startsWith(`${base}/`);
+}
+
+export interface IsolateSweepCandidate {
+  branch: string;
+  worktreePath: string;
+}
+
+export interface IsolateSweepSkip {
+  branch: string;
+  reason: 'unregistered' | 'pending' | 'self' | 'no-worktree';
+}
+
+export interface IsolateSweepPlan {
+  candidates: IsolateSweepCandidate[];
+  skipped: IsolateSweepSkip[];
+}
+
+/**
+ * Decide which isolate worktrees this session may collect.
+ * Pure: callers pass git output, the subagent registry and the process cwd.
+ */
+export function planIsolateSweep(input: {
+  /** Every `refs/heads/pier/*` branch name. */
+  branches: readonly string[];
+  /** branch → worktree path, from `git worktree list --porcelain`. */
+  worktreesByBranch: ReadonlyMap<string, string>;
+  /** Branches of isolate entries in this session's registry. */
+  registeredBranches: ReadonlySet<string>;
+  /** Branches created but not yet registered (worktree add → subs.set window). */
+  pendingBranches: ReadonlySet<string>;
+  /** Session-owned isolates that may be collected, with their recorded path. */
+  sessionOwned: ReadonlyArray<{ branch: string; worktreePath: string }>;
+  /** Path to protect (normally process.cwd()). */
+  cwd: string;
+  /** Explicit opt-in for branches this session never registered. */
+  sweepOrphans: boolean;
+}): IsolateSweepPlan {
+  const candidates = new Map<string, IsolateSweepCandidate>();
+  const skipped: IsolateSweepSkip[] = [];
+  const add = (branch: string, worktreePath: string): void => {
+    if (isPathInside(input.cwd, worktreePath)) {
+      skipped.push({ branch, reason: 'self' });
+      return;
+    }
+    candidates.set(branch, { branch, worktreePath });
+  };
+
+  if (input.sweepOrphans) {
+    for (const branch of input.branches) {
+      if (input.registeredBranches.has(branch)) continue;
+      if (input.pendingBranches.has(branch)) {
+        skipped.push({ branch, reason: 'pending' });
+        continue;
+      }
+      const wtPath = input.worktreesByBranch.get(branch);
+      if (wtPath) add(branch, wtPath);
+    }
+  }
+
+  for (const entry of input.sessionOwned) {
+    const wtPath = input.worktreesByBranch.get(entry.branch) ?? entry.worktreePath;
+    add(entry.branch, wtPath);
+  }
+
+  return { candidates: [...candidates.values()], skipped };
+}

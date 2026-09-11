@@ -10,6 +10,9 @@ import type { HerdrClientLike } from './herdr-client.ts';
 import { shouldClosePane, shouldCloseTaskTab } from './gc-core.ts';
 import { runtimePolicy } from './runtime-policy.ts';
 import { evaluateRelease, parseWorktreePorcelain, type SubEntry } from './subagent-core.ts';
+import { planIsolateSweep, isPathInside } from './gc-core.ts';
+
+interface Cand { branch: string; wtPath: string; entry: SubEntry | null }
 import type { GitIo } from './subagent-git-io.ts';
 import type { TerminalStateSlot } from './core/terminal.ts';
 
@@ -140,21 +143,35 @@ export function createGcController(h: GcHost): GcController {
     const wtPorcelain = await h.git.runGit(masterCwd, ['worktree', 'list', '--porcelain']);
     if (wtPorcelain === null) return;
     const wtByBranch = parseWorktreePorcelain(wtPorcelain);
-    const pierBranchOut = await h.git.runGit(masterCwd, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/pier/']);
-    const pierBranches = (pierBranchOut ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
-    type Cand = { branch: string; wtPath: string; entry: SubEntry | null };
-    const byBranch = new Map<string, Cand>();
-    for (const branch of pierBranches) {
-      if (registeredBranches.has(branch) || h.pendingIsolateBranches.has(branch)) continue;
-      const wtPath = wtByBranch.get(branch);
-      if (wtPath) byBranch.set(branch, { branch, wtPath, entry: null });
-    }
+    // Session-owned isolates: settled or consumed entries whose worktree was not released yet.
+    const sessionOwned = [...h.subs.values()]
+      .filter((e) => e.isolate && e.isolate.releasedAt == null && e.status !== 'running')
+      .map((e) => ({ branch: e.isolate!.branch, worktreePath: e.isolate!.worktreePath }));
+    // Untracked `pier/*` branches are only swept on explicit request: they may belong to
+    // another session (whose process may even be running inside them).
+    const sweepOrphans = process.env.PIER_ISOLATE_SWEEP_ORPHANS === '1';
+    const branches = sweepOrphans
+      ? (await h.git.runGit(masterCwd, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/pier/']))
+        ?.split('\n').map((l) => l.trim()).filter(Boolean) ?? []
+      : [];
+    const plan = planIsolateSweep({
+      branches,
+      worktreesByBranch: wtByBranch,
+      registeredBranches,
+      pendingBranches: h.pendingIsolateBranches,
+      sessionOwned,
+      cwd: masterCwd,
+      sweepOrphans,
+    });
+    const entryByBranch = new Map<string, SubEntry>();
     for (const e of h.subs.values()) {
-      if (!e.isolate || e.isolate.releasedAt != null || e.status === 'running') continue;
-      const prev = byBranch.get(e.isolate.branch);
-      byBranch.set(e.isolate.branch, { branch: e.isolate.branch, wtPath: prev?.wtPath ?? e.isolate.worktreePath, entry: e });
+      if (e.isolate && e.isolate.releasedAt == null && e.status !== 'running') entryByBranch.set(e.isolate.branch, e);
     }
-    trace?.(`cands=${[...byBranch.keys()].join(',') || 'none'} subs=${[...h.subs.values()].map((s) => `${s.status}${s.isolate ? '/iso' : ''}`).join(',') || 'none'}`);
+    const byBranch = new Map<string, Cand>();
+    for (const cand of plan.candidates) {
+      byBranch.set(cand.branch, { branch: cand.branch, wtPath: cand.worktreePath, entry: entryByBranch.get(cand.branch) ?? null });
+    }
+    trace?.(`cands=${[...byBranch.keys()].join(',') || 'none'} skipped=${plan.skipped.map((s) => `${s.branch}:${s.reason}`).join(',') || 'none'} subs=${[...h.subs.values()].map((s) => `${s.status}${s.isolate ? '/iso' : ''}`).join(',') || 'none'}`);
     let persisted = false;
     for (const cand of byBranch.values()) {
       const { branch, wtPath, entry } = cand;
@@ -179,6 +196,9 @@ export function createGcController(h: GcHost): GcController {
       const dirtyCount = dirtyOut === null ? null : dirtyOut.split('\n').filter((l) => l.trim() !== '').length;
       const decision = evaluateRelease({ merged: mergedFinal, dirtyCount });
       if (decision.action === 'release') {
+        // Defense in depth: planner already refuses the current worktree, but a removal here
+        // must never be able to delete the directory this process is running in.
+        if (isPathInside(masterCwd, wtPath)) continue;
         const removed = await h.git.runGit(masterCwd, ['worktree', 'remove', wtPath]);
         let ok = removed !== null;
         if (!ok) {
