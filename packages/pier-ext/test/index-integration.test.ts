@@ -289,3 +289,88 @@ test('ask_user_question without ui does not emit herdr:blocked', withCleanup(asy
   assert.equal(pi.events.emitted.filter((e) => e.channel === 'herdr:blocked').length, 0);
 }));
 
+
+/* ── generic human gate (pi 0.84.4+ ui_prompt events) ─────────────── */
+
+test('ui_prompt_start opens the gate and emits one herdr:blocked edge', withCleanup(async (cleanup) => {
+  const pi = await workerPier(cleanup);
+  await fire(pi, 'ui_prompt_start', { reason: 'ui_prompt', kind: 'confirm', title: 'Delete branch?' });
+  const edges = pi.events.emitted.filter((e) => e.channel === 'herdr:blocked');
+  assert.deepEqual(edges.map((e) => e.data), [{ active: true, label: 'Delete branch?' }]);
+
+  await fire(pi, 'ui_prompt_end', { reason: 'ui_prompt' });
+  assert.deepEqual(
+    pi.events.emitted.filter((e) => e.channel === 'herdr:blocked').map((e) => e.data),
+    [{ active: true, label: 'Delete branch?' }, { active: false }],
+  );
+}));
+
+test('ui_prompt_start without a title falls back to the prompt kind', withCleanup(async (cleanup) => {
+  const pi = await workerPier(cleanup);
+  await fire(pi, 'ui_prompt_start', { kind: 'editor' });
+  assert.deepEqual(pi.events.emitted.filter((e) => e.channel === 'herdr:blocked')[0]?.data, {
+    active: true,
+    label: 'editor',
+  });
+  await fire(pi, 'ui_prompt_end');
+}));
+
+test('a nested ui prompt inside the ask tool keeps exactly one blocked edge', withCleanup(async (cleanup) => {
+  const pi = await workerPier(cleanup);
+  const exec = pi.tools.get('ask_user_question')?.execute;
+  assert.ok(exec);
+
+  let resolveInput: ((value: string) => void) | undefined;
+  const input = new Promise<string>((resolve) => { resolveInput = resolve; });
+  const running = exec!({}, { question: 'ship it?' }, undefined, undefined, {
+    ui: {
+      // pi fires ui_prompt_start/end around the dialog the ask tool opens.
+      input: async () => {
+        await fire(pi, 'ui_prompt_start', { kind: 'input', title: 'ship it?' });
+        const value = await input;
+        await fire(pi, 'ui_prompt_end', {});
+        return value;
+      },
+    },
+  });
+
+  assert.equal(
+    pi.events.emitted.filter((e) => e.channel === 'herdr:blocked' && (e.data as { active?: boolean }).active === true).length,
+    1,
+    'the ask tool gate and the nested prompt must coalesce',
+  );
+  resolveInput!('yes');
+  await running;
+  const edges = pi.events.emitted.filter((e) => e.channel === 'herdr:blocked').map((e) => e.data);
+  assert.deepEqual(edges, [{ active: true, label: 'ship it?' }, { active: false }]);
+}));
+
+test('ui_prompt_end without a matching start is harmless', withCleanup(async (cleanup) => {
+  const pi = await workerPier(cleanup);
+  await fire(pi, 'ui_prompt_end');
+  // Depth is clamped: nothing is emitted for a release that never had a gate.
+  assert.deepEqual(pi.events.emitted.filter((e) => e.channel === 'herdr:blocked'), []);
+}));
+
+test('role manifest deny returns terminate for the whole batch', withCleanup(async (cleanup) => {
+  const env = cleanup.env();
+  env.set('PI_HERDR_SUBAGENT', '1');
+  env.set('PI_HERDR_ROLE_MANIFEST', JSON.stringify({
+    role: 'probe',
+    version: 'v1',
+    tools: ['read'],
+    permissions: { bash: 'deny' },
+    unknownTools: 'deny',
+  }));
+  env.delete('HERDR_ENV');
+  const pi = fakePi();
+  await pier(pi as never);
+  const verdicts: unknown[] = [];
+  for (const handler of pi.listeners.get('tool_call') ?? []) {
+    verdicts.push(await handler({ toolName: 'bash' }));
+  }
+  const verdict = verdicts[0] as { block?: boolean; terminate?: boolean; reason?: string };
+  assert.equal(verdict.block, true);
+  assert.equal(verdict.terminate, true, 'denied batches must be able to stop without another model call');
+  assert.match(verdict.reason ?? '', /bash/);
+}));

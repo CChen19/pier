@@ -413,9 +413,12 @@ export default async function (pi: ExtensionAPI) {
     todoUi.rerenderWidget?.();
     return true;
   }
-  /** Close one gate; only the 1→0 transition restores the pre-gate state. Returns true when closed. */
+  /** Close one gate; only the 1→0 transition restores the pre-gate state. Returns true when closed.
+   *  An unmatched release (no gate open) is ignored rather than reported, so a stray
+   *  ui_prompt_end cannot emit a false "no longer blocked" edge. */
   function exitBlocked(): boolean {
-    blockedDepth = Math.max(0, blockedDepth - 1);
+    if (blockedDepth === 0) return false;
+    blockedDepth -= 1;
     // Gate closed → restore the full widget window.
     todoUi.rerenderWidget?.();
     if (blockedDepth > 0) return false;
@@ -471,9 +474,11 @@ export default async function (pi: ExtensionAPI) {
     const rec = (event ?? {}) as { kind?: unknown; title?: unknown };
     const title = typeof rec.title === 'string' && rec.title.trim() ? rec.title.trim() : null;
     const kind = typeof rec.kind === 'string' ? rec.kind : 'prompt';
+    // Normalize once so the gate report and the published edge carry the same label.
+    const label = title ?? kind;
     // The ask tool opens its own gate first, so this is usually a nested (no-op) transition;
     // prompts from other extensions or pi core open the gate here.
-    if (enterBlocked(title ?? kind)) emitHerdrBlocked(true, title);
+    if (enterBlocked(label)) emitHerdrBlocked(true, label);
   });
   uiPromptEvents.on?.('ui_prompt_end', () => {
     if (exitBlocked()) emitHerdrBlocked(false, null);
