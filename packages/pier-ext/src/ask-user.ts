@@ -6,6 +6,7 @@
  * so the model cannot forget a free-text escape and Esc is a real decline.
  */
 import { Type } from 'typebox';
+import { runMultiSelect } from './ask-multi.ts';
 
 export const ASK_TOOL_NAME = 'ask_user_question';
 export const OTHER_OPTION = 'Other (type your own)';
@@ -44,16 +45,18 @@ export const ASK_PARAMETERS = Type.Object({
   options: Type.Optional(Type.Array(OptionSchema, {
     description: '2-5 authored choices. Do NOT include Other; the UI appends it.',
   })),
-  multi: Type.Optional(Type.Boolean({ description: 'Allow multiple selections (default false)' })),
+  multi: Type.Optional(Type.Boolean({ description: 'Allow multiple selections (default false). In the TUI this opens an interactive toggle list (space toggles, enter confirms, esc declines).' })),
+  allowOther: Type.Optional(Type.Boolean({ description: 'Set false to offer the authored choices only, with no free-text row (default true).' })),
   recommended: Type.Optional(Type.Number({ description: '0-based index of the recommended option; UI adds (Recommended)' })),
   questions: Type.Optional(Type.Array(
     Type.Object({
       id: Type.Optional(Type.String({ description: 'Stable id for mapping answers' })),
       question: Type.String({ description: 'Question text' }),
       options: Type.Array(OptionSchema, {
-        description: '2-5 authored choices. Do NOT include Other; the UI appends it.',
+        description: '2-5 authored choices. Do NOT include Other; the UI appends it unless allowOther is false.',
       }),
-      multi: Type.Optional(Type.Boolean({ description: 'Allow multiple selections (default false)' })),
+      multi: Type.Optional(Type.Boolean({ description: 'Allow multiple selections (default false). In the TUI this opens an interactive toggle list (space toggles, enter confirms).' })),
+      allowOther: Type.Optional(Type.Boolean({ description: 'Set false to offer the authored choices only, with no free-text row (default true).' })),
       recommended: Type.Optional(Type.Number({ description: '0-based recommended option index' })),
     }),
     { description: '1-4 related questions in one call. Wins over top-level question/options when set.' },
@@ -67,13 +70,15 @@ export const ASK_TOOL_DESCRIPTION = [
   'Prefer 2-5 options with short labels; put tradeoffs in description.',
   'Do NOT include an "Other" option — the UI appends "Other (type your own)" automatically.',
   'Use recommended (0-based) to mark the default; "(Recommended)" is added automatically.',
-  'Use multi: true when several options can apply. Group related questions in questions (max 4) rather than calling this tool repeatedly.',
+  'Use multi: true when several options can apply — the TUI opens an interactive toggle list (space toggles a row, a toggles all, enter confirms, esc declines) instead of making the human type numbers.',
+  'Set allowOther: false when the authored choices are exhaustive and a free-text answer would be misleading.',
   'The answer comes back as the tool result; then continue your work.',
 ].join(' ');
 
 export const ASK_PROMPT_GUIDELINES = [
   'Default to action. Ask only when options have materially different tradeoffs the user must decide.',
-  'Do NOT include "Other" in options; the UI appends it.',
+  'Do NOT include "Other" in options; the UI appends it unless allowOther is false. Group related questions in questions (max 4) rather than calling this tool repeatedly.',
+  'For multi questions the human toggles rows in a list and confirms with enter — never instruct them to type indices.',
   'Short option labels; explanatory tradeoffs in description.',
 ];
 
@@ -83,6 +88,8 @@ export type AskQuestion = {
   question: string;
   options: AskOption[];
   multi: boolean;
+  /** When false the UI offers the authored choices only (no free-text row). */
+  allowOther: boolean;
   recommended?: number;
 };
 export type AskSpec =
@@ -112,6 +119,8 @@ export type AskToolResult = {
 export type AskUi = {
   select?: (title: string, options: string[], opts?: { signal?: AbortSignal }) => Promise<string | undefined>;
   input: (title: string, placeholder?: string, opts?: { signal?: AbortSignal }) => Promise<string | undefined>;
+  /** TUI-only: full custom components (absent in RPC mode, where it returns undefined). */
+  custom?: (factory: unknown) => Promise<unknown>;
 };
 
 export type PrepareAskResult =
@@ -205,6 +214,7 @@ function parseQuestion(raw: unknown): { ok: true; question: AskQuestion } | { ok
       question,
       options: parsed.options,
       multi: rec.multi === true,
+      allowOther: rec.allowOther !== false,
       ...(id ? { id } : {}),
       ...(recommended !== undefined ? { recommended } : {}),
     },
@@ -255,6 +265,7 @@ export function prepareAsk(params: unknown): PrepareAskResult {
         question,
         options: parsed.options,
         multi: rec.multi === true,
+        allowOther: rec.allowOther !== false,
         ...(recommended !== undefined ? { recommended } : {}),
       }],
     },
@@ -276,7 +287,7 @@ export function formatAuthoredLine(option: AskOption, index: number, recommended
 
 export function optionLines(question: AskQuestion): string[] {
   const lines = question.options.map((option, i) => formatAuthoredLine(option, i, question.recommended));
-  lines.push(`${question.options.length + 1}. ${OTHER_OPTION}`);
+  if (question.allowOther !== false) lines.push(`${question.options.length + 1}. ${OTHER_OPTION}`);
   return lines;
 }
 
@@ -333,11 +344,37 @@ async function askSingle(ui: AskUi, question: AskQuestion, signal?: AbortSignal)
 }
 
 async function askMulti(ui: AskUi, question: AskQuestion, signal?: AbortSignal): Promise<AskAnswer | undefined> {
+  // TUI path: a real toggle list. ctx.ui.custom is absent in RPC mode (or returns undefined),
+  // in which case we fall through to the typed-index prompt below.
+  if (typeof ui.custom === 'function') {
+    const outcome = await runMultiSelect(ui.custom, question.question, {
+      options: question.options,
+      allowOther: question.allowOther,
+      ...(question.recommended !== undefined ? { recommended: question.recommended } : {}),
+    });
+    if (outcome?.kind === 'cancel') return undefined;
+    if (outcome?.kind === 'other') {
+      const typed = await ui.input(`${question.question}\n\n${CUSTOM_ANSWER_TITLE}`, '', signal ? { signal } : undefined);
+      if (typed == null || !typed.trim()) return undefined;
+      return withId(question, {
+        question: question.question,
+        kind: 'custom',
+        answer: OTHER_ANSWER,
+        customInput: typed.trim(),
+      });
+    }
+    if (outcome?.kind === 'selected') {
+      return withId(question, { question: question.question, kind: 'multi', answer: null, selected: outcome.labels });
+    }
+  }
   const list = question.options
     .map((option, i) => formatAuthoredLine(option, i, question.recommended))
     .join('\n');
+  const hint = question.allowOther === false
+    ? `Enter the numbers of all that apply, comma-separated (e.g. "1,3"). There is no free-text answer for this question.`
+    : MULTI_INSTRUCTIONS;
   const value = await ui.input(
-    `${question.question}\n\n${list}\n\n${MULTI_INSTRUCTIONS}`,
+    `${question.question}\n\n${list}\n\n${hint}`,
     '1,3',
     signal ? { signal } : undefined,
   );
@@ -360,6 +397,8 @@ async function askMulti(ui: AskUi, question: AskQuestion, signal?: AbortSignal):
     }
     return withId(question, { question: question.question, kind: 'multi', answer: null, selected });
   }
+  // Unparsable input is a free-text answer only when the free-text row was offered.
+  if (question.allowOther === false) return undefined;
   return withId(question, {
     question: question.question,
     kind: 'custom',
