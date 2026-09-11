@@ -298,6 +298,18 @@ test('runAsk multi: without ctx.ui.custom the typed-index path still works', asy
   assert.deepEqual(answers, ['input']);
 });
 
+test('runAsk multi: custom() present but returning undefined (RPC mode) falls back to typed indices', async () => {
+  const calls: string[] = [];
+  const ui: AskUi = {
+    custom: async () => { calls.push('custom'); return undefined; },
+    input: async () => { calls.push('input'); return '2'; },
+  };
+  const spec = prepareAsk({ question: 'Pick', options: [{ label: 'a' }, { label: 'b' }], multi: true });
+  const result = await runAsk(spec.ok ? spec.spec : { mode: 'freeform', question: '' }, ui);
+  assert.deepEqual(result.details.answers[0]!.selected, ['b']);
+  assert.deepEqual(calls, ['custom', 'input']);
+});
+
 test('runAsk multi: allowOther false rejects free text but keeps numeric parsing', async () => {
   let reply = 'not a number';
   const ui: AskUi = { input: async () => reply };
