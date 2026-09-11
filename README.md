@@ -30,7 +30,7 @@ pier ships as **two halves**, installed separately:
 - **Role profiles**: built-in `master` / `worker-default`; custom roles as `.pi-herdr/roles/<name>.json`; toolset converges per role (deny rules are not bypassable)
 - **Human gate**: subagent `ask_user_question` → sidebar blocked marker + notification; manual takeover (ESC-interrupt then typing) is heuristically detected so the master pauses/returns management automatically
 - **Isolated worktree subagents (`isolate`)**: heavy parallel writers get a fresh git worktree (branch `pier/<slug>` from your HEAD under `~/.herdr/worktrees/<repo>/`) with commit discipline in the prompt; settlement carries a diff summary (commits since base, files changed, uncommitted count); merge with `git merge --no-ff` and the worktree auto-removes once merged and clean — the branch stays for audit
-- **Long-task lifecycle (01a03c0d review)**: observation timeout is now an inactivity budget (working slices renew it — healthy >10min tasks are no longer killed); follow_up messages deliver via steer at tool-call gaps (supplementary contracts arrive in seconds, not after the whole run); GC waits for the settlement notice to be delivered before closing panes; takeover detection attributes recent machine injections first; ledger rows carry a `via` tag, closed rows inherit their outcome, zombie running rows are swept on startup; SUBS snapshots are hash-gated. Tunables: `PI_HERDR_SUBAGENT_TIMEOUT_MS` (inactivity seconds), `PI_HERDR_INJECT_GRACE_MS`, `PI_HERDR_OBSERVE_MS`
+- **Long-task lifecycle (01a03c0d review)**: observation timeout is now an inactivity budget (working slices renew it — healthy >10min tasks are no longer killed); follow_up messages deliver via steer at tool-call gaps (supplementary contracts arrive in seconds, not after the whole run); GC waits for the settlement notice to be delivered before closing panes; takeover detection attributes recent machine injections first; ledger rows carry a `via` tag, closed rows inherit their outcome, zombie running rows are swept on startup; SUBS snapshots are hash-gated. Tunables: `PIER_SUBAGENT_TIMEOUT_MS` (inactivity ms), `PIER_SETTLEMENT_WINDOW_MS` (ms), `PIER_OBSERVATION_WINDOW_MS` (ms)
 - **Settlement notice folding**: subagent settlements no longer flood back when a long main run ends — they inject at turn gaps, up to 3 shown, the rest folded with pointers
 
 ## Installation
@@ -38,8 +38,8 @@ pier ships as **two halves**, installed separately:
 ### Requirements
 
 - Node ≥ 22
-- pi ≥ 0.84 (`@earendil-works/pi-coding-agent`)
-- herdr ≥ 0.8.0 (macOS / Linux / Windows; Windows is preview beta)
+- pi ≥ 0.84.4 (`@earendil-works/pi-coding-agent`)
+- herdr ≥ 0.9.0 (macOS / Linux / Windows; Windows is preview beta)
 
 ### One-shot install (recommended)
 
@@ -154,8 +154,25 @@ docs/              # install guide, role profile docs, sidebar role config
 
 ```sh
 npm install --ignore-scripts
-npm test          # node --test, 278 unit tests (planner / todo replay / anti-freeze staleness / session tail / GC / lifecycle)
+npm test          # node --test, 466 unit tests (planner / todo replay / anti-freeze staleness / session tail / GC / lifecycle)
 ```
+
+## Configuration
+
+Runtime policies and operational limits are centralized in `runtime-policy.ts` (with terminal read limits in `terminal.ts`). All timeouts use millisecond units unless specified otherwise:
+
+| Variable | Default | Unit | Purpose |
+|---|---|---|---|
+| `PIER_SUBAGENT_TIMEOUT_MS` | `600000` | ms | Subagent inactivity budget / overall timeout before forced termination |
+| `PIER_SETTLEMENT_WINDOW_MS` | `60000` | ms | Settlement notice window, machine injection grace period, and takeover idle threshold |
+| `PIER_OBSERVATION_WINDOW_MS` | `30000` | ms | Post-settle observation window before auto-consuming finished subagents |
+| `PIER_FOREGROUND_PATIENCE_MS` | `300000` | ms | Foreground execution patience before auto-demoting a subagent to background |
+| `PIER_GC_TICK_MS` | `30000` | ms | Subagent garbage collection ticker interval |
+| `PIER_POLL_INTERVAL_MS` | `30000` | ms | State observation polling interval for subagent state transitions |
+| `PIER_READY_TIMEOUT_MS` | `30000` | ms | Subagent pane pipe readiness wait timeout |
+| `PIER_SESSION_TTL_SECONDS` | `600` | s | Session retention TTL after subagent exit before GC cleanup |
+| `PIER_GIT_TIMEOUT_MS` | `10000` | ms | Execution timeout for git operations (worktree creation, diff summary, cleanup) |
+| `PI_HERDR_TERM_READ_MAX` | `4096` | chars | Maximum terminal buffer characters read per operation |
 
 ## Design principles
 
@@ -170,6 +187,6 @@ MIT
 
 ---
 
-> 💡 **For contributors**: `.gitignore` is deliberately **not committed** to this repository (ignore rules are per-environment). Maintain your own rules based on `README.md` / `README_ZH.md`; `packages/pier-workbench/scripts/boot-config.json` is also machine-local (see the `.example.json` template).
+> 💡 **For contributors**: `.gitignore` is tracked in the repository. Note that `packages/pier-workbench/scripts/boot-config.json` is machine-local (see the `.example.json` template), and `docs/research/` contains local research notes ignored by `.gitignore`.
 >
 > **Naming convention**: the brand is **pier** (repo/packages/plugin); runtime protocol identifiers keep the **`pi-herdr`** prefix (`.pi-herdr/roles/` dir, `pi-herdr.subs` session custom entries, `~/.pi/agent/herdr-pi/roles/` user dir) — they persist with user sessions/config files, renaming would break existing data, so they are the compatibility layer.
