@@ -43,7 +43,7 @@ The installer also verifies node / pi / herdr versions, probes local paths, and 
 | Tool | Purpose |
 |---|---|
 | `todo_write` | Full-replacement todo list. Session JSONL is the single source of truth; correct rollback on branch switches. Projected live onto the pane title (`▶i ○p ■b ✓c (N/M) · current task`). `/todos` command to view/edit/unblock |
-| `subagent` | Delegate self-contained subtasks to an isolated pi session in its own herdr pane. Actions: `spawn` (default; foreground / parallel / background), `list`, `send`, `interrupt`, `resume` |
+| `subagent` | Delegate self-contained subtasks to an isolated pi session in its own herdr pane. Actions: `spawn` (default; foreground / parallel / background), `list`, `send`, `interrupt`, `resume`, `output` (incremental preview of a running subagent's pane output) |
 | `terminal` | Persistent interactive shells in dedicated herdr panes. Actions: `open`, `send`, `read`, `signal`, `close`, `list` |
 | `ask_user_question` | Human gate: 2-5 authored options plus a trailing free-text row (`allowOther: false` for pure choice); multiple related questions per call. A `multi: true` question opens an interactive toggle list (space toggles, `a` all, enter confirms, esc declines); pane shows blocked in herdr while waiting |
 
@@ -103,7 +103,7 @@ pi overwrites tools/commands by name; event listeners stack.
 ```sh
 git clone https://github.com/July24/pier && cd pier
 npm install --ignore-scripts
-npm test   # node --test, ~560 unit tests
+npm test   # node --test, ~590 unit tests
 ```
 
 See the [monorepo README](https://github.com/July24/pier) for design principles, the herdr-plugin half, and the one-shot installer.

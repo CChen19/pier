@@ -26,6 +26,7 @@ pier ships as **two halves**, installed separately:
 - **Todo loop**: `todo_write` with full-replace semantics, session JSONL as source of truth, correct branch rollback; live pane-title projection `▶i ○p ■b ✓c (N/M) · current task`; TUI widget is an activity-anchored window (the in_progress entry and its surrounding context stay visible as work moves down the list); `/todos` command (including unblock)
 - **Todo anti-freeze**: an all-completed list unchanged for ≥6 turns flips the read hook from recitation to a rewrite warning; after ≥1h it archives — first offering one rewrite window with old entries as reference, then (if ignored) a final notice that clears the list (rm persisted to JSONL; the empty guard takes over — multi-step work must re-track); `/todos` still shows history, session JSONL untouched
 - **Interactive subagents**: every subagent = an isolated pi session in its own pane (separate context window); **a human can enter that pane and talk to it directly** (fix bugs, take over, answer ask_user_question)
+- **Subagent output preview**: `subagent(action: "output", agentId)` returns what a running background subagent has printed since the previous call — an in-memory per-pane cursor computes the delta (`agent.read`, falling back to `pane.read` on older herdr), and the result carries status, revision, truncation and a `restart` flag for scrolled/cleared buffers, so the master can notice a stuck worker instead of waiting for settlement
 - **Soft write-locks**: per-pane lock tokens on write paths; cross-pane conflicts warn or block
 - **Role profiles**: built-in `master` / `worker-default`; custom roles as `.pi-herdr/roles/<name>.json`; toolset converges per role (deny rules are not bypassable)
 - **Human gate**: subagent `ask_user_question` → sidebar blocked marker + notification; manual takeover (ESC-interrupt then typing) is heuristically detected so the master pauses/returns management automatically
@@ -160,7 +161,7 @@ docs/              # install guide, role profile docs, sidebar role config
 
 ```sh
 npm install --ignore-scripts
-npm test          # node --test, 563 unit tests (planner / todo replay / anti-freeze staleness / session tail / GC / lifecycle / renderers / ask picker)
+npm test          # node --test, 588 unit tests (planner / todo replay / anti-freeze staleness / session tail / GC / lifecycle / renderers / ask picker / subagent output)
 ```
 
 ## Configuration
