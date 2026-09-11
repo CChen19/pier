@@ -8,10 +8,13 @@ test('buildAgentViewSetParams: default parameters conform to Herdr 0.9.0 agent.v
   assert.equal(params.source, 'pier.workbench');
   assert.equal(params.label, 'Pier');
 
-  // Filter must target the pi-todo token
+  // Filter must target pi agents or panes with the pi-todo token
   assert.deepEqual(params.filter, {
-    op: 'exists',
-    field: { token: 'pi-todo' },
+    op: 'any',
+    filters: [
+      { op: 'eq', field: 'agent', value: 'pi' },
+      { op: 'exists', field: { token: 'pi-todo' } },
+    ],
   });
 
   // Sort by attention descending, then pane order ascending
@@ -31,7 +34,24 @@ test('buildAgentViewSetParams: supports custom options override', () => {
   assert.equal(custom.source, 'custom.source');
   assert.equal(custom.label, 'Custom View');
   assert.deepEqual(custom.filter, {
+    op: 'any',
+    filters: [
+      { op: 'eq', field: 'agent', value: 'pi' },
+      { op: 'exists', field: { token: 'custom-token' } },
+    ],
+  });
+});
+
+test('buildAgentViewSetParams: supports explicit filter override', () => {
+  const custom = buildAgentViewSetParams({
+    filter: {
+      op: 'exists',
+      field: { token: 'custom-only' },
+    },
+  });
+
+  assert.deepEqual(custom.filter, {
     op: 'exists',
-    field: { token: 'custom-token' },
+    field: { token: 'custom-only' },
   });
 });

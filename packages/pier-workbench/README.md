@@ -9,7 +9,7 @@
 - `scripts/bootstrap.mjs` / `restore-layout.mjs`：主 tab 引导与恢复。
 - `scripts/heat-reflow.mjs` + `src/heat-layout.ts`：焦点热力布局（`pane.focused` / `agent_status_changed` / `pane.created` / `pane.closed` → 原地 ratio 重排）。
 - `scripts/dashboard.mjs` + `src/dashboard-model.ts`：运维观察面板（herdr 0.9.0 原生 plugin pane，通过 `session.snapshot` 实时展示 workspace / tab / agent 状态）。
-- `scripts/agent-view.mjs` + `src/agent-view.ts`：侧边栏 agent 视图注册（herdr 0.9.0 `agent.view.set`，按 `pi-todo` token 聚合）。
+- `scripts/agent-view.mjs` + `src/agent-view.ts`：侧边栏 agent 视图注册（herdr 0.9.0 `agent.view.set`，按 `agent: pi` 及 `pi-todo` token 聚合）。
 - `scripts/boot-config.example.json`：本机引导配置模板（真实的 `boot-config.json` 不入库，含个人路径）。
 
 ## 安装

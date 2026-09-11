@@ -3,7 +3,7 @@
  *
  * Conforms to Herdr 0.9.0 protocol 22 `agent.view.set` schema.
  * Registers a dedicated sidebar view targeting pier-managed panes
- * (identified by presence of the `pi-todo` token).
+ * (identified by agent === 'pi' or presence of the `pi-todo` token).
  */
 
 export interface AgentViewFieldToken {
@@ -57,24 +57,31 @@ export interface BuildAgentViewOptions {
   source?: string;
   label?: string;
   tokenKey?: string;
+  filter?: AgentViewFilter | null;
 }
 
 /**
  * Builds validated parameters for agent.view.set.
- * Defaults to filtering panes with the `pi-todo` token and sorting by attention.
+ * Defaults to filtering panes where agent is 'pi' or that carry the `pi-todo` token,
+ * sorted by attention descending and pane order ascending.
  */
 export function buildAgentViewSetParams(options?: BuildAgentViewOptions): AgentViewSetParams {
   const source = options?.source ?? 'pier.workbench';
   const label = options?.label ?? 'Pier';
   const tokenKey = options?.tokenKey ?? 'pi-todo';
 
+  const defaultFilter: AgentViewFilter = {
+    op: 'any',
+    filters: [
+      { op: 'eq', field: 'agent', value: 'pi' },
+      { op: 'exists', field: { token: tokenKey } },
+    ],
+  };
+
   return {
     source,
     label,
-    filter: {
-      op: 'exists',
-      field: { token: tokenKey },
-    },
+    filter: options?.filter !== undefined ? options.filter : defaultFilter,
     sort: [
       { field: 'attention', order: 'desc' },
       { field: 'pane_order', order: 'asc' },

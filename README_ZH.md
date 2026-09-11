@@ -36,7 +36,7 @@ pier 由**两个半区**组成，各装一处：
 - **转写卡片**：pier 自己的会话条目（todo 编辑、子代理/终端注册表、角色清单、软审批）与提醒消息渲染为紧凑卡片，不再是裸 JSON——entry/message renderer，不依赖 pi-tui
 - **焦点热力布局**：聚焦 pane 原地放大（0.72 目标），blocked / ask / working / idle 按权重分大小，多余 pane 自动压成 title 条
 - **隔离工作树（`isolate`）回收有明确归属**：只回收本会话自己登记过的工作树，且**当前进程所在目录永不作为候选**——此前按 `refs/heads/pier/` 前缀匹配会删掉并行会话正在使用的工作树。清扫本会话未登记的分支需显式开启 `PIER_ISOLATE_SWEEP_ORPHANS=1`
-- **运维面板 + 侧边栏视图（herdr 0.9）**：`herdr plugin pane open --plugin pier.workbench --entrypoint dashboard` 打开实时 pane/tab/agent 看板（角色、状态、todo 进度）；插件还注册一个按 pier token 过滤的 `Pier` 侧边栏 agent 视图
+- **运维面板 + 侧边栏视图（herdr 0.9）**：`herdr plugin pane open --plugin pier.workbench --entrypoint dashboard` 打开实时 pane/tab/agent 看板（角色、状态、todo 进度）；插件还注册一个按 pi agent 及 pier token 过滤的 `Pier` 侧边栏 agent 视图
 - **长任务生命周期（01a03c0d 复盘）**：观察超时改「无活动预算」（working 心跳续命，>10min 健康任务不再误杀）；follow_up 以 steer 间隙投递（补充契约秒级到达，不再排队整个 run）；GC 等结算通知送达再回收 pane；接管判定先归因机器注入；台账 via 标记 + closed 行 outcome 继承 + 僵尸 running 清扫；SUBS 快照哈希门控。可调：`PIER_SUBAGENT_TIMEOUT_MS`（无活动毫秒数）、`PIER_SETTLEMENT_WINDOW_MS`（ms）、`PIER_OBSERVATION_WINDOW_MS`（ms）
 - **结算通知折叠**：后台子代理结算不再攒到 run 结束洪水回填——turn 间隙注入，最多 3 条逐条展示、其余折叠指路
 
