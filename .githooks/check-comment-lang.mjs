@@ -1,28 +1,64 @@
 #!/usr/bin/env node
 /**
- * Fail if staged pier-ext src files introduce CJK in comments.
+ * Fail if staged source files introduce CJK in comments.
  * Runtime strings (notices, role issues) are code, not comments.
  */
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 const CJK = /[\u3400-\u9fff]/;
 const COMMENT = /^\s*(\/\/|\/\*|\*)/;
 
-function stagedSrcFiles() {
+const TARGET_SCOPES = [
+  'packages/pier-ext/src/',
+  'packages/pier-workbench/src/',
+  'packages/pier-workbench/scripts/',
+  'install.mjs',
+];
+
+function isTargetFile(file) {
+  if (!file || file.endsWith('.toml')) return false;
+  if (file === 'install.mjs') return true;
+  return TARGET_SCOPES.some((scope) => scope !== 'install.mjs' && file.startsWith(scope));
+}
+
+const explicit = process.argv.slice(2).filter((arg) => !arg.startsWith('--'));
+const isExplicit = explicit.length > 0;
+
+function resolveFilesToCheck() {
+  if (isExplicit) {
+    return explicit.filter(isTargetFile);
+  }
+  if (process.argv.includes('--all')) {
+    const out = execFileSync('git', ['ls-files'], { encoding: 'utf8' });
+    return out.split(/\r?\n/).filter(isTargetFile);
+  }
   const out = execFileSync('git', ['diff', '--cached', '--name-only', '--diff-filter=ACM'], {
     encoding: 'utf8',
   });
-  return out.split(/\r?\n/).filter((f) => f.startsWith('packages/pier-ext/src/') && f.endsWith('.ts'));
+  return out.split(/\r?\n/).filter(isTargetFile);
 }
 
 const hits = [];
-for (const file of stagedSrcFiles()) {
+for (const file of resolveFilesToCheck()) {
+  if (!existsSync(file)) continue;
   let text;
-  try {
-    text = execFileSync('git', ['show', `:${file}`], { encoding: 'utf8' });
-  } catch {
-    text = readFileSync(file, 'utf8');
+  if (isExplicit) {
+    try {
+      text = readFileSync(file, 'utf8');
+    } catch {
+      continue;
+    }
+  } else {
+    try {
+      text = execFileSync('git', ['show', `:${file}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    } catch {
+      try {
+        text = readFileSync(file, 'utf8');
+      } catch {
+        continue;
+      }
+    }
   }
   const lines = text.split(/\n/);
   for (let i = 0; i < lines.length; i++) {

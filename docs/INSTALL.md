@@ -1,7 +1,7 @@
 # 安装与使用手册
 
-pi × herdr 工作台融合插件的双半区安装。环境要求：Node ≥ 22、pi ≥ 0.84、
-herdr ≥ 0.8（macOS / Linux 稳定支持；Windows 为 preview beta）。
+pi × herdr 工作台融合插件的双半区安装。环境要求：Node ≥ 22、pi ≥ 0.84.4、
+herdr ≥ 0.9.0（macOS / Linux 稳定支持；Windows 为 preview beta）。
 
 ## 0. 一键安装（推荐）
 
@@ -19,7 +19,7 @@ node install.mjs update          # 用户模式：pi update + herdr plugin insta
 
 脚本流程：
 
-1. 校验 node ≥ 22、pi ≥ 0.84、herdr ≥ 0.8.0（缺失给安装指引并退出）；
+1. 校验 node ≥ 22、pi ≥ 0.84.4、herdr ≥ 0.9.0（缺失给安装指引并退出）；
 2. 探测 pi 的 node 解释器（`process.execPath`）与 cli.js 绝对路径
    （`which pi` → symlink realpath → `npm root -g` 兜底）；
 3. 生成 boot-config.json：用户模式写 `herdr plugin config-dir pier.workbench`
