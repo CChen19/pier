@@ -100,6 +100,9 @@ export default async function (pi: ExtensionAPI) {
   // Transcript polish for pier's own custom entries and reminder messages; display-only and
   // best-effort (older pi builds without the renderer API simply keep the raw rows).
   const rendererTypes = installRenderers(pi);
+  if (process.env.PI_HERDR_TRACE) {
+    console.error(`[pi-herdr] transcript renderers: ${rendererTypes.length ? rendererTypes.join(', ') : 'none'}`);
+  }
 
   let sessionId: string = process.env.PI_SESSION_FILE ?? process.env.PI_SESSION_ID ?? '';
   /** M16: completion timestamps used as rate-estimation input, appended with todo.completed events. */
