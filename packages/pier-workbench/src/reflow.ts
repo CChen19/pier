@@ -1,8 +1,8 @@
 /**
- * M23 热力 reflow 域逻辑（自 scripts/heat-reflow.mjs 迁入）。
+ * M23 heat reflow domain logic (migrated from scripts/heat-reflow.mjs).
  *
- * 依赖全经 `ReflowDeps` 注入。规划器在 heat-layout.ts。
- * 钩子进程不经过 cordis：user-mode GitHub checkout 没有 node_modules。
+ * All dependencies are injected via `ReflowDeps`. Planner is in heat-layout.ts.
+ * Hook processes do not use cordis: user-mode GitHub checkout lacks node_modules.
  */
 import {
   REFLOW_DEBOUNCE_MS,
@@ -29,20 +29,20 @@ export interface ReflowDeps {
   request: (method: string, params?: Record<string, unknown>) => Promise<unknown>;
   loadState: () => Record<string, unknown>;
   saveState: (state: Record<string, unknown>) => void;
-  /** 注入便于测试（生产 = setTimeout sleep）。 */
+  /** Injected for testing (production = setTimeout sleep). */
   sleep: (ms: number) => Promise<void>;
-  /** 档2 语义桥：事件触发时拉一次 agent 状态快照（pane.list；缺省 = 无分级）。 */
+  /** Tier 2 semantic bridge: pulls agent status snapshot on event (pane.list; default = unranked). */
   listAgentStatuses?: () => Promise<AgentStatusMap>;
-  /** D95：ask_user_question 等待标志（tokens['pi-ask'] 非空）。缺省 = 无 ask。 */
+  /** D95: ask_user_question waiting flag (tokens['pi-ask'] non-empty). Default = no ask. */
   listAskFlags?: () => Promise<Record<string, boolean>>;
   /**
-   * 收紧闸（场景 B 隔离）：含 pi agent pane 的 tab 集合——非 pi tab（claude code /
-   * codex / 纯 shell）不 reflow。缺省 = 不过滤（单测/旧接线兼容）。
+   * Tightening gate (Scenario B isolation): tabs containing pi agent panes — non-pi tabs (claude code /
+   * codex / pure shell) do not reflow. Default = no filter (unit test / legacy backward compatibility).
    */
   piTabIds?: () => Promise<Set<string>>;
 }
 
-/** tab 是否归 pier 管（含 pi pane）。dep 缺省放行；快照失败按不在集合处理（保守不动）。 */
+/** Whether the tab belongs to pier (contains pi panes). Passes through if dep omitted; snapshot failure treated as not in set (conservative no-op). */
 async function isPiTab(deps: ReflowDeps, tabId: string): Promise<boolean> {
   if (!deps.piTabIds) return true;
   try { return (await deps.piTabIds()).has(tabId); } catch { return false; }
@@ -53,16 +53,16 @@ async function onCreated(deps: ReflowDeps, paneId: string): Promise<void> {
   const state = deps.loadState();
   state.panes = state.panes ?? {};
   if (!state.panes[paneId]) state.panes[paneId] = { createdAt: Date.now() };
-  // D95：记录 pane→tab 映射（pane.closed 事件无 tab_id，需反查所属 tab 做关闭重排）
+  // D95: record pane->tab mapping (pane.closed event lacks tab_id, needs reverse lookup to reflow on close)
   if (deps.ev.tabId) state.panes[paneId].tabId = deps.ev.tabId;
   deps.saveState(state);
-  // D95：数量变化 → 触发数量重排（大小按等级权重重算，位置不动；焦点沿用 lastFocus）
+  // D95: pane count changed -> triggers count reflow (dimensions recomputed by tier weights, positions unchanged; focus inherits lastFocus)
   await onCountChanged(deps);
 }
 
 /**
- * D95 共享重排核心：防抖 → layout.export(pane_id) → 焦点沿用 lastFocus（无则 first 兜底）
- * → applyTiered → 记 tab 状态。数量/状态/关闭共用（焦点事件另有 own 路径）。
+ * D95 shared reflow core: debounce -> layout.export(pane_id) -> focus inherits lastFocus (or falls back to first)
+ * -> applyTiered -> record tab state. Shared across count/status/closed (focus events have their own path).
  */
 async function onCountChanged(deps: ReflowDeps): Promise<void> {
   const paneId = deps.ev.paneId;
@@ -77,7 +77,7 @@ async function onCountChanged(deps: ReflowDeps): Promise<void> {
 
   const evPaneId = deps.ev.paneId;
   const latest0 = deps.loadState() as ReflowState;
-  // D95：closed 事件无 tab_id → 反查 pane 归属 tab（onCreated 已记）；仍无 → 借 export 兜底
+  // D95: closed event has no tab_id -> reverse lookup tab from pane mapping (recorded by onCreated); if still missing -> fall back to export
   const closedTab = evPaneId && (latest0.panes?.[evPaneId] as { tabId?: string } | undefined)?.tabId;
   const exported = await deps.request('layout.export', closedTab
     ? { tab_id: closedTab }
@@ -98,7 +98,7 @@ async function onCountChanged(deps: ReflowDeps): Promise<void> {
   deps.saveState(latest);
 }
 
-/** 档3 共用核心：取状态快照 → 网格原地规划 → 应用 → 记 tab 状态。 */
+/** Tier 3 shared core: fetch status snapshot -> in-place grid planning -> apply -> record tab state. */
 async function applyTiered(
   deps: ReflowDeps,
   opts: { root: ReturnType<typeof unwrapLayout>['root']; tabId: string; focusPaneId: string; zoomed: boolean; tabCfg: Record<string, unknown> },
@@ -115,7 +115,7 @@ async function applyTiered(
     askFlags,
   });
   if (plan.type !== 'apply') return false;
-  // D91 网格原地热力：只发 ratio（零 swap——pane 位置不动，聚焦格原地放大）
+  // D91 in-place grid heat: only emits ratio ops (zero swaps — pane positions stay fixed, focused cell expands in place)
   for (const op of plan.ops) {
     await deps.request('layout.set_split_ratio', { tab_id: opts.tabId, path: op.path, ratio: op.ratio });
   }
@@ -128,9 +128,9 @@ async function onFocused(deps: ReflowDeps): Promise<void> {
   const now = Date.now();
   const state = deps.loadState();
   state.panes = state.panes ?? {};
-  // d90 档2 修正：不在账（本插件没见过其 pane.created）= 老 pane → 直接接受。
-  // 此前现编 createdAt=now → 3s 白名单内被拒 → 老 pane 所在 tab 永不 reflow
-  // （d90 实证：p1/p3F 点击爆发全拒）。已知 pane 才走账龄闸（F1：压 spawn 自动焦点）。
+  // d90 Tier 2 fix: unrecorded pane (plugin has not seen pane.created) = existing pane -> accept immediately.
+  // Previously improvised createdAt=now -> rejected within 3s whitelist -> tabs with old panes never reflowed
+  // (d90 empirical evidence: rapid clicks on p1/p3F all rejected). Only known panes pass through the age gate (F1: suppresses spawn auto-focus).
   const known = Boolean(state.panes[paneId]);
   if (known) {
     const age = now - state.panes[paneId].createdAt;
@@ -158,9 +158,9 @@ async function onFocused(deps: ReflowDeps): Promise<void> {
 }
 
 /**
- * 档2 语义桥（D90-F）：agent 状态变化（blocked 出现/消失）→ 事件驱动重排。
- * 焦点不动（沿用该 tab 的 lastFocusPaneId），仅从窗带内重排序 + 权重再分配。
- * 不轮询：pane.agent_status_changed 事件即推送（D3 合规零新协议）。
+ * Tier 2 semantic bridge (D90-F): agent status changes (blocked appears/disappears) -> event-driven reflow.
+ * Focus stays fixed (inheriting tab's lastFocusPaneId); re-sorts and redistributes weights only within secondary panes.
+ * No polling: pane.agent_status_changed event is pushed immediately (D3 compliant, zero new protocols).
  */
 async function onAgentStatusChanged(deps: ReflowDeps): Promise<void> {
   const paneId = deps.ev.paneId;
@@ -181,7 +181,7 @@ async function onAgentStatusChanged(deps: ReflowDeps): Promise<void> {
   if (!root || !tabId) return;
   if (!(await isPiTab(deps, tabId))) return;
   const tabCfg = latest.tabs?.[tabId] ?? { enabled: true };
-  // 焦点沿用上次；该 pane 不在树或从未 focus 过 → 退化 first pane
+  // Focus inherits lastFocus; if pane is not in tree or never focused -> degrade to first pane
   const lastFocus = typeof (tabCfg as { lastFocusPaneId?: unknown }).lastFocusPaneId === 'string'
     ? (tabCfg as { lastFocusPaneId: string }).lastFocusPaneId
     : null;
@@ -201,11 +201,11 @@ function flattenIn(root: ReturnType<typeof unwrapLayout>['root'], paneId: string
 }
 
 /**
- * 解析 herdr 钩子事件 env（HERDR_PLUGIN_EVENT / _EVENT_JSON）。
- * 真实载荷两形状（spike d84 dump 实证）：
- *  - pane_focused 扁平：{"event":"pane_focused","data":{"type","pane_id","workspace_id"}}（无 cause）
- *  - pane_created 嵌套：{"event":"pane_created","data":{"type","pane":{pane_id,…}}}
- * 兼容手工/测试的扁平+cause 形态（d84-manual：data.pane_id + cause=user）。
+ * Parses Herdr hook event environment variables (HERDR_PLUGIN_EVENT / _EVENT_JSON).
+ * Real payloads have two shapes (empirically confirmed in spike d84 dump):
+ *  - pane_focused flat: {"event":"pane_focused","data":{"type","pane_id","workspace_id"}} (no cause)
+ *  - pane_created nested: {"event":"pane_created","data":{"type","pane":{pane_id,...}}}
+ * Compatible with manual/test flat + cause shapes (d84-manual: data.pane_id + cause=user).
  */
 export function parseEventEnv(env: Record<string, string | undefined> = process.env): ReflowEvent {
   let event: Record<string, any> = {};
@@ -223,14 +223,14 @@ export function parseEventEnv(env: Record<string, string | undefined> = process.
   };
 }
 
-/** 域流程（可独立单测）。 */
+/** Domain workflow (independently unit testable). */
 export async function runReflow(deps: ReflowDeps): Promise<void> {
   const isCreated = /pane\.created|pane_created/i.test(String(deps.ev.hook) + String(deps.ev.type));
   const isFocused = /pane\.focused|pane_focused/i.test(String(deps.ev.hook) + String(deps.ev.type));
   const isStatus = /pane\.agent_status_changed/i.test(String(deps.ev.hook) + String(deps.ev.type));
   const isClosed = /pane\.closed|pane_closed/i.test(String(deps.ev.hook) + String(deps.ev.type));
   if (isClosed) {
-    // D95：pane 回收（subagent 完成被 GC）→ 数量重排（树收缩；位置自然，不迁移）
+    // D95: pane recycling (subagent finished and GC'd) -> count reflow (tree contracts; positions natural, no migration)
     await onCountChanged(deps);
     return;
   }

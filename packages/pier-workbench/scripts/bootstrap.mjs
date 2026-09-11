@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 /**
- * v1.3 M7 主 tab 引导（D28）：herdr 插件 [[events]] workspace.created / worktree.opened 钩子。
+ * v1.3 M7 main tab bootstrap (D28): herdr plugin [[events]] workspace.created / worktree.opened hook.
  *
- * 触发时 workspace.create 已自带一个 tab + root pane（实测 schema：workspace_created
- * 信封含 workspace/tab/root_pane）——引导不是新建 tab，而是：
- *   1. 幂等判定：该 workspace 已有 pi 主控 pane（agent=pi 或 title 含 ⏳）→ 跳过；
- *   2. 在 root pane（或该 workspace 首个 pane）注入 pi 启动命令（pane.send_text + CR，
- *      与子 pane 通道同款，实测可直达 stdin）；
- *   3. tab.rename → mainTabLabel；
- *   4. 引导记录追加到 HERDR_PLUGIN_STATE_DIR/boot.jsonl（[[startup]] 恢复用）。
- * M22：不再开 todo-board；不再自动补常驻 pane。
- * 失败全部降级为日志 + 非零退出；事件钩子错误不影响 herdr server。
+ * When triggered, workspace.create already includes a tab + root pane (verified schema: workspace_created
+ * envelope contains workspace/tab/root_pane) — bootstrap does not create a new tab, but rather:
+ *   1. Idempotency check: workspace already has a pi master pane (agent=pi or title contains ⏳) -> skip;
+ *   2. Injects pi launch command into root pane (or first pane of the workspace) via pane.send_text + CR
+ *      (same channel as subpanes, verified to reach stdin);
+ *   3. tab.rename -> mainTabLabel;
+ *   4. Appends bootstrap record to HERDR_PLUGIN_STATE_DIR/boot.jsonl (used by [[startup]] restore).
+ * M22: no longer creates todo-board; no longer automatically adds persistent panes.
+ * All failures degrade to logs + non-zero exit; event hook errors do not affect herdr server.
  */
 import * as net from 'node:net';
 import * as fs from 'node:fs';
@@ -20,20 +20,20 @@ import { fileURLToPath } from 'node:url';
 
 const SOCKET = process.env.HERDR_SOCKET_PATH;
 const here = path.dirname(fileURLToPath(import.meta.url));
-// v1.3 M7 实测：herdr 未注入 HERDR_PLUGIN_STATE_DIR（连目录都没有）→
-// 引导记录与历史记录同约定，落 ~/.pi/agent/herdr-pi/boot.jsonl（插件/扩展两侧同读）。
+// v1.3 M7 empirical: herdr did not inject HERDR_PLUGIN_STATE_DIR (directory did not exist) ->
+// Bootstrap record follows the same convention as history, residing at ~/.pi/agent/herdr-pi/boot.jsonl (read by both plugin and extension).
 const BOOT_FILE = path.join(os.homedir(), '.pi', 'agent', 'herdr-pi', 'boot.jsonl');
 
-// 配置解析：用户模式（plugin install）配置在 HERDR_PLUGIN_CONFIG_DIR（herdr 管理的
-// checkout 会被 reinstall 替换，配置不能落在插件目录里）；dev 模式（link）回退
-// scripts/boot-config.json（本仓库内，模板 .example.json）。
+// Config resolution: user mode (plugin install) config is in HERDR_PLUGIN_CONFIG_DIR (herdr-managed
+// checkout gets replaced on reinstall, so config cannot live in plugin dir); dev mode (link) falls back
+// to scripts/boot-config.json (inside repo, template at .example.json).
 function readBootConfig(here) {
   const candidates = [
     process.env.HERDR_PLUGIN_CONFIG_DIR ? path.join(process.env.HERDR_PLUGIN_CONFIG_DIR, 'boot-config.json') : null,
     path.join(here, 'boot-config.json'),
   ].filter(Boolean);
   for (const f of candidates) {
-    try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { /* 下一处 */ }
+    try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { /* next candidate */ }
   }
   return null;
 }
@@ -86,14 +86,14 @@ function deepFindFirst(obj, key, depth = 0) {
 }
 
 async function main() {
-  // 收紧闸（场景 B 隔离）：autoBootstrap=false 时新 workspace 不自动注入 pi
-  //（用户想在 herdr 里跑其他 agent 时关掉本开关即可；默认 true = 产品行为不变）。
+  // Tightening gate (Scenario B isolation): when autoBootstrap=false, new workspaces do not automatically inject pi
+  // (users can disable when running other agents in herdr; default true = product behavior unchanged).
   if (config.autoBootstrap === false) {
     console.log('[bootstrap] autoBootstrap disabled; skip');
     process.exit(0);
   }
   let event = {};
-  try { event = JSON.parse(process.env.HERDR_PLUGIN_EVENT_JSON ?? '{}'); } catch { /* 留空 */ }
+  try { event = JSON.parse(process.env.HERDR_PLUGIN_EVENT_JSON ?? '{}'); } catch { /* empty */ }
   const wsId = event?.workspace?.workspace_id ?? deepFindFirst(event, 'workspace_id') ?? '';
   if (!wsId) {
     console.error('[bootstrap] no workspace_id in event payload');
@@ -101,7 +101,7 @@ async function main() {
   }
   const panes = (await request('pane.list', {})).panes ?? [];
   const wsPanes = panes.filter((p) => p.workspace_id === wsId);
-  // D91 图标换代表：新 title 头 ▶…，旧会话 ⏳…（双匹配保幂等）
+  // D91 icon transition: new title prefix ▶..., legacy sessions ⏳... (dual match preserves idempotency)
   const hasMaster = wsPanes.some((p) => p.agent === 'pi' || (typeof p.title === 'string' && /⏳|▶/.test(p.title)));
   if (hasMaster) {
     console.log(`[bootstrap] workspace ${wsId} already has a master pi; skip`);
@@ -115,13 +115,13 @@ async function main() {
     process.exit(0);
   }
 
-  // 档1 hmr 开发姿态（d87）：hmrDev=true 时 master 启动线带 --expose-internals +
-  // PI_HERDR_HMR=1（双闸；bootstrap.ts 缺一即零 watcher）。默认 false = 生产姿态不变。
-  // 启动行按平台出 shell 语法：win32=PowerShell（& + '' 转义 + $env:），POSIX=sh（'\'' 转义 + env 前缀）。
+  // Tier 1 hmr dev stance (d87): when hmrDev=true, master launch line includes --expose-internals +
+  // PI_HERDR_HMR=1 (dual gate; bootstrap.ts missing either means zero watchers). Default false = production stance unchanged.
+  // Launch line emits platform-specific shell syntax: win32=PowerShell (& + '' escape + $env:), POSIX=sh ('\'' escape + env prefix).
   const hmrDev = config.hmrDev === true;
   const cliParts = [config.piNode, config.piCli];
   if (hmrDev) cliParts.splice(1, 0, '--expose-internals');
-  // D97：master 也 fullscreen（窄格静帧前提）；PI_HERDR_TUI=regular 逃生
+  // D97: master also fullscreen (prerequisite for slim frame static display); PI_HERDR_TUI=regular escape hatch
   if (process.env.PI_HERDR_TUI !== 'regular') cliParts.push('--tui-mode', 'fullscreen');
   cliParts.push('-e', config.extPath);
   const quote = (s) => (process.platform === 'win32' ? `'${s.replace(/'/g, "''")}'` : `'${s.replace(/'/g, `'\\''`)}'`);

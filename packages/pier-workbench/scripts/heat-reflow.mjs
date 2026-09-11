@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * M23：pane.focused / created / closed / agent_status_changed → 焦点热力 reflow。
- * 不经 cordis：user-mode plugin checkout 没有 @deepseek-ai/cordis。
+ * M23: pane.focused / created / closed / agent_status_changed -> focus heat reflow.
+ * Bypasses cordis: user-mode plugin checkout does not have @deepseek-ai/cordis.
  */
 import * as net from 'node:net';
 import * as fs from 'node:fs';
@@ -96,7 +96,9 @@ async function main() {
       try {
         const result = await request('pane.list', {});
         for (const p of result?.panes ?? []) if (p?.agent === 'pi' && p?.tab_id) tabs.add(p.tab_id);
-      } catch { /* 快照失败 = 空集合 → 保守不动 */ }
+      } catch {
+        /* Snapshot failure = empty set -> conservative no-op */
+      }
       return tabs;
     },
   });

@@ -8,14 +8,16 @@
 - `scripts/notify-agent-state.mjs`：`pane.agent_status_changed` → blocked 通知。
 - `scripts/bootstrap.mjs` / `restore-layout.mjs`：主 tab 引导与恢复。
 - `scripts/heat-reflow.mjs` + `src/heat-layout.ts`：焦点热力布局（`pane.focused` / `agent_status_changed` / `pane.created` / `pane.closed` → 原地 ratio 重排）。
+- `scripts/dashboard.mjs` + `src/dashboard-model.ts`：运维观察面板（herdr 0.9.0 原生 plugin pane，通过 `session.snapshot` 实时展示 workspace / tab / agent 状态）。
+- `scripts/agent-view.mjs` + `src/agent-view.ts`：侧边栏 agent 视图注册（herdr 0.9.0 `agent.view.set`，按 `pi-todo` token 聚合）。
 - `scripts/boot-config.example.json`：本机引导配置模板（真实的 `boot-config.json` 不入库，含个人路径）。
 
 ## 安装
 
 ```sh
-# 用户模式（重装即更新）
+# User mode (reinstall to update)
 herdr plugin install July24/pier/packages/pier-workbench --yes
-# 开发模式（本地 link，改码即生效）
+# Dev mode (local link, edits take effect immediately)
 herdr plugin link /path/to/pier/packages/pier-workbench   # Windows: F:\path\to\pier\packages\pier-workbench
 ```
 
@@ -24,6 +26,6 @@ herdr plugin link /path/to/pier/packages/pier-workbench   # Windows: F:\path\to\
 
 ## 依赖
 
-- herdr ≥ 0.8.0（Windows 为 preview beta）
+- herdr ≥ 0.9.0（Windows 为 preview beta）
 - Node ≥ 22（跑 scripts）
 - 对端：pi 0.84+ 装有 `@pier/ext` 扩展且在该 workspace 的受管 pane 内运行
