@@ -35,6 +35,13 @@ import { createSessionIo } from '../subagent-session-io.ts';
 import { createSpawner } from '../subagent-spawn.ts';
 import { createPoller } from '../subagent-poll-loop.ts';
 import { createGcController } from '../subagent-gc.ts';
+import {
+  computeSubagentOutputDelta,
+  formatSubagentOutput,
+  resolveSubagentStatus,
+  type SubagentOutputCursor,
+} from '../subagent-output-core.ts';
+import type { HerdrAgentState } from '../herdr-client.ts';
 
 
 interface SubagentEnv {
@@ -68,7 +75,7 @@ interface SubagentDeps {
 
 const SUBAGENT_DESCRIPTION = [
   'Delegate a self-contained subtask to an isolated subagent that runs in its own herdr pane as an interactive pi session (separate context window; it does NOT see this conversation). A human can also open that pane and talk to the subagent directly.',
-  '`action` (optional, default "spawn"): spawn | resume | list | send | interrupt.',
+  '`action` (optional, default "spawn"): spawn | resume | list | send | interrupt | output.',
   '[spawn] `description`: short display label for the pane; `prompt`: the COMPLETE task — include all needed context, since only the prompt reaches the subagent. The description also doubles as the todo-reconcile key: when delegating a todo entry, use the entry content WITHOUT its ` <sub>` marker as the description, and the entry is auto-completed when this subagent settles.',
   '[spawn] The subagent shares this workspace and works independently; the result is its final text answer.',
   '[spawn] Concurrent delegation is supported: several spawn calls in one message run in parallel (at most 4 at once). Use this for well-scoped, independent subtasks; do not delegate the current step itself.',
@@ -80,6 +87,7 @@ const SUBAGENT_DESCRIPTION = [
   '[list] no extra parameters: list background subagents with live state (running / idle), pane ids, last activity, role, and descriptions. Foreground one-shot panes are not listed.',
   '[send] `agentId` + `message`: follow-up to a background subagent. If working, delivered at next tool-call gap (steer, seconds); if idle, wakes a new turn. After settle, send to wake it; do not spawn a duplicate.',
   '[interrupt] `agentId`: abort the current turn (fire-and-return). The pane stays; you can send again.',
+  '[output] `agentId` (required, the subagent pane id): view incremental output of a running or background subagent since the last output call. Text returned to the model is bounded (default 6000 chars) with status metadata (running/idle/blocked/settled), revision, truncated flag, and whether the buffer reset/scrolled (restart: true). Use this to observe subagent progress before settlement.',
 ].join(' ');
 
 /** Subagent concurrency limit (max parallel delegations) */
@@ -94,6 +102,20 @@ function defaultAgentSessionsDir(): string {
 
 function agentRootDir(): string {
   return dirname(defaultAgentSessionsDir());
+}
+
+async function readSubagentOutput(
+  client: HerdrClientLike,
+  paneId: string,
+): Promise<{ text: string; revision: number; truncated: boolean }> {
+  if (typeof client.readAgent === 'function') {
+    try {
+      return await client.readAgent(paneId, { source: 'recent', stripAnsi: true });
+    } catch {
+      return await client.readPane(paneId, { source: 'recent', stripAnsi: true });
+    }
+  }
+  return await client.readPane(paneId, { source: 'recent', stripAnsi: true });
 }
 
 export default function subagentPlugin(ctx: Context): void {
@@ -116,6 +138,8 @@ export default function subagentPlugin(ctx: Context): void {
   const lastMachineInjectAt = new Map<string, number>();
   /* Persist the subagent registry as custom branch state so parent restarts can rebuild it. */
   const subs = new Map<string, SubEntry>();
+  /** In-memory cursor for incremental subagent output observation. */
+  const outputCursors = new Map<string, SubagentOutputCursor>();
   /** D98 excludes branches during worktree-add-to-registry races from orphan collection. */
   const pendingIsolateBranches = new Set<string>();
   /** D50 tracks the latest machine request per pane for interrupt claims and poll deduplication. */
@@ -555,6 +579,76 @@ export default function subagentPlugin(ctx: Context): void {
       }
   }
 
+  async function executeSubagentOutput(params: Record<string, unknown> | undefined) {
+    const agentId = String(params?.agentId ?? '').trim();
+    if (!agentId) {
+      return { content: [{ type: 'text', text: 'Error: missing agentId for output (see action list)' }], details: {} };
+    }
+    const entry = subs.get(agentId);
+    if (!entry) {
+      return { content: [{ type: 'text', text: `Error: unknown subagent id "${agentId}" (see action list)` }], details: {} };
+    }
+    let agentState: HerdrAgentState | null = null;
+    let askFlag: string | null = null;
+    try {
+      const agents = await client.listAgents();
+      const a = agents.find((x) => x.paneId === entry.paneId);
+      agentState = a?.status ?? null;
+      askFlag = a?.tokens?.['pi-ask'] ?? null;
+    } catch {
+      /* Best effort */
+    }
+    if (!askFlag && agentState === 'blocked') {
+      try {
+        askFlag = await readAskFlag(entry.paneId);
+      } catch {
+        /* Best effort */
+      }
+    }
+    const status = resolveSubagentStatus({
+      localStatus: entry.status,
+      herdrStatus: agentState,
+      hasAskFlag: Boolean(askFlag),
+    });
+
+    let rawRead: { text: string; revision: number; truncated: boolean };
+    try {
+      rawRead = await readSubagentOutput(client, entry.paneId);
+    } catch (err) {
+      return { content: [{ type: 'text', text: `Error: failed to read output for subagent ${entry.paneId}: ${(err as Error).message}` }], details: {} };
+    }
+
+    const prevCursor = outputCursors.get(entry.paneId);
+    const maxChars = typeof params?.max_chars === 'number'
+      ? params.max_chars
+      : typeof params?.maxChars === 'number'
+        ? params.maxChars
+        : undefined;
+    const deltaResult = computeSubagentOutputDelta(prevCursor, rawRead.text, { maxChars });
+    outputCursors.set(entry.paneId, deltaResult.nextCursor);
+
+    const formatted = formatSubagentOutput({
+      paneId: entry.paneId,
+      status,
+      revision: rawRead.revision,
+      bufferTruncated: rawRead.truncated,
+      deltaResult,
+      askQuestion: askFlag,
+    });
+
+    return {
+      content: [{ type: 'text', text: formatted }],
+      details: {
+        paneId: entry.paneId,
+        status,
+        revision: rawRead.revision,
+        truncated: rawRead.truncated || deltaResult.truncated,
+        restart: deltaResult.restart,
+        deltaLength: deltaResult.delta.length,
+      },
+    };
+  }
+
   scoped.registerTool({
     name: 'subagent',
     label: 'Subagent',
@@ -566,6 +660,7 @@ export default function subagentPlugin(ctx: Context): void {
         Type.Literal('list'),
         Type.Literal('send'),
         Type.Literal('interrupt'),
+        Type.Literal('output'),
       ], { description: 'Operation to perform (default: spawn)' })),
       description: Type.Optional(Type.String({ description: '[spawn] Short label for this subtask (pane title)' })),
       prompt: Type.Optional(Type.String({ description: '[spawn] The complete self-contained task for the subagent' })),
@@ -576,8 +671,9 @@ export default function subagentPlugin(ctx: Context): void {
       tab: Type.Optional(Type.String({ description: '[spawn] Name of a task tab to place the subagent into (join if exists, otherwise create). Default placement groups by git worktree.' })),
       allowed_tools: Type.Optional(Type.Array(Type.String(), { description: '[spawn] Additional tools for role composition (union with role baseline)' })),
       taskId: Type.Optional(Type.String({ description: '[resume] The task id to revive from the delegation ledger' })),
-      agentId: Type.Optional(Type.String({ description: '[send|interrupt] The subagent id (herdr pane id)' })),
+      agentId: Type.Optional(Type.String({ description: '[send|interrupt|output] The subagent id (herdr pane id)' })),
       message: Type.Optional(Type.String({ description: '[send] The follow-up message' })),
+      max_chars: Type.Optional(Type.Integer({ description: '[output] Maximum characters of output delta to return (default 6000, 100-16000)' })),
     }),
     async execute(toolCallId, params, signal, onUpdate, toolCtx) {
       void toolCallId;
@@ -587,8 +683,9 @@ export default function subagentPlugin(ctx: Context): void {
       if (action === 'list') return executeSubagentList();
       if (action === 'send') return executeSubagentSend(params);
       if (action === 'interrupt') return executeSubagentInterrupt(params);
+      if (action === 'output') return executeSubagentOutput(params);
       if (action !== 'spawn') {
-        return { content: [{ type: 'text', text: `Error: unknown action "${action}" (valid: spawn, resume, list, send, interrupt)` }], details: {} };
+        return { content: [{ type: 'text', text: `Error: unknown action "${action}" (valid: spawn, resume, list, send, interrupt, output)` }], details: {} };
       }
       const launch = planLaunchValidation(params, client.available);
       if (launch.kind === 'error') {

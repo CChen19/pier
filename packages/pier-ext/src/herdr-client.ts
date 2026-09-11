@@ -132,6 +132,12 @@ export interface HerdrClientLike {
     lines?: number;
     stripAnsi?: boolean;
   }): Promise<{ text: string; revision: number; truncated: boolean }>;
+  /** Read the agent output buffer via herdr 0.9 agent.read RPC. */
+  readAgent(target: string, opts?: {
+    source?: 'visible' | 'recent' | 'recent_unwrapped';
+    lines?: number;
+    stripAnsi?: boolean;
+  }): Promise<{ text: string; revision: number; truncated: boolean }>;
   /** M14: Wait for output to match a substring or regex; return null on timeout and throw on error. */
   waitForOutput(paneId: string, match: { type: 'substring' | 'regex'; value: string }, timeoutMs: number): Promise<boolean | null>;
   close(): void;
@@ -197,6 +203,9 @@ export class NoopHerdrClient implements HerdrClientLike {
   async tabClose(): Promise<void> {}
   async sendPaneKeys(): Promise<void> {}
   async readPane(): Promise<{ text: string; revision: number; truncated: boolean }> {
+    return { text: '', revision: 0, truncated: false };
+  }
+  async readAgent(): Promise<{ text: string; revision: number; truncated: boolean }> {
     return { text: '', revision: 0, truncated: false };
   }
   async waitForOutput(): Promise<boolean | null> {
@@ -550,6 +559,26 @@ export class HerdrClient implements HerdrClientLike {
       source: opts.source ?? 'recent',
       format: 'text',
       strip_ansi: opts.stripAnsi ?? false,
+      ...(opts.lines != null ? { lines: opts.lines } : {}),
+    })) as { read?: { text?: unknown; revision?: unknown; truncated?: unknown }; text?: unknown; revision?: unknown; truncated?: unknown } | null;
+    const payload = result?.read ?? result ?? {};
+    return {
+      text: typeof payload.text === 'string' ? payload.text : '',
+      revision: typeof payload.revision === 'number' ? payload.revision : 0,
+      truncated: payload.truncated === true,
+    };
+  }
+
+  async readAgent(target: string, opts: {
+    source?: 'visible' | 'recent' | 'recent_unwrapped';
+    lines?: number;
+    stripAnsi?: boolean;
+  } = {}): Promise<{ text: string; revision: number; truncated: boolean }> {
+    const result = (await this.request('agent.read', {
+      target,
+      source: opts.source ?? 'recent',
+      format: 'text',
+      strip_ansi: opts.stripAnsi ?? true,
       ...(opts.lines != null ? { lines: opts.lines } : {}),
     })) as { read?: { text?: unknown; revision?: unknown; truncated?: unknown }; text?: unknown; revision?: unknown; truncated?: unknown } | null;
     const payload = result?.read ?? result ?? {};
