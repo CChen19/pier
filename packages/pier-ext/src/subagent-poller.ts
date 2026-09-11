@@ -6,6 +6,8 @@
  * window explicit and unit-testable without a live pane.
  */
 
+import { formatSettlementNotice } from './vocab.ts';
+
 export const TAKEOVER_RECHECK_MS = 5_000;
 export const OBSERVATION_TICK_MS = 1_000;
 
@@ -88,3 +90,38 @@ export function planVacuumTick(input: {
   if (input.now - lastActivityAt > input.timeoutMs) return { refreshActivity, action: 'timeout' };
   return { refreshActivity, action: 'continue' };
 }
+
+/** Determine whether subSessionState qualifies as an observation candidate. */
+export function isSettlementCandidate(input: {
+  text: string | null;
+  pendingTool: boolean;
+  activity: boolean;
+}): boolean {
+  return Boolean(input.text || (!input.pendingTool && input.activity));
+}
+
+/** Formats the combined settlement notice with optional git worktree stat. */
+export function buildSettlementNoticeText(
+  agentLabel: string,
+  closing: string | null,
+  statLine: string | null,
+): string {
+  const base = formatSettlementNotice(agentLabel, closing);
+  return statLine ? `${base}\n${statLine}` : base;
+}
+
+/** Formats notice when background subagent pane was closed prematurely. */
+export function formatPaneClosedNotice(paneId: string, description: string): string {
+  return `Background subagent ${paneId} (${description}) stopped before settling (its pane closed).`;
+}
+
+/** Formats notice when background subagent exceeded observation timeout. */
+export function formatObservationTimeoutNotice(input: {
+  paneId: string;
+  description: string;
+  idleSeconds: number;
+  startedAtIso: string;
+}): string {
+  return `Background subagent ${input.paneId} (${input.description}) has shown no progress for ${input.idleSeconds}s (observed since ${input.startedAtIso}). Run subagent(action: "list") to check its live state; if it is working, let it run — its settlement notice will arrive automatically. Do not sleep-wait.`;
+}
+
