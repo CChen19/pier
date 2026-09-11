@@ -2,6 +2,8 @@
 
 Short WHY notes for load-bearing choices. Code is still the source of truth.
 
+For a comprehensive index of D-series decisions cited in codebase comments, see [Design Decisions Index](../decisions.md).
+
 | ID | Decision |
 | --- | --- |
 | [0001](0001-session-dir-encoding.md) | Collision-resistant session dir names with dual-read |
