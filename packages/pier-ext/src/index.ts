@@ -32,9 +32,7 @@ import {
   currentActivity,
 } from './todo-core.ts';
 
-/** Tier 2: record the synthesized manifest that governed a worker session (D38-compatible and branch-replayable). */
-const ROLE_MANIFEST_CUSTOM_TYPE = 'pi-herdr.role-manifest';
-
+import { APPROVAL_NEEDED_CUSTOM_TYPE, ROLE_MANIFEST_CUSTOM_TYPE, installRenderers } from './renderers.ts';
 import { createHerdrClient } from './herdr-client.ts';
 // The subagent family moved to core/subagent.ts (loader entry, D78/D81); its history-store,
 // session-tail, and gc-core imports moved with it, leaving index.ts only the common readers.
@@ -98,6 +96,10 @@ export default async function (pi: ExtensionAPI) {
     (mode.composeMaster ? composeMasterRuntime() : null);
   const todos = new TodosService(TodosService.configFromRuntime(runtimeManifest, isSubagent));
   const { client, env } = createHerdrClient();
+
+  // Transcript polish for pier's own custom entries and reminder messages; display-only and
+  // best-effort (older pi builds without the renderer API simply keep the raw rows).
+  const rendererTypes = installRenderers(pi);
 
   let sessionId: string = process.env.PI_SESSION_FILE ?? process.env.PI_SESSION_ID ?? '';
   /** M16: completion timestamps used as rate-estimation input, appended with todo.completed events. */
@@ -316,14 +318,16 @@ export default async function (pi: ExtensionAPI) {
     const tool = typeof event?.toolName === 'string' ? event.toolName : '';
     const gate = planToolGate(tool, runtimeManifest);
     if (gate.kind === 'deny') {
-      return { block: true, reason: gate.reason };
+      // terminate (pi 0.84.1+) stops a batch whose results are all terminating without another
+      // model call, so a blocked worker tool no longer costs an extra round trip.
+      return { block: true, reason: gate.reason, terminate: true };
     }
     if (gate.kind === 'ask') {
       console.error(`${gate.notice} (v1 soft-approval: allowed, hard gate lands in v2)`);
       // Durable trace (V56 anchor): TUI redraw erases stderr, so the session custom entry is authoritative.
       try {
         (pi as { appendEntry?: (customType: string, data: unknown) => void }).appendEntry?.(
-          'pi-herdr.approval-needed',
+          APPROVAL_NEEDED_CUSTOM_TYPE,
           { role: runtimeManifest.role, tool, ts: Date.now() },
         );
       } catch {
@@ -394,32 +398,39 @@ export default async function (pi: ExtensionAPI) {
   // pane.report_agent is ignored while that authority is live
   // (screen_detection_skip_reason=full_lifecycle_hook_authority). Emit the event so
   // herdr:pi publishes blocked; keep report_agent as fallback when it is absent.
-  function enterBlocked(label: string | null): void {
+  /**
+   * Open one human gate. Nested gates (pier's ask tool plus pi's own ctx.ui prompt, or an
+   * external herdr:blocked producer) are coalesced: only the 0→1 transition reports blocked,
+   * marks the ask flag and folds the widget. Returns true when this call opened the outer gate.
+   */
+  function enterBlocked(label: string | null): boolean {
     blockedDepth += 1;
+    if (blockedDepth > 1) return false;
     reportAgent('blocked', label);
     // D95: human-gate marker lets the workbench heatmap distinguish ask from block.
     if (label) void client.reportAskFlag(label).catch(() => {});
     // Gate open collapses the todo widget to one line — the question owns the fixed area.
     todoUi.rerenderWidget?.();
+    return true;
   }
-  function exitBlocked(): void {
+  /** Close one gate; only the 1→0 transition restores the pre-gate state. Returns true when closed. */
+  function exitBlocked(): boolean {
     blockedDepth = Math.max(0, blockedDepth - 1);
-    if (blockedDepth === 0) {
-      reportAgent(agentActive ? 'working' : 'idle', agentActive ? currentActivity(todos.items) : null);
-      // D95: gate released → clear marker.
-      void client.reportAskFlag(null).catch(() => {});
-    }
     // Gate closed → restore the full widget window.
     todoUi.rerenderWidget?.();
+    if (blockedDepth > 0) return false;
+    reportAgent(agentActive ? 'working' : 'idle', agentActive ? currentActivity(todos.items) : null);
+    // D95: gate released → clear marker.
+    void client.reportAskFlag(null).catch(() => {});
+    return true;
   }
 
   // emit() is synchronous; this flag stops our own listener from double-counting depth.
   let publishingHerdrBlocked = false;
-  function publishHerdrBlocked(active: boolean, label: string | null): void {
+  /** Publish the herdr:blocked edge for pi-herdr's own gates; no-op re-entry is prevented by the flag. */
+  function emitHerdrBlocked(active: boolean, label: string | null): void {
     publishingHerdrBlocked = true;
     try {
-      if (active) enterBlocked(label);
-      else exitBlocked();
       pi.events.emit(
         'herdr:blocked',
         active ? { active: true, ...(label ? { label } : {}) } : { active: false },
@@ -427,6 +438,11 @@ export default async function (pi: ExtensionAPI) {
     } finally {
       publishingHerdrBlocked = false;
     }
+  }
+  function publishHerdrBlocked(active: boolean, label: string | null): void {
+    if (active) enterBlocked(label);
+    else exitBlocked();
+    emitHerdrBlocked(active, label);
   }
   pi.events.on('herdr:blocked', (data) => {
     if (publishingHerdrBlocked) return;
@@ -439,6 +455,28 @@ export default async function (pi: ExtensionAPI) {
       return;
     }
     enterBlocked('label' in data && typeof data.label === 'string' ? data.label : null);
+  });
+
+  /* ── Generic human-gate reporting (pi 0.84.4+) ─────────────────────────
+   * Why: `ui_prompt_start` / `ui_prompt_end` fire around every blocking ctx.ui prompt
+   * (`select` / `confirm` / `input` / `editor` / `custom`) from any extension, and they are
+   * edge-triggered. That makes them authoritative for "waiting for a human", which is why the
+   * ask tool no longer needs its 5s refresh interval: reportAgent() already refuses to let a
+   * working/idle report overwrite an open gate, so a single blocked report per gate is enough.
+   * Probed through a structural type because the events postdate our pinned pi devDependency. */
+  const uiPromptEvents = pi as unknown as {
+    on?: (name: 'ui_prompt_start' | 'ui_prompt_end', handler: (event: unknown) => void) => void;
+  };
+  uiPromptEvents.on?.('ui_prompt_start', (event) => {
+    const rec = (event ?? {}) as { kind?: unknown; title?: unknown };
+    const title = typeof rec.title === 'string' && rec.title.trim() ? rec.title.trim() : null;
+    const kind = typeof rec.kind === 'string' ? rec.kind : 'prompt';
+    // The ask tool opens its own gate first, so this is usually a nested (no-op) transition;
+    // prompts from other extensions or pi core open the gate here.
+    if (enterBlocked(title ?? kind)) emitHerdrBlocked(true, title);
+  });
+  uiPromptEvents.on?.('ui_prompt_end', () => {
+    if (exitBlocked()) emitHerdrBlocked(false, null);
   });
 
   /* ── Tool: ask_user_question (v1.3 M8 human gate, available to master and subagents) ── */
@@ -456,14 +494,12 @@ export default async function (pi: ExtensionAPI) {
       if (!hasAskUi(ui)) return noUiResult();
       const label = gateLabel(prepared.spec);
       publishHerdrBlocked(true, label);
-      // Fallback when herdr:pi is absent: a one-shot pi-herdr blocked report can lose
-      // to later working reports; refresh while the gate is open. Do not re-emit
-      // herdr:blocked here — official blockedCount is edge-triggered.
-      const hb = setInterval(() => { reportAgent('blocked', label); }, 5000);
+      // The gate stays reported for the whole wait: reportAgent() drops working/idle reports while
+      // blockedDepth > 0, and pi's ui_prompt_start/end events keep the depth honest for prompts
+      // that do not come from this tool. (The old 5s refresh interval is obsolete.)
       try {
         return await runAsk(prepared.spec, ui, signal instanceof AbortSignal ? signal : undefined);
       } finally {
-        clearInterval(hb);
         publishHerdrBlocked(false, null);
       }
     },
