@@ -8,22 +8,25 @@ import { appendFileSync } from 'node:fs';
 import type { Context } from '@deepseek-ai/cordis';
 import type { HerdrClientLike, HerdrAgentState } from './herdr-client.ts';
 import { applyReportedSessionFile } from './history-store.ts';
-import { runtimePolicy } from './runtime-policy.ts';
+import { runtimePolicy, type RuntimePolicy } from './runtime-policy.ts';
 import { mountSubagentScope } from './subagent-scope.ts';
 import {
   OBSERVATION_TICK_MS,
   TAKEOVER_RECHECK_MS,
+  buildSettlementNoticeText,
+  formatObservationTimeoutNotice,
+  formatPaneClosedNotice,
+  isSettlementCandidate,
   planBlockedGate,
   planObservationTick,
   planTakeoverTick,
   planVacuumTick,
 } from './subagent-poller.ts';
 import { buildBlockedGateNotice, type SubEntry } from './subagent-core.ts';
-import { formatSettlementNotice } from './vocab.ts';
 import type { SessionIo } from './subagent-session-io.ts';
 import type { GitIo } from './subagent-git-io.ts';
 
-function sleep(ms: number): Promise<void> {
+export function sleep(ms: number): Promise<void> {
   const wait = Promise.withResolvers<void>();
   setTimeout(wait.resolve, ms);
   return wait.promise;
@@ -43,20 +46,29 @@ export interface PollerHost {
   reconcileOnSettlement(description: string, outcome: 'settled' | 'failed'): string[];
   withReconcileNotes(base: string, notes: readonly string[]): string;
   claimSettleNotice(key: string): boolean;
+  /** Optional sleep seam for timing control without real delays */
+  sleep?: (ms: number) => Promise<void>;
+  /** Optional clock seam for deterministic virtual timestamps */
+  now?: () => number;
+  /** Optional runtime policy overrides for testing */
+  policy?: Partial<RuntimePolicy>;
 }
 
 export interface Poller {
-  startPoller(paneId: string, cwd: string, spawnedAt: number, injectTs: number, description: string, requestId: string): void;
+  startPoller(paneId: string, cwd: string, spawnedAt: number, injectTs: number, description: string, requestId: string): Promise<void>;
   readonly pollers: Set<string>;
 }
 
 export function createPoller(h: PollerHost): Poller {
   const pollers = new Set<string>();
   const subScopes = new Map<string, { dispose: () => Promise<void> }>();
-  const observeWindowMs = runtimePolicy.observationWindowMs;
-  const machineInjectGraceMs = runtimePolicy.settlementWindowMs;
-  const takeoverIdleMs = runtimePolicy.settlementWindowMs;
-  const timeoutMs = runtimePolicy.subagentTimeoutMs;
+  const doSleep = h.sleep ?? sleep;
+  const now = h.now ?? Date.now;
+  const observeWindowMs = h.policy?.observationWindowMs ?? runtimePolicy.observationWindowMs;
+  const machineInjectGraceMs = h.policy?.settlementWindowMs ?? runtimePolicy.settlementWindowMs;
+  const takeoverIdleMs = h.policy?.settlementWindowMs ?? runtimePolicy.settlementWindowMs;
+  const timeoutMs = h.policy?.subagentTimeoutMs ?? runtimePolicy.subagentTimeoutMs;
+  const pollIntervalMs = h.policy?.pollIntervalMs ?? runtimePolicy.pollIntervalMs;
 
   async function pollLoop(
     paneId: string,
@@ -67,10 +79,10 @@ export function createPoller(h: PollerHost): Poller {
     requestId: string,
   ): Promise<void> {
     void spawnedAt;
-    const startedAt = Date.now();
-    let lastActivityAt = Date.now();
+    const startedAt = now();
+    let lastActivityAt = now();
     const pollTrace = process.env.PI_HERDR_TRACE
-      ? (msg: string) => { try { appendFileSync(process.env.PI_HERDR_TRACE!, `d98poll ${Date.now()} ${paneId} ${msg}\n`); } catch { /* best-effort */ } }
+      ? (msg: string) => { try { appendFileSync(process.env.PI_HERDR_TRACE!, `d98poll ${now()} ${paneId} ${msg}\n`); } catch { /* best-effort */ } }
       : null;
     try {
       while (true) {
@@ -85,11 +97,11 @@ export function createPoller(h: PollerHost): Poller {
               currentStatus: agent?.status ?? null,
               previousStatus: entry.lastAgentStatus,
               idleStartedAt: entry.observationStartedAt,
-              now: Date.now(),
+              now: now(),
               idleMs: takeoverIdleMs,
             });
             if (tick.kind === 'start-idle') {
-              entry.observationStartedAt = Date.now();
+              entry.observationStartedAt = now();
               entry.lastAgentStatus = 'idle';
               h.persistSubs();
             } else if (tick.kind === 'return-control') {
@@ -106,14 +118,14 @@ export function createPoller(h: PollerHost): Poller {
             /* status probe failure must not stop the poller */
           }
           if (entry.userTakeover) {
-            await sleep(TAKEOVER_RECHECK_MS);
+            await doSleep(TAKEOVER_RECHECK_MS);
             continue;
           }
         }
 
         let state: HerdrAgentState | null;
         try {
-          state = await h.client.waitAgent(paneId, ['idle', 'done', 'blocked'], runtimePolicy.pollIntervalMs);
+          state = await h.client.waitAgent(paneId, ['idle', 'done', 'blocked'], pollIntervalMs);
         } catch {
           state = null;
         }
@@ -134,21 +146,21 @@ export function createPoller(h: PollerHost): Poller {
         if (state === 'idle' || state === 'done') {
           const s = await h.session.subSessionState(paneId, cwd, injectTs);
           pollTrace?.(`state=${state} text=${s.text ? s.text.length : 'null'} pend=${s.pendingTool} act=${s.activity} obs=${String(entry.observationStartedAt ?? null)} takeover=${String(entry.userTakeover === true)}`);
-          if (s.text || (!s.pendingTool && s.activity)) {
+          if (isSettlementCandidate(s)) {
             const closing = s.text;
             const obs = planObservationTick({
               observationStartedAt: entry.observationStartedAt,
-              now: Date.now(),
+              now: now(),
               windowMs: observeWindowMs,
               agentStatus: null,
-              machineInjectAgoMs: Date.now() - (h.lastMachineInjectAt.get(paneId) ?? 0),
+              machineInjectAgoMs: now() - (h.lastMachineInjectAt.get(paneId) ?? 0),
               machineInjectGraceMs,
             });
             if (obs.kind === 'start-observation') {
-              entry.observationStartedAt = Date.now();
+              entry.observationStartedAt = now();
               entry.lastAgentStatus = 'idle';
               h.persistSubs();
-              await sleep(OBSERVATION_TICK_MS);
+              await doSleep(OBSERVATION_TICK_MS);
               continue;
             }
             let agentStatus: string | null = null;
@@ -160,27 +172,27 @@ export function createPoller(h: PollerHost): Poller {
             }
             const obs2 = planObservationTick({
               observationStartedAt: entry.observationStartedAt,
-              now: Date.now(),
+              now: now(),
               windowMs: observeWindowMs,
               agentStatus,
-              machineInjectAgoMs: Date.now() - (h.lastMachineInjectAt.get(paneId) ?? 0),
+              machineInjectAgoMs: now() - (h.lastMachineInjectAt.get(paneId) ?? 0),
               machineInjectGraceMs,
             });
             if (obs2.kind === 'user-takeover') {
               entry.userTakeover = true;
-              entry.observationStartedAt = Date.now();
+              entry.observationStartedAt = now();
               entry.lastAgentStatus = 'working';
               h.persistSubs();
               continue;
             }
             if (obs2.kind === 'machine-inject-reset') {
-              entry.observationStartedAt = Date.now();
+              entry.observationStartedAt = now();
               h.persistSubs();
-              await sleep(OBSERVATION_TICK_MS);
+              await doSleep(OBSERVATION_TICK_MS);
               continue;
             }
             if (obs2.kind === 'wait') {
-              await sleep(OBSERVATION_TICK_MS);
+              await doSleep(OBSERVATION_TICK_MS);
               continue;
             }
             entry.observationStartedAt = null;
@@ -191,12 +203,12 @@ export function createPoller(h: PollerHost): Poller {
               );
             }
             entry.status = 'consumed';
-            entry.consumedAt = Date.now();
+            entry.consumedAt = now();
             h.writeHistory(entry, { outcome: closing }, 'poll-settle');
             const notes = h.reconcileOnSettlement(description, 'settled');
             const statLine = await h.git.worktreeStatLine(entry);
             const notice = h.withReconcileNotes(
-              formatSettlementNotice(`${paneId} (${description})`, closing) + (statLine ? `\n${statLine}` : ''),
+              buildSettlementNoticeText(`${paneId} (${description})`, closing, statLine),
               notes,
             );
             if (h.claimSettleNotice(`${paneId}:${requestId}`)) {
@@ -218,19 +230,19 @@ export function createPoller(h: PollerHost): Poller {
         const vacuum = planVacuumTick({
           waitState: state,
           paneAlive: alive,
-          now: Date.now(),
+          now: now(),
           lastActivityAt,
           timeoutMs,
         });
-        if (vacuum.refreshActivity) lastActivityAt = Date.now();
+        if (vacuum.refreshActivity) lastActivityAt = now();
         if (vacuum.action === 'pane-closed') {
           entry.status = 'consumed';
-          entry.consumedAt = Date.now();
+          entry.consumedAt = now();
           h.persistSubs();
           h.writeHistory(entry, { outcome: 'pane closed before settling' }, 'poll-pane-closed');
           const notes = h.reconcileOnSettlement(description, 'failed');
           const notice = h.withReconcileNotes(
-            `Background subagent ${paneId} (${description}) stopped before settling (its pane closed).`,
+            formatPaneClosedNotice(paneId, description),
             notes,
           );
           try {
@@ -240,12 +252,17 @@ export function createPoller(h: PollerHost): Poller {
         }
         if (vacuum.action === 'timeout') {
           entry.status = 'consumed';
-          entry.consumedAt = Date.now();
+          entry.consumedAt = now();
           h.persistSubs();
           h.writeHistory(entry, { outcome: 'observation timeout' }, 'poll-timeout');
           const notes = h.reconcileOnSettlement(description, 'failed');
           const notice = h.withReconcileNotes(
-            `Background subagent ${paneId} (${description}) has shown no progress for ${Math.round((Date.now() - lastActivityAt) / 1000)}s (observed since ${new Date(startedAt).toISOString()}). Run subagent(action: "list") to check its live state; if it is working, let it run — its settlement notice will arrive automatically. Do not sleep-wait.`,
+            formatObservationTimeoutNotice({
+              paneId,
+              description,
+              idleSeconds: Math.round((now() - lastActivityAt) / 1000),
+              startedAtIso: new Date(startedAt).toISOString(),
+            }),
             notes,
           );
           try {
@@ -259,10 +276,10 @@ export function createPoller(h: PollerHost): Poller {
     }
   }
 
-  function startPoller(paneId: string, cwd: string, spawnedAt: number, injectTs: number, description: string, requestId: string): void {
-    if (pollers.has(paneId)) return;
+  function startPoller(paneId: string, cwd: string, spawnedAt: number, injectTs: number, description: string, requestId: string): Promise<void> {
+    if (pollers.has(paneId)) return Promise.resolve();
     pollers.add(paneId);
-    void (async () => {
+    return (async () => {
       try {
         if (!subScopes.has(paneId)) {
           const fiber = await mountSubagentScope(h.sessionRoot, paneId, {

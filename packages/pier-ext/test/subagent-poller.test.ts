@@ -4,6 +4,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildSettlementNoticeText,
+  formatObservationTimeoutNotice,
+  formatPaneClosedNotice,
+  isSettlementCandidate,
   planBlockedGate,
   planObservationTick,
   planTakeoverTick,
@@ -78,3 +82,38 @@ test('planVacuumTick: null waitState is heartbeat; dead pane beats timeout', () 
     waitState: 'idle', paneAlive: true, now: 50, lastActivityAt: 1, timeoutMs: 10,
   }), { refreshActivity: false, action: 'timeout' });
 });
+
+test('isSettlementCandidate: text present or activity without pending tool', () => {
+  assert.equal(isSettlementCandidate({ text: 'ready', pendingTool: false, activity: false }), true);
+  assert.equal(isSettlementCandidate({ text: null, pendingTool: false, activity: true }), true);
+  assert.equal(isSettlementCandidate({ text: null, pendingTool: true, activity: true }), false);
+  assert.equal(isSettlementCandidate({ text: null, pendingTool: false, activity: false }), false);
+});
+
+test('buildSettlementNoticeText: combines notice and optional statLine', () => {
+  const withStat = buildSettlementNoticeText('p1 (task)', 'finished all', '1 file changed');
+  assert.match(withStat, /Background subagent p1 \(task\) finished/);
+  assert.match(withStat, /Its closing message: finished all/);
+  assert.match(withStat, /\n1 file changed$/);
+
+  const withoutStat = buildSettlementNoticeText('p1 (task)', null, null);
+  assert.match(withoutStat, /It left no closing message\.$/);
+  assert.ok(!withoutStat.includes('\n'));
+});
+
+test('formatPaneClosedNotice: formats closed pane notice', () => {
+  const notice = formatPaneClosedNotice('p1', 'build assets');
+  assert.equal(notice, 'Background subagent p1 (build assets) stopped before settling (its pane closed).');
+});
+
+test('formatObservationTimeoutNotice: formats timeout notice with idle duration and start ISO', () => {
+  const notice = formatObservationTimeoutNotice({
+    paneId: 'p1',
+    description: 'build assets',
+    idleSeconds: 120,
+    startedAtIso: '2025-01-01T00:00:00.000Z',
+  });
+  assert.match(notice, /Background subagent p1 \(build assets\) has shown no progress for 120s \(observed since 2025-01-01T00:00:00\.000Z\)\./);
+  assert.match(notice, /Run subagent\(action: "list"\)/);
+});
+
