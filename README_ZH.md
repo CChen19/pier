@@ -29,7 +29,13 @@ pier 由**两个半区**组成，各装一处：
 - **软锁防争抢**（写路径按 pane 粒度锁 token，冲突时警告/阻止）
 - **角色档案**：`master` / `worker-default` 内置，自定义 role 按 `.pi-herdr/roles/<name>.json` 挂载；工具集按角色收敛（deny 规则不可绕过）
 - **人类闸门**：子代理 `ask_user_question` → 侧边栏 blocked 标记 + 通知；用户手动接管（ESC 打断后输入）→ 启发式检测自动暂停/归还 master 管理
+- **选择题选择器**：`multi: true` 的问题直接渲染成可勾选列表（空格逐行切换、`a` 全选、回车确认、esc 拒绝，实时显示已选数量），末行固定为自由输入；`allowOther: false` 则纯选择。RPC 模式 / 旧版 pi 自动回退到「输入编号」的文本路径
+- **任何对话框都算 blocked**：pi 0.84.4 对每个阻塞式 `ctx.ui` 对话框发 `ui_prompt_start` / `ui_prompt_end`，因此**任何扩展**的 `confirm`/`select`/`input`/`custom` 都会把该 pane 标为 blocked 并发出 `herdr:blocked` 边沿；嵌套闸门自动合并，旧的 5s blocked 刷新心跳已删除
+- **角色闸门提前终止**：被拒绝的 worker 工具调用返回 `terminate`，整批都是 terminating 时不再多跑一轮模型
+- **转写卡片**：pier 自己的会话条目（todo 编辑、子代理/终端注册表、角色清单、软审批）与提醒消息渲染为紧凑卡片，不再是裸 JSON——entry/message renderer，不依赖 pi-tui
 - **焦点热力布局**：聚焦 pane 原地放大（0.72 目标），blocked / ask / working / idle 按权重分大小，多余 pane 自动压成 title 条
+- **隔离工作树（`isolate`）回收有明确归属**：只回收本会话自己登记过的工作树，且**当前进程所在目录永不作为候选**——此前按 `refs/heads/pier/` 前缀匹配会删掉并行会话正在使用的工作树。清扫本会话未登记的分支需显式开启 `PIER_ISOLATE_SWEEP_ORPHANS=1`
+- **运维面板 + 侧边栏视图（herdr 0.9）**：`herdr plugin pane open --plugin pier.workbench --entrypoint dashboard` 打开实时 pane/tab/agent 看板（角色、状态、todo 进度）；插件还注册一个按 pier token 过滤的 `Pier` 侧边栏 agent 视图
 - **长任务生命周期（01a03c0d 复盘）**：观察超时改「无活动预算」（working 心跳续命，>10min 健康任务不再误杀）；follow_up 以 steer 间隙投递（补充契约秒级到达，不再排队整个 run）；GC 等结算通知送达再回收 pane；接管判定先归因机器注入；台账 via 标记 + closed 行 outcome 继承 + 僵尸 running 清扫；SUBS 快照哈希门控。可调：`PIER_SUBAGENT_TIMEOUT_MS`（无活动毫秒数）、`PIER_SETTLEMENT_WINDOW_MS`（ms）、`PIER_OBSERVATION_WINDOW_MS`（ms）
 - **结算通知折叠**：后台子代理结算不再攒到 run 结束洪水回填——turn 间隙注入，最多 3 条逐条展示、其余折叠指路
 
@@ -151,7 +157,7 @@ docs/              # 安装手册、role 档案说明、侧边栏 role 配置
 
 ```sh
 npm install --ignore-scripts
-npm test          # node --test，466 项单测（规划器 / todo 重放 / 反冻结陈旧度 / 会话尾 / GC / 生命周期）
+npm test          # node --test，563 项单测（规划器 / todo 重放 / 反冻结陈旧度 / 会话尾 / GC / 生命周期 / 渲染器 / 选择题选择器）
 ```
 
 ## 配置与环境变量

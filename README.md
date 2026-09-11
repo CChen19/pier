@@ -29,7 +29,13 @@ pier ships as **two halves**, installed separately:
 - **Soft write-locks**: per-pane lock tokens on write paths; cross-pane conflicts warn or block
 - **Role profiles**: built-in `master` / `worker-default`; custom roles as `.pi-herdr/roles/<name>.json`; toolset converges per role (deny rules are not bypassable)
 - **Human gate**: subagent `ask_user_question` → sidebar blocked marker + notification; manual takeover (ESC-interrupt then typing) is heuristically detected so the master pauses/returns management automatically
+- **Ask picker**: a `multi: true` question renders as an interactive toggle list (space toggles a row, `a` toggles all, enter confirms, esc declines, live selection count) with the free-text row pinned last; `allowOther: false` gives pure choice. The typed-index prompt remains the fallback for RPC mode and older pi
+- **Any prompt blocks the pane**: pi 0.84.4 emits `ui_prompt_start` / `ui_prompt_end` around every blocking `ctx.ui` dialog, so a `confirm`/`select`/`input`/`custom` prompt from *any* extension marks the pane blocked and emits the `herdr:blocked` edge; nested gates coalesce, and the old 5s blocked-refresh heartbeat is gone
+- **Role gate stops early**: a denied worker tool call returns `terminate`, so a batch whose results are all terminating ends without another model round trip
+- **Transcript cards**: pier's own session entries (todo edits, subagent/terminal registries, role manifests, soft approvals) and its reminder messages render as compact cards instead of raw JSON — entry/message renderers, no pi-tui dependency
 - **Isolated worktree subagents (`isolate`)**: heavy parallel writers get a fresh git worktree (branch `pier/<slug>` from your HEAD under `~/.herdr/worktrees/<repo>/`) with commit discipline in the prompt; settlement carries a diff summary (commits since base, files changed, uncommitted count); merge with `git merge --no-ff` and the worktree auto-removes once merged and clean — the branch stays for audit
+- **Worktree collection is ownership-scoped**: only worktrees this session registered are collected, and the running process's own directory is never a candidate — the earlier prefix match on `refs/heads/pier/` could delete a parallel session's worktree out from under it. Sweeping branches the session never registered is opt-in (`PIER_ISOLATE_SWEEP_ORPHANS=1`)
+- **Ops dashboard + sidebar view (herdr 0.9)**: `herdr plugin pane open --plugin pier.workbench --entrypoint dashboard` opens a live pane/tab/agent board (roles, states, todo progress); the plugin also registers a `Pier` sidebar agent view filtered on pier's pane token
 - **Long-task lifecycle (01a03c0d review)**: observation timeout is now an inactivity budget (working slices renew it — healthy >10min tasks are no longer killed); follow_up messages deliver via steer at tool-call gaps (supplementary contracts arrive in seconds, not after the whole run); GC waits for the settlement notice to be delivered before closing panes; takeover detection attributes recent machine injections first; ledger rows carry a `via` tag, closed rows inherit their outcome, zombie running rows are swept on startup; SUBS snapshots are hash-gated. Tunables: `PIER_SUBAGENT_TIMEOUT_MS` (inactivity ms), `PIER_SETTLEMENT_WINDOW_MS` (ms), `PIER_OBSERVATION_WINDOW_MS` (ms)
 - **Settlement notice folding**: subagent settlements no longer flood back when a long main run ends — they inject at turn gaps, up to 3 shown, the rest folded with pointers
 
@@ -154,7 +160,7 @@ docs/              # install guide, role profile docs, sidebar role config
 
 ```sh
 npm install --ignore-scripts
-npm test          # node --test, 466 unit tests (planner / todo replay / anti-freeze staleness / session tail / GC / lifecycle)
+npm test          # node --test, 563 unit tests (planner / todo replay / anti-freeze staleness / session tail / GC / lifecycle / renderers / ask picker)
 ```
 
 ## Configuration
