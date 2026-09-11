@@ -109,6 +109,22 @@ command = ["node", "scripts/restore-layout.mjs"]
 platforms = ["windows"]
 command = ["powershell.exe", "-Command", "$r = $env:HERDR_PLUGIN_ROOT; if ($r.Length -gt 4 -and $r[0] -eq [char]92 -and $r[1] -eq [char]92) { $r = $r.Substring(4) }; & node ($r + '/scripts/restore-layout.mjs')"]
 
+# ── Plugin Panes: Pier Ops Dashboard (0.9.0) ────────────────────────
+[[panes]]
+id = "dashboard"
+title = "Pier Dashboard"
+placement = "overlay"
+platforms = ["linux", "macos"]
+command = ["node", "scripts/dashboard.mjs"]
+
+[[panes]]
+id = "dashboard"
+title = "Pier Dashboard"
+placement = "overlay"
+platforms = ["windows"]
+command = ["powershell.exe", "-Command", "$r = $env:HERDR_PLUGIN_ROOT; if ($r.Length -gt 4 -and $r[0] -eq [char]92 -and $r[1] -eq [char]92) { $r = $r.Substring(4) }; & node ($r + '/scripts/dashboard.mjs')"]
+
+
 # ── Link handlers: recognize pi: session links and navigate to corresponding pane (M3, skeleton) ──
 #
 # [[link_handlers]]
