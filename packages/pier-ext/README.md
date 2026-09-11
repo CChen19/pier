@@ -50,7 +50,7 @@ The installer also verifies node / pi / herdr versions, probes local paths, and 
 ### Behaviors
 
 - **Human-in-the-loop**: every subagent is a visible, interactive TUI pane — step into it anytime to talk directly (fix bugs, take over, answer its `ask_user_question`). Blocked gates raise sidebar markers + notifications
-- **Any dialog blocks the pane**: pi's `ui_prompt_start` / `ui_prompt_end` events cover every blocking `ctx.ui` prompt, so a `confirm` / `select` / `input` / `custom` from any extension (not only pier's own ask tool) reports the pane as blocked and emits the `herdr:blocked` edge; nested gates are coalesced
+- **Blocking dialogs block the pane**: pi's `ui_prompt_start` / `ui_prompt_end` events cover the inherently blocking `ctx.ui` dialogs (`select` / `confirm` / `input` / `editor`), so a dialog from any extension (not only pier's own ask tool) reports the pane as blocked and emits the `herdr:blocked` edge; nested gates are coalesced. `custom` is excluded because pi also routes resident overlays through it (pier's slim-frame overlay never calls `done()`, and a resident overlay keeps pi's prompt span open anyway)
 - **Role gate stops early**: a tool call denied by the role manifest returns `terminate`, so a batch whose results are all terminating ends without another model round trip
 - **Readable transcript**: pier's own session entries (todo edits, subagent/terminal registries, role manifests, soft approvals) and its reminder messages render as compact cards instead of raw JSON
 - **Soft locks**: write paths lock per-pane; conflicts warn/block instead of racing
@@ -65,7 +65,7 @@ This extension mutates the pi session even outside herdr. After `pi install npm:
 |---|---|---|
 | `todo_write`, `/todos`, widget, anti-freeze, stop reminder | live | live |
 | `ask_user_question` | live (TUI select/input; multi questions use the toggle list) | live + blocked marker |
-| Blocked reporting for any `ctx.ui` dialog (`ui_prompt_start/end`) | live | live + blocked marker |
+| Blocked reporting for blocking `ctx.ui` dialogs (`ui_prompt_start/end`, `select`/`confirm`/`input`/`editor`) | live | live + blocked marker |
 | Hidden inject (`before_agent_start` todo-read; settle reminder) | live | live |
 | `subagent`, `terminal` | **not registered** | live |
 | `/locks`, write-lock on `write`/`edit` | not installed | live |

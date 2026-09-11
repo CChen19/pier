@@ -31,7 +31,7 @@ pier 由**两个半区**组成，各装一处：
 - **角色档案**：`master` / `worker-default` 内置，自定义 role 按 `.pi-herdr/roles/<name>.json` 挂载；工具集按角色收敛（deny 规则不可绕过）
 - **人类闸门**：子代理 `ask_user_question` → 侧边栏 blocked 标记 + 通知；用户手动接管（ESC 打断后输入）→ 启发式检测自动暂停/归还 master 管理
 - **选择题选择器**：`multi: true` 的问题直接渲染成可勾选列表（空格逐行切换、`a` 全选、回车确认、esc 拒绝，实时显示已选数量），末行固定为自由输入；`allowOther: false` 则纯选择。RPC 模式 / 旧版 pi 自动回退到「输入编号」的文本路径
-- **任何对话框都算 blocked**：pi 0.84.4 对每个阻塞式 `ctx.ui` 对话框发 `ui_prompt_start` / `ui_prompt_end`，因此**任何扩展**的 `confirm`/`select`/`input`/`custom` 都会把该 pane 标为 blocked 并发出 `herdr:blocked` 边沿；嵌套闸门自动合并，旧的 5s blocked 刷新心跳已删除
+- **阻塞式对话框会把 pane 标成 blocked**：pi 的 `ui_prompt_start` / `ui_prompt_end` 覆盖真正阻塞的 `ctx.ui` 对话框（`select` / `confirm` / `input` / `editor`），所以**任何扩展**弹出这类对话框时该 pane 会标 blocked 并发 `herdr:blocked` 边沿；嵌套闸门自动合并，ask 工具不再需要 5s 刷新心跳。`custom` 有意排除——pi 也用它跑常驻 overlay（pier 自己的窄格静帧 overlay 从不调用 `done()`），早先的错误归类会让一个正在工作的 pane 整场会话都标成 blocked
 - **角色闸门提前终止**：被拒绝的 worker 工具调用返回 `terminate`，整批都是 terminating 时不再多跑一轮模型
 - **转写卡片**：pier 自己的会话条目（todo 编辑、子代理/终端注册表、角色清单、软审批）与提醒消息渲染为紧凑卡片，不再是裸 JSON——entry/message renderer，不依赖 pi-tui
 - **焦点热力布局**：聚焦 pane 原地放大（0.72 目标），blocked / ask / working / idle 按权重分大小，多余 pane 自动压成 title 条

@@ -310,6 +310,10 @@ export default async function (pi: ExtensionAPI) {
       }
     }
     reportAgent('idle', null);
+    // Self-healing: a gate does not survive a process restart, but the ask marker lives in herdr
+    // with a 24h TTL, so a session killed while a dialog was open would otherwise keep the pane
+    // looking blocked forever. Depth is 0 on session_start, so this cannot race a live gate.
+    void client.reportAskFlag(null).catch(() => {});
   });
 
   /* ── Tier 2 Weeks 4–5: worker execution enforcement (the manifest's final gate) ──
@@ -464,19 +468,24 @@ export default async function (pi: ExtensionAPI) {
   });
 
   /* ── Generic human-gate reporting (pi 0.84.4+) ─────────────────────────
-   * Why: `ui_prompt_start` / `ui_prompt_end` fire around every blocking ctx.ui prompt
-   * (`select` / `confirm` / `input` / `editor` / `custom`) from any extension, and they are
-   * edge-triggered. That makes them authoritative for "waiting for a human", which is why the
-   * ask tool no longer needs its 5s refresh interval: reportAgent() already refuses to let a
-   * working/idle report overwrite an open gate, so a single blocked report per gate is enough.
+   * Why: `ui_prompt_start` / `ui_prompt_end` fire around blocking ctx.ui dialogs.
+   * Scope: only the inherently human-blocking kinds (select / confirm / input / editor).
+   * `custom` is deliberately excluded: pi routes both modals and *persistent overlays*
+   * through ctx.ui.custom, and pier itself registers a resident slim-frame overlay that
+   * never calls done() — treating it as a gate left the pane blocked (and the ask marker
+   * set) for the entire session while the agent kept working. Note that a resident overlay
+   * also holds pi's own prompt span open, so these events generally stop firing in herdr
+   * panes anyway; pier's ask tool opens its gate explicitly and is the reliable path there.
    * Probed through a structural type because the events postdate our pinned pi devDependency. */
   const uiPromptEvents = pi as unknown as {
     on?: (name: 'ui_prompt_start' | 'ui_prompt_end', handler: (event: unknown) => void) => void;
   };
+  const GATING_PROMPT_KINDS = new Set(['select', 'confirm', 'input', 'editor']);
   uiPromptEvents.on?.('ui_prompt_start', (event) => {
     const rec = (event ?? {}) as { kind?: unknown; title?: unknown };
     const title = typeof rec.title === 'string' && rec.title.trim() ? rec.title.trim() : null;
     const kind = typeof rec.kind === 'string' ? rec.kind : 'prompt';
+    if (!GATING_PROMPT_KINDS.has(kind)) return;
     // Normalize once so the gate report and the published edge carry the same label.
     const label = title ?? kind;
     // The ask tool opens its own gate first, so this is usually a nested (no-op) transition;

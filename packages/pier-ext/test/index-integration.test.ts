@@ -315,6 +315,26 @@ test('ui_prompt_start without a title falls back to the prompt kind', withCleanu
   await fire(pi, 'ui_prompt_end');
 }));
 
+test('ui_prompt_start with kind custom is not a human gate (resident overlays)', withCleanup(async (cleanup) => {
+  const pi = await workerPier(cleanup);
+  // pi routes both modals and persistent overlays through ctx.ui.custom; pier's own slim-frame
+  // overlay never calls done(), so treating it as a gate left working panes blocked all session.
+  await fire(pi, 'ui_prompt_start', { reason: 'ui_prompt', kind: 'custom' });
+  assert.deepEqual(pi.events.emitted.filter((e) => e.channel === 'herdr:blocked'), []);
+
+  // The gate still works for the inherently blocking dialogs, even right after an overlay.
+  await fire(pi, 'ui_prompt_start', { reason: 'ui_prompt', kind: 'confirm', title: 'Proceed?' });
+  assert.deepEqual(
+    pi.events.emitted.filter((e) => e.channel === 'herdr:blocked').map((e) => e.data),
+    [{ active: true, label: 'Proceed?' }],
+  );
+  await fire(pi, 'ui_prompt_end', {});
+  assert.deepEqual(
+    pi.events.emitted.filter((e) => e.channel === 'herdr:blocked').map((e) => e.data),
+    [{ active: true, label: 'Proceed?' }, { active: false }],
+  );
+}));
+
 test('a nested ui prompt inside the ask tool keeps exactly one blocked edge', withCleanup(async (cleanup) => {
   const pi = await workerPier(cleanup);
   const exec = pi.tools.get('ask_user_question')?.execute;
