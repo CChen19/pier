@@ -240,7 +240,17 @@ export function collectConfigSnapshot(deps: ConfigGuideDeps = {}): ConfigGuideSn
     } else {
       for (const key of ['piNode', 'piCli', 'extPath'] as const) {
         const value = readDotted(parsed.value, key);
-        if (typeof value !== 'string' || value === '') bootIssues.push(`${bootFound.path}: missing required key "${key}"`);
+        if (typeof value !== 'string' || value === '') {
+          bootIssues.push(`${bootFound.path}: missing required key "${key}"`);
+          continue;
+        }
+        // A stale absolute path is the most common post-reinstall breakage (e.g. an npm
+        // install path that no longer exists while pi still loads the extension elsewhere).
+        if (!existsSync(value)) {
+          bootIssues.push(
+            `${bootFound.path}: "${key}" points to a path that does not exist: ${value} (stale after a reinstall? re-run \`npx pier-setup@latest update --force\`)`,
+          );
+        }
       }
     }
   }

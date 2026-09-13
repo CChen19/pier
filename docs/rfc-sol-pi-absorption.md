@@ -46,6 +46,8 @@ NVIDIA 开源的 **SoL-Pi** 验证了四个能效机制。然而，SoL-Pi 独立
 
 遵循“**默认保守关闭、显式按需开启、独立日志审计、项目受信任才生效**”原则。
 
+> **运行时查看与修改入口**：五个配置平面的完整清单、优先级与"改哪个平面"查表见 [`docs/configuration.md`](configuration.md)；在会话里用只读命令 `/pier-config show [plane|all]` 查看**生效值与来源**、`/pier-config check` 校验、`/pier-config doc` 导出报告，无参 `/pier-config` 会把"引导式修改"交给 agent（D104，见 [ADR 0006](adr/0006-config-guide-command.md)）。
+
 ### 3.1 配置优先级与合并语义
 1. **环境变量**（最高优先级，便于 CI、Spike 与命令行临时调试）
 2. **工作区配置**：`<workspace>/.pi-herdr/config.json`（**必须 `ctx.isProjectTrusted()` 为 true 才生效**；未受信任时忽略并 stderr 告警）

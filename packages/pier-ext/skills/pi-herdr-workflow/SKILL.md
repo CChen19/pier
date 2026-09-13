@@ -88,6 +88,18 @@ The ledger is an append-only JSONL file at `~/.pi/agent/herdr-pi/history/<flatte
 
 Call: `subagent(action: "resume", taskId: "<uuid>")`
 
+## 2.5 Configuration questions
+
+When the user asks about pier/pi configuration (or asks to change it), start from the read-only
+guide instead of guessing: `/pier-config show all` reports every knob's **effective value and
+source** (`env > workspace > user > default`), `check` validates all five planes (efficiency
+D100–D103, roles, pi settings, boot-config, `PIER_*`/`PI_HERDR_*` env), and `doc` writes a report
+into `<repo>/.pi-herdr/config-report.md`. Bare `/pier-config` injects the full guided-change
+workflow. Key rules: an untrusted project's workspace layer is ignored (report it, never edit
+blindly); pi-owned settings go through pi's own `/settings`; prefer
+`npx pier-setup@latest update --force` for boot-config; change one plane at a time and show a diff
+before writing. Overview: `docs/configuration.md`.
+
 ## 3. Human gate
 
 - For a human decision (approval, tradeoff, direction), use `ask_user_question` (this plugin). Prefer 2-5 options with short labels and tradeoffs in `description`. Do **not** author an "Other" option — the UI appends "Other (type your own)". Use `recommended` (0-based) for the default and `questions` to batch related decisions (max 4). While waiting, your pane is **blocked** in herdr so the human can see and intervene. The answer comes back as the tool result, then you continue.

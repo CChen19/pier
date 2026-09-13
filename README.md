@@ -179,7 +179,7 @@ Runtime policies and operational limits are centralized in `runtime-policy.ts` (
 | `PIER_READY_TIMEOUT_MS` | `30000` | ms | Subagent pane pipe readiness wait timeout |
 | `PIER_SESSION_TTL_SECONDS` | `600` | s | Session retention TTL after subagent exit before GC cleanup |
 | `PIER_GIT_TIMEOUT_MS` | `10000` | ms | Execution timeout for git operations (worktree creation, diff summary, cleanup) |
-| `PI_HERDR_TERM_READ_MAX` | `4096` | chars | Maximum terminal buffer characters read per operation |
+| `PI_HERDR_TERM_READ_MAX` | `8000` | chars | Maximum terminal buffer characters read per operation (`/pier-config show env` reports the effective value) |
 
 ### Efficiency mechanisms (D100–D103, opt-in)
 

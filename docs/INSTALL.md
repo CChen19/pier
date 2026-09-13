@@ -88,7 +88,11 @@ copy packages\pier-workbench\scripts\boot-config.example.json <配置位置>\boo
 3. 每个子代理 = 独立 pane（可观察、可进入交互、blocked 时触发通知）；
 4. 重启恢复：herdr session 恢复自动重建 pane（`resume_agents_on_restore` 默认开，
    子代理的 rpc 会话文件已上报为 agent_session）；父 pi 会话用 `/resume` 恢复，
-   子代理目录经会话分支持久化重建。
+   子代理目录经会话分支持久化重建；
+5. 安装自检：在 pane 里跑 `/pier-config check`（5 平面的有效值与来源见 `/pier-config show all`）。
+   若 `boot` 平面报 `"extPath" points to a path that does not exist`，说明 boot-config 是上一次安装的陈旧路径
+   （`pi` 启动时会打印一条 `Failed to load extension: Cannot find module …`，不致命）——重跑
+   `npx pier-setup@latest update --force`，或按提示把该行改成当前 checkout 的 `packages/pier-ext/src/index.ts`。
 
 ## 5. 兼容矩阵与已知问题（herdr 0.8.0-preview / Windows 实测；0.8.2 / macOS 实测）
 

@@ -55,9 +55,12 @@ async function makeFixture(opts: { brokenRole?: boolean; reservedRole?: boolean;
   await writeFile(userConfigPath, JSON.stringify({ version: 1, onlineContextCompact: { enabled: true } }));
   // workspace efficiency config enables OBS with a custom threshold.
   await writeFile(workspaceConfigPath, JSON.stringify({ version: 1, observationPack: { enabled: true, thresholdBytes: 4096 } }));
+  // Real paths on disk: the boot plane verifies piNode/piCli/extPath exist.
+  const bootPaths = { piNode: join(base, 'node'), piCli: join(base, 'cli.js'), extPath: join(base, 'ext.ts') };
+  for (const target of Object.values(bootPaths)) await writeFile(target, '');
   await writeFile(
     join(herdrDir, 'boot-config.json'),
-    JSON.stringify({ mainTabLabel: 'main', piNode: '/usr/bin/node', piCli: '/usr/lib/cli.js', extPath: '/w/ext.ts' }),
+    JSON.stringify({ mainTabLabel: 'main', ...bootPaths }),
   );
   await writeFile(
     join(rolesDir, 'auditor.json'),
@@ -174,6 +177,23 @@ test('collectConfigSnapshot: flags broken JSON, invalid roles and bad env values
 
     const boot = snapshot.reports.find((r) => r.plane === 'boot')!;
     assert.equal(boot.ok, true, boot.issues.join(' | '));
+  } finally {
+    await rm(fx.base, { recursive: true, force: true });
+  }
+});
+
+test('collectConfigSnapshot: a stale boot-config path is reported as an issue', async () => {
+  const fx = await makeFixture();
+  try {
+    await writeFile(
+      join(fx.paths.herdrDir, 'boot-config.json'),
+      JSON.stringify({ mainTabLabel: 'main', piNode: '/nonexistent/node', piCli: '/nonexistent/cli.js', extPath: '/nonexistent/ext.ts' }),
+    );
+    const snapshot = collectConfigSnapshot(fx.deps);
+    const boot = snapshot.reports.find((r) => r.plane === 'boot')!;
+    assert.equal(boot.ok, false);
+    assert.equal(boot.issues.filter((i) => i.includes('does not exist')).length, 3);
+    assert.ok(boot.issues.some((i) => i.includes('pier-setup')));
   } finally {
     await rm(fx.base, { recursive: true, force: true });
   }
