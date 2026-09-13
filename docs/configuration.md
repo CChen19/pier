@@ -2,7 +2,7 @@
 
 > **一句话**：`/pier-config` 会按平面列出**当前生效值 + 来源**（`env` > 工作区 > 用户 > 默认），无参调用则把"改配置"这件事交给 agent 引导完成。
 > 本文件讲**为什么这样分层**与**每层改哪里**；机器真值（当前值/来源/校验）请直接跑命令：`/pier-config show all`、`/pier-config check`、`/pier-config doc`。
-> 试用与反馈流程见 [`docs/efficiency-trial.md`](efficiency-trial.md)；完整设计见 [`docs/pier-config-command.md`](pier-config-command.md)。
+> 试用与反馈流程见 [`docs/efficiency-trial.md`](efficiency-trial.md)。
 
 ---
 
@@ -83,7 +83,5 @@
 | 文档 | 内容 |
 |---|---|
 | [`docs/efficiency-trial.md`](efficiency-trial.md) | D100–D103 试用指南（开哪个、看什么、怎么判划算、反馈模板） |
-| [`docs/pier-config-command.md`](pier-config-command.md) | `/pier-config` 的设计（覆盖矩阵、提示词、测试策略、分期） |
-| [`docs/rfc-sol-pi-absorption.md`](rfc-sol-pi-absorption.md) | 能效机制 RFC（含 §9 残余项登记） |
 | [`docs/sidebar-role-config.md`](sidebar-role-config.md) | 角色档案与侧边栏排版配置 |
 | [`schemas/efficiency-config.schema.json`](../packages/pier-ext/schemas/efficiency-config.schema.json)、[`schemas/role-manifest.schema.json`](../packages/pier-ext/schemas/role-manifest.schema.json) | 契约（键与类型） |

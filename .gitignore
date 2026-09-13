@@ -8,3 +8,12 @@ reports/
 .stryker-tmp/
 # /pier-config doc output (machine-truth report; regenerate on demand)
 .pi-herdr/config-report.md
+
+# Development-only docs (reviews, RFCs, per-feature design notes) are local artifacts:
+# the repository tracks user-facing documentation and code only. Remove a line here if a
+# document becomes user-facing.
+code review.md
+docs/rfc-*.md
+docs/pier-config-command.md
+docs/adr/0005-efficiency-mechanisms-absorption.md
+docs/adr/0006-config-guide-command.md
