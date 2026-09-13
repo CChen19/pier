@@ -830,6 +830,20 @@ export default function subagentPlugin(ctx: Context): void {
           throw new Error(`pipe prompt rejected: ${injected.type === 'error' ? injected.message : 'unknown response'}`);
         }
         lastMachineInjectAt.set(paneId, injectTs); // B4: attribute working state during the observation window.
+
+        // A7: run_in_background returns immediately after successful injection instead of blocking in foreground wait.
+        if (background) {
+          entry.background = true;
+          lastRequestIdByPane.set(paneId, `prompt-${taskId}`);
+          startPoller(paneId, cwd, spawnedAt, injectTs, spec.description, `prompt-${taskId}`);
+          persistSubs();
+          writeHistory(entry, undefined, 'to-background');
+          return {
+            content: [{ type: 'text', text: `started subagent ${paneId} (task ${taskId})` }],
+            details: { paneId, taskId, background: true, role: kind },
+          };
+        }
+
         // A1+A2 (user-verified fix): foreground waiting uses a content gate plus a patience threshold before backgrounding.
         // Treating idle as settled with a hard 90s window misclassified real 4–6 minute working periods as no-output;
         // three healthy subagents were observed becoming consumed at 101s while producing results four minutes later.

@@ -36,6 +36,7 @@ interface FakePi {
 
 interface Harness {
   closePaneCalls: string[];
+  waitAgentCalls: Array<{ paneId: string; states: string[] }>;
   prompts: PipeRequest[];
   /** pipe sim 收到 prompt 时回调（写子会话定稿文本，模拟子代理即时产出）。 */
   onPrompt?: () => void;
@@ -68,7 +69,10 @@ function fakeClient(sessionFile: string, h: Harness): HerdrClientLike {
       { paneId: 'p2', tabId: 't0', agentStatus: 'idle' },
     ],
     listAgents: async () => [],
-    waitAgent: async () => 'idle',
+    waitAgent: async (paneId: string, states: string[]) => {
+      h.waitAgentCalls.push({ paneId, states });
+      return 'idle';
+    },
     getAgentSessionPath: async () => sessionFile,
     createTab: async () => ({ tabId: 't9', paneId: 'p9' }),
     splitPane: async () => 'p2',
@@ -153,6 +157,7 @@ async function withSpawnEnv(fn: (ctx: SpawnCtx) => Promise<void>, opts: { reject
   const sessionFile = join(cwd, 'sub-session.jsonl');
   const h: Harness = {
     closePaneCalls: [],
+    waitAgentCalls: [],
     prompts: [],
     // 子代理产出模拟：prompt 注入后写定稿文本（ts ≥ injectTs）
     onPrompt: opts.rejectPrompt ? undefined : () => writeFileSync(sessionFile, JSON.stringify({
@@ -216,3 +221,35 @@ test('spawn 回归（01a03bf0 缺陷 2）：pipe 拒绝 → 台账回收 + 关 p
     assert.ok(!last.subs?.some((s) => s.paneId === 'p2'), '最后的台账快照已回收 p2');
   }, { rejectPrompt: true });
 });
+
+test('spawn 回归（A7）：run_in_background=true 立即返回，不进入前台 waitAgent 循环', async () => {
+  await withSpawnEnv(async ({ pi, port, h, cwd }) => {
+    const tool = pi.tools.get('subagent');
+    assert.ok(tool?.execute);
+    const r = await tool.execute!(
+      'tc3',
+      { description: '后台探查', prompt: PROMPT, run_in_background: true },
+      undefined,
+      undefined,
+      { cwd },
+    ) as {
+      content: Array<{ text: string }>;
+      details?: { paneId?: string; taskId?: string; background?: boolean; role?: string };
+    };
+    const text = r.content[0].text;
+    assert.match(text, /^started subagent p2 \(task [0-9a-f-]+\)$/);
+    assert.equal(r.details?.background, true, 'details.background 应为 true');
+    assert.equal(r.details?.paneId, 'p2');
+    assert.ok(typeof r.details?.taskId === 'string' && r.details.taskId.length > 0, 'taskId 存在');
+    assert.equal(h.waitAgentCalls.length, 0, '后台模式绝不调用 waitAgent 进入前台等待循环');
+    assert.equal(h.prompts.length, 1, 'prompt 注入一次');
+    assert.equal((h.prompts[0] as { push?: boolean }).push, true, '后台模式 push=true');
+
+    // 检查 running 台账条目正常存在且在 listRunningSubs（background && running）中
+    const running = port.current?.listRunningSubs() ?? [];
+    assert.equal(running.length, 1, '后台子代理在台账中保持 running 状态');
+    assert.equal(running[0].paneId, 'p2');
+    assert.equal(running[0].description, '后台探查');
+  });
+});
+
