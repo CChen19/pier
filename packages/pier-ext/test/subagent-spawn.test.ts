@@ -253,3 +253,133 @@ test('spawn 回归（A7）：run_in_background=true 立即返回，不进入前�
   });
 });
 
+test('subagent action send & resume（B1）：短 taskId 唯一前缀 (>=4)、歧义与未找到解析', async () => {
+  await withSpawnEnv(async ({ pi, h, cwd }) => {
+    const tool = pi.tools.get('subagent');
+    assert.ok(tool?.execute);
+
+    // 启动后台子任务，获得自动生成的完整 UUID taskId
+    const spawned = await tool.execute!(
+      'tc_spawn',
+      { description: '后台任务', prompt: PROMPT, run_in_background: true },
+      undefined,
+      undefined,
+      { cwd },
+    ) as {
+      content: Array<{ text: string }>;
+      details?: { paneId?: string; taskId?: string };
+    };
+    const fullTaskId = spawned.details?.taskId;
+    assert.ok(typeof fullTaskId === 'string' && fullTaskId.length >= 8);
+    const short8 = fullTaskId.slice(0, 8);
+    const short4 = fullTaskId.slice(0, 4);
+    const short3 = fullTaskId.slice(0, 3);
+
+    // 1. send 使用 8 位短前缀 → 成功投递
+    const sendRes8 = await tool.execute!(
+      'tc_send8',
+      { action: 'send', agentId: short8, message: '8-char prefix message' },
+      undefined,
+      undefined,
+      { cwd },
+    ) as { content: Array<{ text: string }> };
+    assert.match(sendRes8.content[0].text, /Message sent to subagent p2/);
+    assert.equal(h.prompts.length, 2);
+    assert.equal((h.prompts[1] as { text?: string }).text, '8-char prefix message');
+
+    // 2. send 使用 4 位短前缀 → 成功投递
+    const sendRes4 = await tool.execute!(
+      'tc_send4',
+      { action: 'send', agentId: short4, message: '4-char prefix message' },
+      undefined,
+      undefined,
+      { cwd },
+    ) as { content: Array<{ text: string }> };
+    assert.match(sendRes4.content[0].text, /Message sent to subagent p2/);
+    assert.equal(h.prompts.length, 3);
+
+    // 3. send 使用 <4 字符短前缀且非精确匹配 → 拒绝并提示至少 4 字符
+    const sendShort = await tool.execute!(
+      'tc_send_short',
+      { action: 'send', agentId: short3, message: 'too short' },
+      undefined,
+      undefined,
+      { cwd },
+    ) as { content: Array<{ text: string }> };
+    assert.match(sendShort.content[0].text, /is too short \(minimum 4 characters\)/);
+
+    // 4. send 使用不存在的 id → 报错 unknown subagent id
+    const sendNotFound = await tool.execute!(
+      'tc_send_notfound',
+      { action: 'send', agentId: '00000000', message: 'not found' },
+      undefined,
+      undefined,
+      { cwd },
+    ) as { content: Array<{ text: string }> };
+    assert.match(sendNotFound.content[0].text, /unknown subagent id "00000000"/);
+
+    // 5. resume 使用 8 位短前缀 → 成功解析历史并恢复 (paneId 匹配 existing 则 reuse)
+    const resume8 = await tool.execute!(
+      'tc_resume8',
+      { action: 'resume', taskId: short8 },
+      undefined,
+      undefined,
+      { cwd },
+    ) as { content: Array<{ text: string }>; details?: { taskId?: string } };
+    assert.match(resume8.content[0].text, /resumed subagent/);
+    assert.equal(resume8.details?.taskId, fullTaskId, '返回详情恢复为完整 taskId');
+
+    // 6. resume 使用 <4 字符前缀 → 提示 too short
+    const resumeShort = await tool.execute!(
+      'tc_resume_short',
+      { action: 'resume', taskId: short3 },
+      undefined,
+      undefined,
+      { cwd },
+    ) as { content: Array<{ text: string }> };
+    assert.match(resumeShort.content[0].text, /is too short \(minimum 4 characters\)/);
+
+    // 7. resume 使用不存在的前缀 → 提示 no history
+    const resumeNotFound = await tool.execute!(
+      'tc_resume_notfound',
+      { action: 'resume', taskId: 'ffffffff' },
+      undefined,
+      undefined,
+      { cwd },
+    ) as { content: Array<{ text: string }> };
+    assert.match(resumeNotFound.content[0].text, /no history for task "ffffffff"/);
+
+    // 8. resume 歧义前缀：追加一条同前缀历史条目后，使用 4 位前缀触发歧义
+    const { preferredHistoryFile } = await import('../src/storage-layout.ts');
+    const { appendHistory } = await import('../src/history-store.ts');
+    const agentRoot = process.env.PI_CODING_AGENT_DIR!;
+    const histFile = preferredHistoryFile(agentRoot, cwd);
+    const ambiguousTaskId = `${short4}9999-0000-1111-2222-333344445555`;
+    appendHistory(histFile, {
+      taskId: ambiguousTaskId,
+      kind: 'task',
+      paneId: 'p3',
+      tabId: 't0',
+      workspaceId: 'w1',
+      cwd,
+      description: '歧义冲突任务',
+      sessionFile: null,
+      launchCommand: ['node', 'cli.js'],
+      status: 'settled',
+      createdAt: Date.now() + 10,
+    });
+
+    const resumeAmbiguous = await tool.execute!(
+      'tc_resume_amb',
+      { action: 'resume', taskId: short4 },
+      undefined,
+      undefined,
+      { cwd },
+    ) as { content: Array<{ text: string }> };
+    assert.match(resumeAmbiguous.content[0].text, /ambiguous task id/);
+    assert.match(resumeAmbiguous.content[0].text, new RegExp(fullTaskId));
+    assert.match(resumeAmbiguous.content[0].text, new RegExp(ambiguousTaskId));
+  });
+});
+
+

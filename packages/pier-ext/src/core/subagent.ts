@@ -118,6 +118,56 @@ async function readSubagentOutput(
   return await client.readPane(paneId, { source: 'recent', stripAnsi: true });
 }
 
+export type TaskIdResolutionResult =
+  | { kind: 'resolved'; taskId: string }
+  | { kind: 'ambiguous'; query: string; candidates: string[] }
+  | { kind: 'too_short'; query: string }
+  | { kind: 'not_found'; query: string };
+
+/**
+ * Resolve a full or short task ID against known candidates.
+ *
+ * Why (B1): Subagent listings truncate task IDs to 8 hex characters (`taskId.slice(0, 8)`),
+ * and users/agents often pass short prefixes. Unique prefix matching (minimum 4 chars)
+ * allows unambiguous short IDs to resolve, while ambiguous prefixes fail with actionable
+ * candidate listings. Exact matches always resolve regardless of length.
+ */
+export function resolveTaskIdPrefix(
+  query: string,
+  candidates: Iterable<string>,
+): TaskIdResolutionResult {
+  const trimmed = query.trim();
+  if (!trimmed) {
+    return { kind: 'not_found', query: trimmed };
+  }
+
+  const unique = Array.from(new Set(candidates));
+
+  // Exact match wins immediately (even if < 4 chars).
+  const exact = unique.find((c) => c === trimmed);
+  if (exact) {
+    return { kind: 'resolved', taskId: exact };
+  }
+
+  // Prefix matching requires at least 4 characters to avoid massive accidental collisions.
+  if (trimmed.length < 4) {
+    return { kind: 'too_short', query: trimmed };
+  }
+
+  const lower = trimmed.toLowerCase();
+  const matches = unique.filter((c) => c.toLowerCase().startsWith(lower));
+
+  if (matches.length === 1) {
+    return { kind: 'resolved', taskId: matches[0] };
+  }
+  if (matches.length > 1) {
+    matches.sort();
+    return { kind: 'ambiguous', query: trimmed, candidates: matches };
+  }
+
+  return { kind: 'not_found', query: trimmed };
+}
+
 export default function subagentPlugin(ctx: Context): void {
   const surface = ctx.get('pi-herdr.surface') as PiSurface<object>;
   const d = ctx.get('pi-herdr.subagent-deps') as SubagentDeps;
@@ -373,7 +423,7 @@ export default function subagentPlugin(ctx: Context): void {
   }
 
 
-  async function executeSubagentResume(params, toolCtx) {
+  async function executeSubagentResume(params: Record<string, unknown> | undefined, toolCtx: unknown) {
       if (!client.available) {
         return {
           content: [{ type: 'text', text: 'Error: requires a herdr-managed pane.' }],
@@ -381,8 +431,37 @@ export default function subagentPlugin(ctx: Context): void {
         };
       }
       const cwd = (toolCtx as { cwd?: string }).cwd ?? process.cwd();
-      const taskId = String(params?.taskId ?? '');
-      const latest = latestGeneration(readHistory(histFile(cwd)), taskId);
+      const rawTaskId = String(params?.taskId ?? params?.agentId ?? '').trim();
+      if (!rawTaskId) {
+        return {
+          content: [{ type: 'text', text: 'Error: missing taskId for resume (see action list or delegation ledger).' }],
+          details: {},
+        };
+      }
+      const history = readHistory(histFile(cwd));
+      const resolution = resolveTaskIdPrefix(rawTaskId, history.map((e) => e.taskId));
+      if (resolution.kind === 'too_short') {
+        return {
+          content: [{ type: 'text', text: `Error: task id prefix "${rawTaskId}" is too short (minimum 4 characters).` }],
+          details: {},
+        };
+      }
+      if (resolution.kind === 'ambiguous') {
+        const list = resolution.candidates.slice(0, 5).join(', ');
+        const more = resolution.candidates.length > 5 ? `, ... (+${resolution.candidates.length - 5} more)` : '';
+        return {
+          content: [{ type: 'text', text: `Error: ambiguous task id "${rawTaskId}" matches ${resolution.candidates.length} tasks: ${list}${more}` }],
+          details: {},
+        };
+      }
+      if (resolution.kind === 'not_found') {
+        return {
+          content: [{ type: 'text', text: `Error: no history for task "${rawTaskId}" in this workspace.` }],
+          details: {},
+        };
+      }
+      const taskId = resolution.taskId;
+      const latest = latestGeneration(history, taskId);
       if (!latest) {
         return {
           content: [{ type: 'text', text: `Error: no history for task "${taskId}" in this workspace.` }],
@@ -504,11 +583,79 @@ export default function subagentPlugin(ctx: Context): void {
       return { content: [{ type: 'text', text: lines.join('\n') }], details: {} };
   }
 
-  async function executeSubagentSend(params) {
-      const entry = subs.get(String(params?.agentId ?? ''));
-      if (!entry) {
-        return { content: [{ type: 'text', text: `Error: unknown subagent id "${params?.agentId}" (see action list)` }], details: {} };
+  function resolveSubEntry(
+    rawId: string,
+    cwd?: string,
+  ): { entry: SubEntry } | { error: string } {
+    if (!rawId) {
+      return { error: 'Error: unknown subagent id "" (see action list)' };
+    }
+    const direct = subs.get(rawId);
+    if (direct) return { entry: direct };
+
+    const byTaskId = new Map<string, SubEntry>();
+    for (const sub of subs.values()) {
+      const prev = byTaskId.get(sub.taskId);
+      if (!prev || sub.createdAt >= prev.createdAt) byTaskId.set(sub.taskId, sub);
+    }
+    const res = resolveTaskIdPrefix(rawId, byTaskId.keys());
+    if (res.kind === 'resolved') {
+      return { entry: byTaskId.get(res.taskId)! };
+    }
+    if (res.kind === 'ambiguous') {
+      const list = res.candidates.slice(0, 5).join(', ');
+      const more = res.candidates.length > 5 ? `, ... (+${res.candidates.length - 5} more)` : '';
+      return { error: `Error: ambiguous subagent id "${rawId}" matches ${res.candidates.length} tasks: ${list}${more}` };
+    }
+    if (res.kind === 'too_short') {
+      return { error: `Error: subagent id prefix "${rawId}" is too short (minimum 4 characters).` };
+    }
+
+    if (cwd) {
+      const hist = readHistory(histFile(cwd));
+      const histTaskIds = Array.from(new Set(hist.map((e) => e.taskId)));
+      const histRes = resolveTaskIdPrefix(rawId, histTaskIds);
+      if (histRes.kind === 'resolved') {
+        const latest = latestGeneration(hist, histRes.taskId);
+        if (latest) {
+          const entry: SubEntry = {
+            taskId: latest.taskId,
+            kind: latest.kind,
+            paneId: latest.paneId,
+            tabId: latest.tabId,
+            tabName: latest.tabName,
+            cwd: latest.cwd,
+            description: latest.description,
+            background: true,
+            status: 'closed',
+            sessionFile: latest.sessionFile,
+            launchCommand: latest.launchCommand,
+            createdAt: latest.createdAt,
+            consumedAt: latest.consumedAt ?? null,
+            revivedFrom: latest.paneId,
+          };
+          subs.set(entry.paneId, entry);
+          return { entry };
+        }
       }
+      if (histRes.kind === 'ambiguous') {
+        const list = histRes.candidates.slice(0, 5).join(', ');
+        const more = histRes.candidates.length > 5 ? `, ... (+${histRes.candidates.length - 5} more)` : '';
+        return { error: `Error: ambiguous subagent id "${rawId}" matches ${histRes.candidates.length} tasks: ${list}${more}` };
+      }
+    }
+
+    return { error: `Error: unknown subagent id "${rawId}" (see action list)` };
+  }
+
+  async function executeSubagentSend(params: Record<string, unknown> | undefined, toolCtx?: unknown) {
+      const rawId = String(params?.agentId ?? params?.taskId ?? '').trim();
+      const cwd = (toolCtx as { cwd?: string })?.cwd ?? process.cwd();
+      const resolved = resolveSubEntry(rawId, cwd);
+      if ('error' in resolved) {
+        return { content: [{ type: 'text', text: resolved.error }], details: {} };
+      }
+      const entry = resolved.entry;
       const spawnedAt = Date.now();
       try {
         // A closed task is revived automatically because the pane is only a temporary host.
@@ -553,11 +700,14 @@ export default function subagentPlugin(ctx: Context): void {
       }
   }
 
-  async function executeSubagentInterrupt(params) {
-      const entry = subs.get(String(params?.agentId ?? ''));
-      if (!entry) {
-        return { content: [{ type: 'text', text: `Error: unknown subagent id "${params?.agentId}" (see action list)` }], details: {} };
+  async function executeSubagentInterrupt(params: Record<string, unknown> | undefined, toolCtx?: unknown) {
+      const rawId = String(params?.agentId ?? params?.taskId ?? '').trim();
+      const cwd = (toolCtx as { cwd?: string })?.cwd ?? process.cwd();
+      const resolved = resolveSubEntry(rawId, cwd);
+      if ('error' in resolved) {
+        return { content: [{ type: 'text', text: resolved.error }], details: {} };
       }
+      const entry = resolved.entry;
       if (entry.status === 'closed') {
         // DSH alignment: an idle or finished target is an idempotent no-op.
         return { content: [{ type: 'text', text: `Interrupt accepted for subagent ${entry.paneId} (already idle/closed; no-op).` }], details: {} };
@@ -579,15 +729,17 @@ export default function subagentPlugin(ctx: Context): void {
       }
   }
 
-  async function executeSubagentOutput(params: Record<string, unknown> | undefined) {
-    const agentId = String(params?.agentId ?? '').trim();
-    if (!agentId) {
+  async function executeSubagentOutput(params: Record<string, unknown> | undefined, toolCtx?: unknown) {
+    const rawId = String(params?.agentId ?? params?.taskId ?? '').trim();
+    if (!rawId) {
       return { content: [{ type: 'text', text: 'Error: missing agentId for output (see action list)' }], details: {} };
     }
-    const entry = subs.get(agentId);
-    if (!entry) {
-      return { content: [{ type: 'text', text: `Error: unknown subagent id "${agentId}" (see action list)` }], details: {} };
+    const cwd = (toolCtx as { cwd?: string })?.cwd ?? process.cwd();
+    const resolved = resolveSubEntry(rawId, cwd);
+    if ('error' in resolved) {
+      return { content: [{ type: 'text', text: resolved.error }], details: {} };
     }
+    const entry = resolved.entry;
     let agentState: HerdrAgentState | null = null;
     let askFlag: string | null = null;
     try {
@@ -681,9 +833,9 @@ export default function subagentPlugin(ctx: Context): void {
       const action = typeof params?.action === 'string' && params.action.trim() ? params.action.trim() : 'spawn';
       if (action === 'resume') return executeSubagentResume(params, toolCtx);
       if (action === 'list') return executeSubagentList();
-      if (action === 'send') return executeSubagentSend(params);
-      if (action === 'interrupt') return executeSubagentInterrupt(params);
-      if (action === 'output') return executeSubagentOutput(params);
+      if (action === 'send') return executeSubagentSend(params, toolCtx);
+      if (action === 'interrupt') return executeSubagentInterrupt(params, toolCtx);
+      if (action === 'output') return executeSubagentOutput(params, toolCtx);
       if (action !== 'spawn') {
         return { content: [{ type: 'text', text: `Error: unknown action "${action}" (valid: spawn, resume, list, send, interrupt, output)` }], details: {} };
       }
