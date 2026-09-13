@@ -58,8 +58,10 @@ export async function handleReducerToolResult(
   event: ToolResultEventLike,
   ctx: ExtensionContext,
   config: EvidencePreservingReducerConfig,
+  opts?: { epoch?: number },
 ): Promise<ReducerInvocationResult | undefined> {
   if (!config.enabled) return undefined;
+  const epoch = opts?.epoch ?? 0;
 
   // 1. Candidate command & tool gate: strictly bash only
   if (event.toolName !== 'bash') return undefined;
@@ -96,7 +98,7 @@ export async function handleReducerToolResult(
   // If truncated and no fullOutputPath or fullOutputPath cannot be read safely, fail-open!
   if (isTruncated && !fullOutputPath) {
     if (config.logEnabled && sessionRoot) {
-      await logReducerAttempt(sessionRoot, sessionId ?? 'unknown', {
+      await logReducerAttempt(sessionRoot, sessionId ?? 'unknown', epoch, {
         commandSha256: sha256Hex(command),
         model: config.model ?? 'default',
         verificationOk: false,
@@ -112,7 +114,7 @@ export async function handleReducerToolResult(
     const full = await readBashFullOutput(fullOutputPath, maxChars);
     if (!full) {
       if (config.logEnabled && sessionRoot) {
-        await logReducerAttempt(sessionRoot, sessionId ?? 'unknown', {
+        await logReducerAttempt(sessionRoot, sessionId ?? 'unknown', epoch, {
           commandSha256: sha256Hex(command),
           model: config.model ?? 'default',
           verificationOk: false,
@@ -133,7 +135,7 @@ export async function handleReducerToolResult(
   // 5. Secret detection check
   if (containsLikelySecret(body)) {
     if (config.logEnabled && sessionRoot) {
-      await logReducerAttempt(sessionRoot, sessionId ?? 'unknown', {
+      await logReducerAttempt(sessionRoot, sessionId ?? 'unknown', epoch, {
         commandSha256: sha256Hex(command),
         sourceBytes,
         model: config.model ?? 'default',
@@ -178,7 +180,10 @@ export async function handleReducerToolResult(
   // 8. Invoke model in-process with timeout
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
-  const signal = ctx.signal ? AbortSignal.any([ctx.signal, timeoutSignal]) : timeoutSignal;
+  const signal =
+    ctx.signal && typeof (AbortSignal as any).any === 'function'
+      ? (AbortSignal as any).any([ctx.signal, timeoutSignal])
+      : timeoutSignal;
 
   const promptInput = reducerInputPrompt({
     command,
@@ -196,7 +201,7 @@ export async function handleReducerToolResult(
       targetModel,
       {
         systemPrompt: reducerInstructions(),
-        messages: [{ role: 'user', content: [{ type: 'text', text: promptInput }] }],
+        messages: [{ role: 'user', content: [{ type: 'text', text: promptInput }], timestamp: Date.now() }],
       },
       {
         maxTokens: config.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
@@ -220,12 +225,12 @@ export async function handleReducerToolResult(
   const validated = validateReceipt(modelOutput, sourceHash, body, event.isError);
   if (!validated.ok) {
     if (config.logEnabled) {
-      await logReducerAttempt(sessionRoot, sessionId ?? 'unknown', {
+      await logReducerAttempt(sessionRoot, sessionId ?? 'unknown', epoch, {
         commandSha256: sha256Hex(command),
         sourceBytes,
         model: targetModel.id ?? config.model ?? 'unknown',
         verificationOk: false,
-        reason: validated.reason,
+        reason: (validated as { ok: false; reason: string }).reason,
         action: 'fallback_full_text',
         durationMs: Date.now() - startMs,
       });
@@ -261,7 +266,7 @@ export async function handleReducerToolResult(
   };
 
   if (config.logEnabled) {
-    await logReducerAttempt(sessionRoot, sessionId ?? 'unknown', {
+    await logReducerAttempt(sessionRoot, sessionId ?? 'unknown', epoch, {
       commandSha256: sha256Hex(command),
       sourceBytes,
       receiptBytes,
@@ -283,6 +288,7 @@ export async function handleReducerToolResult(
 async function logReducerAttempt(
   sessionRoot: string,
   sessionId: string,
+  epoch: number,
   record: Record<string, unknown>,
 ): Promise<void> {
   const logPath = efficiencyLogPath(sessionRoot, 'reducer');
@@ -292,6 +298,7 @@ async function logReducerAttempt(
       mechanism: 'evidencePreservingReducer',
       ts: new Date().toISOString(),
       sessionId,
+      epoch,
       ...record,
     });
   } catch {

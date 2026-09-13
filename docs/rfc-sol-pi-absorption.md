@@ -1,8 +1,8 @@
 # RFC: pier 能效架构演进 —— 吸收 SoL-Pi 核心机制设计方案 (v2 落地版 · 含 4 轮复审修正)
 
-> **状态 (Status)**: 已实现并通过 4 轮 code review 复审（含 Round 4 全部 P1 修复；残余事项与后续工作见 §9）  
+> **状态 (Status)**: 已实现并完成 9 轮 code review 复审（Round 1–9）；三机制默认关闭、逐项 fail-open，**可开始试用并收集反馈**（试用指南：[docs/efficiency-trial.md](efficiency-trial.md)；残余项见 §9）  
 > **目标仓库 (Target)**: `pier` (`packages/pier-ext`)  
-> **验证基线 (Baseline)**: 本仓 HEAD (`packages/pier-ext`, 600 tests passing / Monorepo 645 tests passing) + pi `0.84.2` + 上游 `NVlabs/SoL-Pi` 源码  
+> **验证基线 (Baseline)**: 本仓 HEAD (`packages/pier-ext`, 612 tests passing / Monorepo 657 tests passing) + pi `0.84.2` + 上游 `NVlabs/SoL-Pi` 源码  
 > **审阅意见对照**: `docs/rfc-sol-pi-absorption-review.md`（首轮意见） & `code review.md`（Round 1–4 复审记录与修复验证）  
 > **文档位置 (Path)**: `docs/rfc-sol-pi-absorption.md`  
 > **关联 ADR**: [docs/adr/0005-efficiency-mechanisms-absorption.md](adr/0005-efficiency-mechanisms-absorption.md) (D100-D103)  
@@ -118,7 +118,7 @@ NVIDIA 开源的 **SoL-Pi** 验证了四个能效机制。然而，SoL-Pi 独立
 }
 ```
 
-> **保留窗口说明（`keepRecentTokens`）**：运行时校验与 TS 类型均支持该键（默认 `20000`，最小 `1000`），它同时用于 `nativeCompactionFeasible` 预检与 `archiveTokens` 估算。该默认值**恰好等于 pi 自身的默认值**，但本扩展**不读取** `~/.pi/agent/settings.json` 中的 `compaction.*`：若用户调整了 pi 的 `keepRecentTokens`，需在此处同步配置，否则预检可能判断“可压缩”而原生压缩实际找不到切点（`session too small`）。`compaction.enabled` 同理不由本扩展读取：启用 OCC 即视为接管压缩时机。
+> **保留窗口与 Pi 原生配置（`keepRecentTokens`）**：运行时校验与 TS 类型均支持该键（默认 `20000`，最小 `1000`），它同时用于 `nativeCompactionFeasible` 预检与 `archiveTokens` 估算。若未在此处显式配置，`loadEfficiencyConfigFromDisk` 会自动尝试读取 Pi 原生 `settings.json`（全局与项目受信配置）继承其 `compaction.keepRecentTokens`。若用户在 Pi 原生配置中显式将 `compaction.enabled` 设为 `false`，OCC 也会同步禁用（除非被环境变量 `PI_HERDR_COMPACT_ENABLE=1` 显式强制覆盖开启）。
 
 ### 3.3 环境变量前缀规范 (对齐 `PI_HERDR_*`)
 
@@ -283,7 +283,7 @@ NVIDIA 开源的 **SoL-Pi** 验证了四个能效机制。然而，SoL-Pi 独立
      3. 绝非软链接（`!lstat.isSymbolicLink()`）；
    - 若输出被截断且无法获取未截断原文，**直接放弃提炼并 fallback 全文**，严防在残缺视图上误签“测试通过”收据。
 3. **候选命令范围与排除项**：
-   - 仅支持 `bash` 工具执行的诊断构建测试命令（通过 `DIAGNOSTIC_COMMAND` 正则识别）；
+   - 仅支持 `bash` 工具执行的诊断构建测试命令（通过 `DIAGNOSTIC_COMMAND` 正则识别）；正则**两侧边界都接受 shell 分隔符**（`;`、`&`、`|`、`(`、`)`、空白），因此 `(npm test)`、`npm test&&echo ok`、`pytest;` 都能识别，而 `makefile`/`coqtop`/`npm run test` 这类“词内匹配”仍不命中；
    - **明确排除 `terminal read`**：因 `terminal read` 仅截取终端尾部 8KB，在残缺视图上提炼存在严重隐患，暂不纳入。
 4. **模型调用与 Block 级局部替换**：
    - 优先使用配置项 `evidencePreservingReducer.model`，缺省直接继承当前会话模型（`ctx.model`）；
@@ -416,7 +416,7 @@ packages/pier-ext/
 ## 8. 总结与确认
 
 本修订版设计文档已全量吸收首轮审阅意见，并完成 4 轮 code review 复审的修复闭环（逐轮验证记录见 `code review.md`）：
-1. **测试基线与术语校准**：基线 545 个测试；共新增 55 个用例（37 纯核心 + 4 OBS 集成 + 8 OCC 集成 + 6 EPR 集成），`packages/pier-ext` 现为 600/600，明确定性为有损摘要压缩；
+1. **测试基线与术语校准**：基线 545 个测试；共新增 67 个用例（44 纯核心 + 7 OBS 集成 + 9 OCC 集成 + 6 EPR 集成 + 1 index 生命周期），`packages/pier-ext` 现为 612/612，明确定性为有损摘要压缩；
 2. **严防设计过度**：彻底放弃 Action Fusion，彻底放弃 Subagent 引入，EPR 坚守进程内微型过滤器定位；
 3. **架构安全与闭环**：落实未截断日志落盘、前缀缓存代价权衡、状态落盘与独立遥测日志；
 4. **与现有系统的无缝融合**：所有环境变量对齐 `PI_HERDR_*`，催办与唤醒守卫接线严密，角色与写锁基线得到严格维护；
@@ -424,18 +424,18 @@ packages/pier-ext/
 
 ---
 
-## 9. 残余事项与后续工作 (Known Limitations & Follow-ups)
+## 9. 残余事项与工程加固完成状态 (Completed Follow-ups & Hardening)
 
-本节是“文档与实现保持一致”的登记表：下列项均为**已知、已接受、尚未实现**的内容，不影响当前默认关闭（fail-open）下的安全基线。
+本节记录此前复审登记的 7 项技术债务与后续增强项的最终落实状态：**全部 7 项已实现并通过自动化测试验证；其中 `compact-economics-core.ts` 另有已归档的变异测试证据（见末行）。**
 
-| 项 | 现状 | 影响 | 建议下一动作 |
-|---|---|---|---|
-| **遥测与对象的保留策略** | `efficiency-logs/*.jsonl` 与 `*-pack/objects/`、`evidence-preserving-reducer/objects/` 只追加不清理 | 长会话下磁盘无界增长（日志量大时更明显） | 加行数/字节上限或按会话轮转，可在 `appendEfficiencyLog` 内集中实现 |
-| **reducer 日志缺 `epoch`** | `reducer.jsonl` 已有 `sessionId`、`grossSavedBytes`，无 `epoch` | 无法与 OCC 的 epoch 对齐分析 | 从 coordinator 传入当前 epoch（或写入 `session_start` epoch=0） |
-| **不读 pi 的 `compaction.*`** | `keepRecentTokens` 由本扩展配置给出（默认与 pi 一致），`compaction.enabled` 不读 | 用户改了 pi 设置后预检可能与原生压缩实际行为不一致 | 读 `~/.pi/agent/settings.json`，或在文档（已在本 RFC §3.2 声明）外再加运行时提示 |
-| **OBS 压缩点批量打包** | 当前为“逐请求经济学判定 + 判定后粘性保持” | 压缩点本可“顺路免费”打包，现在依赖逐请求判定 | 若要做，需 OCC 在 `ctx.compact()` 前回调 OBS 做一次批量投影 |
-| **horizon 重复实现** | `getRemainingHorizon` 自写 `1 + floor(mean × 3)`，未复用 `estimateRemainingRequests` | 无窗口上限/方差下界；无单测 | 改为薄封装 + 补单测（无样本 → 4；有样本 → 均值派生） |
-| **typecheck 门禁缺失** | 仓内无 `tsconfig.json` / `tsc` 脚本（`node --test` 直接 strip types） | 类型错误不可见（新代码已去除 `as any`，但仍无门禁） | 加 `tsc --noEmit` 到 CI/`npm test` 前置 |
-| **新核心无 mutation 证据** | `stryker.conf.json` 已列入 4 个新核心，但 `reports/mutation/*` 仍是旧快照 | 无法证明纯核覆盖度 | 对 `efficiency-config-core` / `compact-economics-core` / `observation-core` / `reducer-core` 跑一次并归档 |
+| 项 | 落实方案与状态 | 验证结果 |
+|---|---|---|
+| **遥测与对象的保留策略** | `appendEfficiencyLog` 实现 5MB 轮转为 `.old`（该轮转自首版即存在）与新对象剪枝：`pruneObjectsDirectory`（300 文件 / 50MB 阈值）+ `pruneSessionObjects`（两个 objects 目录），每 50 次存储及 `session_shutdown`（`await`）自动触发 | 单测 `pruneObjectsDirectory`、`pruneSessionObjects` 验证通过（后者断言两个目录各剪一条） |
+| **reducer 日志携带 `epoch`** | `handleReducerToolResult` 接入 coordinator 动态 `epoch` 并在 `reducer.jsonl` 中输出 | 单测验证日志包含 `"epoch": 2` 与 `"sessionId"` |
+| **尊重 pi 原生 `compaction.*` 设置** | `loadEfficiencyConfigFromDisk` 自动读取 `settings.json`（全局与项目受信配置，支持 `agentDir`/`PI_CODING_AGENT_DIR` 注入）；若原生禁用则 OCC 自动同步禁用；自动继承原生 `keepRecentTokens` | 单测（隔离临时目录）：显式启用 OCC + pi `enabled=false` → 禁用；env 强制优先；显式 `keepRecentTokens` 优先；未受信项目文件忽略 |
+| **OBS 压缩点批量打包** | 导出 `batchPackObservations` 与 `createCompactionBatchPackHook`，OCC 触发 `ctx.compact()` 前自动回调预打包符合条件的长观察并注入记忆缓存（上限 20 条 / 10MB，写 `packed-batch` 遥测） | 单测覆盖：上限与遥测字段、角色门禁 deny → 不落盘、非 message 条目忽略、二次调用按 memo 幂等不重复 |
+| **horizon 统一复用与单测** | `CompactCoordinator.getRemainingHorizon` 全面复用 `estimateRemainingRequests`（支持方差下界与窗口紧缩上限截断），生产接线传入 `contextWindow` | 单测 `getRemainingHorizon` 验证通过（覆盖缺省 4、均值派生与窗口夹紧） |
+| **typecheck 静态类型门禁** | 创建 `packages/pier-ext/tsconfig.json` 覆盖 16 个核心与生命周期源文件，根 `package.json` 的 `npm test` 前置执行 `tsc --noEmit` 门禁 | `npm run typecheck` 0 错误通过 |
+| **纯核心 Stryker 变异测试证据** | ① `compact-economics-core.ts` 全量测试集：315 mutants / **77.46%**（同批次 `gc-core.ts` 合计 78.26%）；② `observation-core.ts` / `reducer-core.ts` / `efficiency-config-core.ts`：用“**单元 + 集成 spec 子集**”补跑（1160 mutants，整体 **58.79%**；单文件 `observation-core` 66.82%、`efficiency-config-core` 59.80%）；③ 针对 ② 暴露的最弱环节 `reducer-core.ts` 补测（命令词边界 + 收据行格式）并把 `DIAGNOSTIC_COMMAND` 尾边界放宽到 shell 分隔符后复测：**48.52% → 52.52%**。②③ 均为**下界**（真实全量集只会多杀）；全量集跑这 3 个文件实测需 ~2–3h（1160 mutants × 全量 655 测试），未跑 | 报告：`reports/mutation/mutation.json`（全量集）、`efficiency-cores.json`（单元 spec 下界）、`efficiency-cores-integration.json`（单元+集成下界）、`reducer-core-trial.json`（补测后复测） |
 
-> 完整的逐轮验证证据、基准数据与代码定位见仓库根 `code review.md`（Round 1–4 与附录）。
+> 完整的逐轮验证证据、基准数据与代码定位见仓库根 `code review.md`（Round 1–9 与附录）；**开始试用请先读 [docs/efficiency-trial.md](efficiency-trial.md)**（开启方式 / 观测入口 / 回滚 / 反馈模板）。

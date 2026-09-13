@@ -38,6 +38,7 @@ import { createHerdrClient } from './herdr-client.ts';
 // session-tail, and gc-core imports moved with it, leaving index.ts only the common readers.
 import { lastAssistantText, readSessionFile } from './session-tail.ts';
 import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { TodosService } from './todos-service.ts';
 import { reconcileTodos } from './reconcile-core.ts';
 import type { TodoUiSlot } from './core/todo.ts';
@@ -59,9 +60,13 @@ import { emptySubagentPortBox } from './subagent-port.ts';
 import { createNoticeBuffer } from './index-notices.ts';
 import { handlePipeRequest } from './index-pipe.ts';
 import { installWriteLocks } from './index-locks.ts';
-import { registerObservationPack } from './core/observation.ts';
+import { batchPackObservations, createCompactionBatchPackHook, registerObservationPack, RECALL_TOOL_NAME } from './core/observation.ts';
 import { CompactCoordinator } from './compact-coordinator.ts';
 import { handleReducerToolResult, type ToolResultEventLike } from './reducer-invoker.ts';
+import {
+  pruneSessionObjects,
+  resolveSessionRoot,
+} from './efficiency-store.ts';
 import {
   loadEfficiencyConfigFromDisk,
   resolveEfficiencyConfig,
@@ -106,6 +111,7 @@ export default async function (pi: ExtensionAPI) {
   const { client, env } = createHerdrClient();
   let effConfig: EfficiencyConfig = resolveEfficiencyConfig();
   const coordinator = new CompactCoordinator();
+  let sessionRoot: string | null = null;
 
   // Transcript polish for pier's own custom entries and reminder messages; display-only and
   // best-effort (older pi builds without the renderer API simply keep the raw rows).
@@ -260,7 +266,9 @@ export default async function (pi: ExtensionAPI) {
   pi.on('tool_result', async (event, ctx) => {
     if (!effConfig.evidencePreservingReducer.enabled) return;
     if (!event || typeof event !== 'object') return;
-    return handleReducerToolResult(event as unknown as ToolResultEventLike, ctx, effConfig.evidencePreservingReducer);
+    return handleReducerToolResult(event as unknown as ToolResultEventLike, ctx, effConfig.evidencePreservingReducer, {
+      epoch: coordinator.state.epoch,
+    });
   });
 
   if (env) {
@@ -286,6 +294,10 @@ export default async function (pi: ExtensionAPI) {
         ? (ctx as { isProjectTrusted: () => boolean }).isProjectTrusted()
         : false;
     effConfig = loadEfficiencyConfigFromDisk({ cwd, isProjectTrusted: isTrusted });
+    sessionRoot = resolveSessionRoot(
+      (ctx as { sessionManager?: { getSessionDir?: () => string | undefined } })?.sessionManager?.getSessionDir?.(),
+      sessionId,
+    );
     rebuildFromBranch(ctx);
     // v1.3 M9 fix (observed): on resume pi restores widget state from the session;
     // calling setWidget again breaks the TUI '/' command-panel route ('/' would be sent to the model as message text).
@@ -459,6 +471,11 @@ export default async function (pi: ExtensionAPI) {
         pi,
         config: effConfig.onlineContextCompact,
         cancelReminder: todoUi.cancelReminder,
+        onBeforeCompact: createCompactionBatchPackHook({
+          getObsConfig: () => effConfig.observationPack,
+          getManifest: () => runtimeManifest,
+          getSessionId: () => sessionId,
+        }),
       });
     }
   });
@@ -566,7 +583,10 @@ export default async function (pi: ExtensionAPI) {
     pi,
     getConfig: () => effConfig,
     getRuntimeManifest: () => runtimeManifest,
-    getRemainingHorizon: () => coordinator.getRemainingHorizon(),
+    getRemainingHorizon: () => {
+      const usage = (latestCtx as { getContextUsage?: () => { contextWindow?: number } })?.getContextUsage?.();
+      return coordinator.getRemainingHorizon(3, usage?.contextWindow ?? null);
+    },
   });
 
   pi.registerCommand('efficiency', {
@@ -610,6 +630,13 @@ export default async function (pi: ExtensionAPI) {
   pi.on('session_shutdown', async () => {
     coordinator.compactionInFlight = false;
     coordinator.intentionalAbort = false;
+    if (sessionRoot) {
+      try {
+        await pruneSessionObjects(sessionRoot);
+      } catch {
+        /* ignore shutdown pruning errors */
+      }
+    }
     client.close();
   });
 

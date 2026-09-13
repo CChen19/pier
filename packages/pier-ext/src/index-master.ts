@@ -88,7 +88,7 @@ export async function mountMasterPlugins(m: MasterPluginMount): Promise<void> {
     maxItems: 15,
     mirrorTodos: m.mirrorTodos,
     appendEntry: (customType: string, data: unknown) => {
-      (m.pi as { appendEntry?: (t: string, d: unknown) => void }).appendEntry?.(customType, d);
+      (m.pi as { appendEntry?: (t: string, d: unknown) => void }).appendEntry?.(customType, data);
     },
     state: m.todoUi,
     getBlockedDepth: m.getBlockedDepth,

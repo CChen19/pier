@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true
+  },
+  "include": [
+    "src/efficiency-config-core.ts",
+    "src/compact-economics-core.ts",
+    "src/observation-core.ts",
+    "src/reducer-core.ts",
+    "src/efficiency-store.ts",
+    "src/compact-coordinator.ts",
+    "src/reducer-invoker.ts",
+    "src/core/observation.ts",
+    "src/todos-service.ts",
+    "src/settle-wake-core.ts",
+    "src/todo-reminder-core.ts"
+  ]
+}

@@ -14,6 +14,7 @@ import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-a
 import {
   decideCompaction,
   DEFAULT_COMPACTION_ECONOMICS,
+  estimateRemainingRequests,
   nativeCompactionFeasible,
   resolveCacheRatioFromCost,
   type CompactionDecision,
@@ -226,6 +227,7 @@ export class CompactCoordinator {
     pi: ExtensionAPI;
     config: OnlineContextCompactConfig;
     cancelReminder?: () => void;
+    onBeforeCompact?: (sessionRoot: string, ctx: ExtensionContext) => Promise<void>;
   }): Promise<void> {
     if (!this.selectedCompaction || !opts.ctx.isIdle()) return;
     const decision = this.selectedCompaction;
@@ -233,6 +235,18 @@ export class CompactCoordinator {
 
     opts.cancelReminder?.();
     this.compactionInFlight = true;
+
+    const sessionDir = opts.ctx.sessionManager?.getSessionDir?.();
+    const sessionId = opts.ctx.sessionManager?.getSessionId?.();
+    const sessionRoot = resolveSessionRoot(sessionDir, sessionId);
+
+    if (sessionRoot && opts.onBeforeCompact) {
+      try {
+        await opts.onBeforeCompact(sessionRoot, opts.ctx);
+      } catch {
+        /* ignore batch packing errors before compaction */
+      }
+    }
 
     const remaining = opts.todos.filter(
       (it) => it.status !== 'completed' && it.status !== 'abandoned',
@@ -298,7 +312,7 @@ export class CompactCoordinator {
             }
 
             try {
-              (opts.pi as { sendMessage?: (msg: unknown, o: unknown) => Promise<void> }).sendMessage?.(
+              (opts.pi as unknown as { sendMessage?: (msg: unknown, o: unknown) => void }).sendMessage?.(
                 {
                   customType: COMPACTION_CONTINUE_TYPE,
                   content: 'Online context compaction finished. Active tasks preserved. Continue working on remaining tasks.',
@@ -332,11 +346,23 @@ export class CompactCoordinator {
     this.pendingBoundaryCompleted = false;
   }
 
-  getRemainingHorizon(remainingBoundaries = 3): number {
+  getRemainingHorizon(remainingBoundaries = 3, contextWindowTokens: number | null = null): number {
     const counts = this.state.completedBoundaryRequestCounts;
     if (counts.length === 0) return 4;
-    const mean = counts.reduce((a, b) => a + b, 0) / counts.length;
-    return Math.max(1, 1 + Math.floor(mean * remainingBoundaries));
+
+    const est = estimateRemainingRequests({
+      completedBoundaryRequestCounts: counts,
+      remainingBoundaries,
+      scale: 1.0,
+      standardDeviationK: 0.0,
+      contextTokens: this.state.lastContextTokens ?? 0,
+      contextWindowTokens,
+      averageContextTokenIncrement:
+        this.state.positiveContextDeltaCount > 0
+          ? this.state.positiveContextDeltaTotal / this.state.positiveContextDeltaCount
+          : null,
+    });
+    return Math.max(1, est.expectedRemainingRequests);
   }
 
   private logDecision(ctx: ExtensionContext, decision: CompactionDecision): void {

@@ -12,6 +12,8 @@ import {
   efficiencyLogPath,
   isValidSessionId,
   observationObjectPath,
+  pruneObjectsDirectory,
+  pruneSessionObjects,
   readBashFullOutput,
   readStoredObjectChunk,
   reducerObjectPath,
@@ -128,5 +130,59 @@ test('readBashFullOutput: rejects non-bash logs and paths outside tmpdir', async
     assert.equal(res!.lines, 2);
   } finally {
     await rm(tempFile, { force: true });
+  }
+});
+
+test('pruneObjectsDirectory: removes oldest objects when file count or total size exceeds limits', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'pier-prune-test-'));
+  try {
+    const dir = join(tempDir, 'objects');
+    await storeContentAddressedObject(join(dir, 'file1.txt'), 'content 1');
+    // slight delay for mtime distinction
+    await new Promise((r) => setTimeout(r, 10));
+    await storeContentAddressedObject(join(dir, 'file2.txt'), 'content 2');
+    await new Promise((r) => setTimeout(r, 10));
+    await storeContentAddressedObject(join(dir, 'file3.txt'), 'content 3');
+
+    // Prune to max 2 files
+    const removed = await pruneObjectsDirectory(dir, { maxFiles: 2 });
+    assert.equal(removed, 1);
+
+    const remaining = await (await import('node:fs/promises')).readdir(dir);
+    assert.equal(remaining.length, 2);
+    // file1.txt was oldest, so it must have been pruned
+    assert.equal(remaining.includes('file1.txt'), false);
+    assert.equal(remaining.includes('file2.txt'), true);
+    assert.equal(remaining.includes('file3.txt'), true);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('pruneSessionObjects: prunes both content-addressed dirs of one session root', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'pier-prune-session-test-'));
+  try {
+    const root = join(tempDir, 'herdr-pi', 'sess');
+    const obsDir = join(root, 'observation-pack', 'objects');
+    const redDir = join(root, 'evidence-preserving-reducer', 'objects');
+
+    for (const [dir, name] of [
+      [obsDir, 'obs_a.txt'],
+      [obsDir, 'obs_b.txt'],
+      [redDir, 'hash_c.txt'],
+      [redDir, 'hash_d.txt'],
+    ] as const) {
+      await storeContentAddressedObject(join(dir, name), `content ${name}`);
+      await new Promise((r) => setTimeout(r, 5)); // distinct mtimes for oldest-first pruning
+    }
+
+    const removed = await pruneSessionObjects(root, { maxFiles: 1 });
+    assert.equal(removed, 2, 'one file pruned per directory');
+    const obsFiles = await (await import('node:fs/promises')).readdir(obsDir);
+    const redFiles = await (await import('node:fs/promises')).readdir(redDir);
+    assert.equal(obsFiles.length, 1);
+    assert.equal(redFiles.length, 1);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
   }
 });

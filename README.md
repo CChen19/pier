@@ -181,6 +181,20 @@ Runtime policies and operational limits are centralized in `runtime-policy.ts` (
 | `PIER_GIT_TIMEOUT_MS` | `10000` | ms | Execution timeout for git operations (worktree creation, diff summary, cleanup) |
 | `PI_HERDR_TERM_READ_MAX` | `4096` | chars | Maximum terminal buffer characters read per operation |
 
+### Efficiency mechanisms (D100–D103, opt-in)
+
+Three token-saving mechanisms ship **disabled by default** and are safe to try one at a time:
+
+- **ObservationPack** — large tool outputs are projected as placeholders after the first `fullSends` requests, with paged retrieval via `obs_recall` (session JSONL stays untouched).
+- **EPR** — long diagnostic (`bash` test/build) logs are reduced in-process to a byte-verified evidence receipt; the raw log is archived first and stays readable.
+- **OCC** — `todo_write` boundaries drive pi's native compaction under a KV-cache cost model, carrying unfinished tasks across the compaction.
+
+```bash
+PI_HERDR_OBS_PACK_ENABLE=1 PI_HERDR_OBS_PACK_LOG=1 pi   # start here
+```
+
+Full quick start, what to watch in `efficiency-logs/*.jsonl`, rollback steps and a feedback template: **[docs/efficiency-trial.md](docs/efficiency-trial.md)**.
+
 ## Design principles
 
 - **Session JSONL is the single source of truth**: todos, delegations, and registries replay from session branches — restart and branch switches stay correct

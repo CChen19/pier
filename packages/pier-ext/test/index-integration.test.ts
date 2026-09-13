@@ -394,3 +394,43 @@ test('role manifest deny returns terminate for the whole batch', withCleanup(asy
   assert.equal(verdict.terminate, true, 'denied batches must be able to stop without another model call');
   assert.match(verdict.reason ?? '', /bash/);
 }));
+
+test('index session lifecycle: derives the session object root and prunes it on shutdown', withCleanup(async (cleanup) => {
+  const env = cleanup.env();
+  env.set('PI_HERDR_SUBAGENT', '1');
+  env.delete('HERDR_ENV');
+  env.delete('HERDR_SOCKET_PATH');
+  env.delete('HERDR_PANE_ID');
+  env.delete('PI_HERDR_ROLE_MANIFEST');
+  env.delete('PI_SESSION_FILE');
+  env.delete('PI_SESSION_ID');
+
+  const { mkdir, writeFile, readdir } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  const sessionDir = cleanup.tempDir('index-prune').path;
+
+  const sessionId = 'sess_idx_prune';
+  const dirs = [
+    join(sessionDir, 'herdr-pi', sessionId, 'observation-pack', 'objects'),
+    join(sessionDir, 'herdr-pi', sessionId, 'evidence-preserving-reducer', 'objects'),
+  ];
+  // One file above the default cap (300) per directory, so the shutdown prune must act.
+  for (const dir of dirs) {
+    await mkdir(dir, { recursive: true });
+    for (let i = 0; i < 301; i++) await writeFile(join(dir, `f${i}.txt`), `content ${i}`);
+  }
+
+  const pi = fakePi();
+  await pier(pi as never);
+
+  const ctx = {
+    sessionManager: { getSessionDir: () => sessionDir, getSessionId: () => sessionId, getBranch: () => [] },
+  };
+  await fire(pi, 'session_start', { reason: 'new' }, ctx);
+  await fire(pi, 'session_shutdown');
+
+  for (const dir of dirs) {
+    const files = await readdir(dir);
+    assert.equal(files.length, 300, `${dir} must be pruned to the default cap on shutdown`);
+  }
+}));

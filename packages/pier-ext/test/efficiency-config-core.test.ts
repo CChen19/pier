@@ -3,8 +3,13 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   DEFAULT_EFFICIENCY_CONFIG,
+  loadEfficiencyConfigFromDisk,
+  loadPiNativeCompactionSettings,
   resolveEfficiencyConfig,
   validateEfficiencyConfig,
 } from '../src/efficiency-config-core.ts';
@@ -208,5 +213,106 @@ test('validateEfficiencyConfig: section validation issues force enabled=false (P
   // Flawed sections must be forced to enabled = false
   assert.equal(res.config.observationPack.enabled, false);
   assert.equal(res.config.evidencePreservingReducer.enabled, false);
+});
+
+test('loadPiNativeCompactionSettings: loads without crashing when paths do not exist', () => {
+  const settings = loadPiNativeCompactionSettings({
+    cwd: '/tmp/nonexistent-pier-test-dir',
+    isProjectTrusted: false,
+    agentDir: '/tmp/nonexistent-pier-agent-dir',
+  });
+  assert.equal(typeof settings, 'object');
+  assert.equal(settings.enabled, undefined);
+  assert.equal(settings.keepRecentTokens, undefined);
+});
+
+test('loadPiNativeCompactionSettings: reads agentDir settings and gates the project file on trust', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'pier-pi-settings-unit-'));
+  try {
+    const agentDir = join(tempDir, 'agent');
+    const projectDir = join(tempDir, 'project');
+    await mkdir(agentDir, { recursive: true });
+    await mkdir(join(projectDir, '.pi'), { recursive: true });
+    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({ compaction: { enabled: false, keepRecentTokens: 35000 } }));
+    await writeFile(join(projectDir, '.pi', 'settings.json'), JSON.stringify({ compaction: { keepRecentTokens: 99999 } }));
+
+    const trusted = loadPiNativeCompactionSettings({ cwd: projectDir, isProjectTrusted: true, agentDir });
+    assert.equal(trusted.enabled, false);
+    assert.equal(trusted.keepRecentTokens, 99999, 'project settings win when the project is trusted');
+
+    const untrusted = loadPiNativeCompactionSettings({ cwd: projectDir, isProjectTrusted: false, agentDir });
+    assert.equal(untrusted.keepRecentTokens, 35000, 'untrusted project settings are ignored');
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('loadEfficiencyConfigFromDisk: respects Pi native compaction settings and inheritance (A4)', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'pier-pi-settings-test-'));
+  try {
+    const agentDir = join(tempDir, 'agent');
+    const projectDir = join(tempDir, 'project');
+    // Isolated user-level efficiency config (never the developer's real ~/.pi/agent/herdr-pi/config.json).
+    const userConfigPath = join(tempDir, 'user-efficiency-config.json');
+    await mkdir(agentDir, { recursive: true });
+    await mkdir(join(projectDir, '.pi-herdr'), { recursive: true });
+    await mkdir(join(projectDir, '.pi'), { recursive: true });
+
+    // Pi native global settings disable compaction and set a custom window.
+    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({ compaction: { enabled: false, keepRecentTokens: 35000 } }));
+
+    // Efficiency config explicitly ENABLES OCC — so the assertion below is non-vacuous.
+    await writeFile(
+      join(projectDir, '.pi-herdr', 'config.json'),
+      JSON.stringify({ version: 1, onlineContextCompact: { enabled: true } }),
+    );
+
+    const config1 = loadEfficiencyConfigFromDisk({
+      cwd: projectDir,
+      isProjectTrusted: true,
+      agentDir,
+      userConfigPath,
+      env: {}, // no env override
+    });
+    assert.equal(config1.onlineContextCompact.enabled, false, 'pi compaction.enabled=false disables an explicitly enabled OCC');
+    assert.equal(config1.onlineContextCompact.keepRecentTokens, 35000, 'inherits pi keepRecentTokens');
+
+    // Environment explicitly forcing OCC enable wins over pi's disabled state.
+    const config2 = loadEfficiencyConfigFromDisk({
+      cwd: projectDir,
+      isProjectTrusted: true,
+      agentDir,
+      userConfigPath,
+      env: { PI_HERDR_COMPACT_ENABLE: '1' },
+    });
+    assert.equal(config2.onlineContextCompact.enabled, true);
+
+    // Explicit efficiency keepRecentTokens wins over pi's inherited value.
+    await writeFile(
+      join(projectDir, '.pi-herdr', 'config.json'),
+      JSON.stringify({ version: 1, onlineContextCompact: { enabled: true, keepRecentTokens: 12345 } }),
+    );
+    const config3 = loadEfficiencyConfigFromDisk({
+      cwd: projectDir,
+      isProjectTrusted: true,
+      agentDir,
+      userConfigPath,
+      env: { PI_HERDR_COMPACT_ENABLE: '1' },
+    });
+    assert.equal(config3.onlineContextCompact.keepRecentTokens, 12345);
+
+    // Untrusted project .pi/settings.json is ignored (global 35000 wins).
+    await writeFile(join(projectDir, '.pi', 'settings.json'), JSON.stringify({ compaction: { keepRecentTokens: 99999 } }));
+    const config4 = loadEfficiencyConfigFromDisk({
+      cwd: projectDir,
+      isProjectTrusted: false, // untrusted!
+      agentDir,
+      userConfigPath,
+      env: { PI_HERDR_COMPACT_ENABLE: '1' },
+    });
+    assert.equal(config4.onlineContextCompact.keepRecentTokens, 35000);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
 });
 

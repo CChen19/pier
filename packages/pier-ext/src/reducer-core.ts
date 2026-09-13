@@ -20,8 +20,14 @@ export const DEFAULT_MAX_CHARS = 600_000;
 export const DEFAULT_MAX_OUTPUT_TOKENS = 2048;
 export const DEFAULT_TIMEOUT_MS = 5000;
 
+/**
+ * Diagnostic (test/build) command gate for EPR.
+ * Boundaries accept any shell separator on both sides so that subshells and chains such as
+ * `(npm test)`, `npm test&&echo ok` or `pytest;` are still recognized; a word character
+ * after the keyword (`makefile`, `coqtop`, `npm run test`) must NOT match.
+ */
 export const DIAGNOSTIC_COMMAND =
-  /(?:^|[;&|()\s])(?:lake\s+build|lake\s+env\s+lean|lean|coq|cargo(?:\s+(?:build|test|check))?|zig\s+build|pytest|python(?:3)?\s+-m\s+(?:pytest|unittest|py_compile)|ctest|cmake\s+--build|ninja|make|npm\s+test|pnpm\s+test|yarn\s+test|go\s+test|bazel\s+test|node\s+--test|vitest|jest)(?:\s|$)/i;
+  /(?:^|[;&|()\s])(?:lake\s+build|lake\s+env\s+lean|lean|coq|cargo(?:\s+(?:build|test|check))?|zig\s+build|pytest|python(?:3)?\s+-m\s+(?:pytest|unittest|py_compile)|ctest|cmake\s+--build|ninja|make|npm\s+test|pnpm\s+test|yarn\s+test|go\s+test|bazel\s+test|node\s+--test|vitest|jest)(?:[;&|()\s]|$)/i;
 
 export const FAILURE_SIGNAL =
   /error|failed|failure|fatal|exception|panic|timeout|unsolved|type mismatch|assert/i;

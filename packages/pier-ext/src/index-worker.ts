@@ -22,6 +22,8 @@ export interface TodoOnlyMount {
   stopReminder?: {
     getBlockedDepth: () => number;
     getRunningSubs: () => number;
+    isCompactionInFlight?: () => boolean;
+    isIntentionalAbort?: () => boolean;
   };
 }
 
@@ -35,7 +37,7 @@ export async function mountTodoOnly(m: TodoOnlyMount): Promise<void> {
     maxItems: 15,
     mirrorTodos: m.mirrorTodos,
     appendEntry: (customType: string, data: unknown) => {
-      (m.pi as { appendEntry?: (t: string, d: unknown) => void }).appendEntry?.(customType, d);
+      (m.pi as { appendEntry?: (t: string, d: unknown) => void }).appendEntry?.(customType, data);
     },
     state: m.todoUi,
     ...(m.getBlockedDepth ? { getBlockedDepth: m.getBlockedDepth } : {}),

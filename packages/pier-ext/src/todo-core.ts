@@ -263,7 +263,7 @@ export function foldLatestTodosMeta(entries: readonly BranchEntryLike[]): Folded
   let writtenAt: number | null = null;
   for (const entry of entries) {
     if (entry.type === 'message') {
-      const msg = entry.message;
+      const msg = entry.message as { role?: unknown; toolName?: unknown; details?: unknown } | null | undefined;
       if (typeof msg !== 'object' || msg === null) continue;
       if (msg.role !== 'toolResult' || msg.toolName !== TODO_TOOL_NAME) continue;
       const snapshot = extractSnapshotFromDetails(msg.details);

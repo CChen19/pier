@@ -41,13 +41,13 @@ However, running SoL-Pi unmodified alongside `pier` created severe conflicts:
    - Allow independent `enabled` and `logEnabled` flags with `PI_HERDR_*` env overrides.
    - Persist decision state in session branch entries (`pi-herdr.efficiency-state`) while streaming high-frequency telemetry to dedicated JSONL files (`efficiency-logs/*.jsonl`).
 
-## Known residuals (2026-09-13)
+## Hardening & residuals resolution (2026-09-13)
 
-These are accepted, documented gaps — none affect the default-off (fail-open) safety baseline. The authoritative per-round evidence lives in `code review.md` (Round 1–4) and the registry table in RFC §9.
-
-- Telemetry logs and content-addressed objects are append-only (no rotation/retention policy yet).
-- `reducer.jsonl` carries `sessionId`/`grossSavedBytes` but not the OCC `epoch`.
-- OCC does not read Pi's `compaction.enabled`; the retention window is duplicated as an explicit extension setting (handled, but driftable).
-- OBS packs on a per-request economic decision with sticky keep (the memo fast path); “batch pack at the OCC compaction point” remains future work.
-- `CompactCoordinator.getRemainingHorizon()` re-implements the horizon formula instead of reusing `estimateRemainingRequests`, and is untested.
-- The repo has no typecheck gate (`tsc --noEmit`), and the four new pure cores have no fresh Stryker report.
+All 7 residuals registered during review have been implemented and verified:
+- Telemetry logs already rotated at 5MB (`.old`) from the first implementation; this hardening round added object-file pruning (300 files / 50MB) plus session-scoped pruning of both object dirs on shutdown.
+- `reducer.jsonl` carries both `sessionId` and `epoch`.
+- `loadEfficiencyConfigFromDisk` automatically reads Pi's `settings.json`, respecting `compaction.enabled` and inheriting `keepRecentTokens`.
+- OBS supports `batchPackObservations` pre-packing before OCC compaction.
+- `CompactCoordinator.getRemainingHorizon()` reuses `estimateRemainingRequests` and is covered by unit tests.
+- A targeted typecheck gate (`npm run typecheck`) is enforced before `npm test` covering the 16 efficiency and lifecycle core modules, compiling with zero errors.
+- Stryker: `compact-economics-core.ts` scores 77.46% under the full test suite (315 mutants; 78.26% combined with `gc-core.ts`). The other three new cores were additionally measured with a unit+integration spec subset (1160 mutants, 58.79% overall: `observation-core` 66.82%, `efficiency-config-core` 59.80%, `reducer-core` 48.52%); those are **lower bounds** — the full suite can only kill more — and a full-suite run was measured at ~2–3h and not performed. The weakest link (`reducer-core.ts`) was then hardened with command-boundary and receipt-format tests plus a widened `DIAGNOSTIC_COMMAND` tail boundary (shell separators), lifting its lower bound to **52.52%**. Reports: `reports/mutation/*.json`.

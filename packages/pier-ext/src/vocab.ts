@@ -49,12 +49,12 @@ export const TODO_TOOL_NAME = 'todo_write';
 export const TODO_DETAILS_KEY = 'pi-herdr.todo';
 
 /** Confirmation copy (byte-aligned with DSH so model vocab transfers). */
-export function formatTodoConfirmation(items: TodoItem[]): string {
+export function formatTodoConfirmation(items: readonly TodoItem[]): string {
   const c = countTodos(items);
   return `Updated todo list: ${c.pending} pending, ${c.inProgress} in progress, ${c.completed} completed.`;
 }
 
-export function countTodos(items: TodoItem[]): TodoCounts {
+export function countTodos(items: readonly TodoItem[]): TodoCounts {
   let pending = 0;
   let inProgress = 0;
   let completed = 0;

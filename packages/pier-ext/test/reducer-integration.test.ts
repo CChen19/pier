@@ -171,7 +171,7 @@ test('EPR: validates exact byte quotations, archives raw log, and replaces block
       usage: { totalTokens: 50 },
     };
 
-    const res = await handleReducerToolResult(event, ctx, config);
+    const res = await handleReducerToolResult(event, ctx, config, { epoch: 2 });
     assert.ok(res !== undefined);
     assert.equal(completeCalls.length, 1);
     assert.equal(completeCalls[0].model.id, 'cliproxy/gemini-3.8-flash-high');
@@ -197,11 +197,14 @@ test('EPR: validates exact byte quotations, archives raw log, and replaces block
     const archivedData = await readFile(expectedArchivePath, 'utf8');
     assert.equal(archivedData, rawLog);
 
-    // 4. Telemetry logged
+    // 4. Telemetry logged with epoch and sessionId
     const logPath = join(tempDir, 'herdr-pi', 'sess_success', 'efficiency-logs', 'reducer.jsonl');
     const logData = await readFile(logPath, 'utf8');
     assert.ok(logData.includes('"action":"applied"'));
     assert.ok(logData.includes('"verificationOk":true'));
+    assert.ok(logData.includes('"epoch":2'));
+    assert.ok(logData.includes('"sessionId":"sess_success"'));
+    assert.ok(logData.includes('"grossSavedBytes":'));
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

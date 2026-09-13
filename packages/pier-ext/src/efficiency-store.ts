@@ -13,7 +13,7 @@
  */
 
 import { constants } from 'node:fs';
-import { lstat, mkdir, open, realpath, rename, rm, stat } from 'node:fs/promises';
+import { lstat, mkdir, open, readdir, realpath, rename, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import {
@@ -73,6 +73,82 @@ export function efficiencyLogPath(
   return join(root, 'efficiency-logs', `${mechanism}.jsonl`);
 }
 
+export const MAX_OBJECTS_PER_DIR = 300;
+export const MAX_OBJECTS_TOTAL_BYTES = 50 * 1024 * 1024; // 50MB
+
+export async function pruneObjectsDirectory(
+  dir: string,
+  limits: { maxFiles?: number; maxTotalBytes?: number } = {},
+): Promise<number> {
+  const maxFiles = limits.maxFiles ?? MAX_OBJECTS_PER_DIR;
+  const maxTotalBytes = limits.maxTotalBytes ?? MAX_OBJECTS_TOTAL_BYTES;
+
+  try {
+    const entries = await readdir(dir);
+    const files: Array<{ name: string; path: string; size: number; mtimeMs: number }> = [];
+    let totalBytes = 0;
+
+    for (const name of entries) {
+      if (!name.endsWith('.txt')) continue;
+      const p = join(dir, name);
+      try {
+        const s = await stat(p);
+        if (s.isFile() && !s.isSymbolicLink()) {
+          files.push({ name, path: p, size: s.size, mtimeMs: s.mtimeMs });
+          totalBytes += s.size;
+        }
+      } catch {
+        /* ignore stat errors */
+      }
+    }
+
+    if (files.length <= maxFiles && totalBytes <= maxTotalBytes) {
+      return 0;
+    }
+
+    // Sort by mtime ascending (oldest first)
+    files.sort((a, b) => a.mtimeMs - b.mtimeMs);
+
+    let removedCount = 0;
+    for (const f of files) {
+      if (files.length - removedCount <= maxFiles && totalBytes <= maxTotalBytes) {
+        break;
+      }
+      try {
+        await rm(f.path, { force: true });
+        removedCount++;
+        totalBytes -= f.size;
+        for (const k of verifiedObjectCache.keys()) {
+          if (k.startsWith(f.path)) verifiedObjectCache.delete(k);
+        }
+      } catch {
+        /* ignore unlink errors */
+      }
+    }
+    return removedCount;
+  } catch {
+    return 0;
+  }
+}
+
+/** Prune both content-addressed object dirs of one session root; returns total removed files. */
+export async function pruneSessionObjects(
+  sessionRoot: string,
+  limits: { maxFiles?: number; maxTotalBytes?: number } = {},
+): Promise<number> {
+  const targets = [
+    join(sessionRoot, 'observation-pack', 'objects'),
+    join(sessionRoot, 'evidence-preserving-reducer', 'objects'),
+  ];
+  let removed = 0;
+  for (const dir of targets) {
+    removed += await pruneObjectsDirectory(dir, limits);
+  }
+  return removed;
+}
+
+let storeWriteCounter = 0;
+
 export async function storeContentAddressedObject(
   filePath: string,
   content: string,
@@ -124,6 +200,11 @@ export async function storeContentAddressedObject(
     }
   } finally {
     await handle?.close();
+  }
+
+  storeWriteCounter++;
+  if (storeWriteCounter % 50 === 0) {
+    void pruneObjectsDirectory(dir).catch(() => {});
   }
 
   return {

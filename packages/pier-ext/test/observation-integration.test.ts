@@ -3,12 +3,14 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import {
+  batchPackObservations,
   clearObservationMemoForTest,
+  createCompactionBatchPackHook,
   registerObservationPack,
   RECALL_TOOL_NAME,
 } from '../src/core/observation.ts';
@@ -301,6 +303,197 @@ test('ObservationPack: memoization fast-path and self-healing on missing disk ob
     // Deliberately query non-existent/corrupted file to trigger self-healing invalidation
     const recallFail = await recallTool.execute('call_fail', { id: 'obs_000000000000000000000000' }, undefined, undefined, ctx);
     assert.ok(recallFail.content[0].text.includes('Error: failed to recall observation'));
+  } finally {
+    clearObservationMemoForTest();
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('ObservationPack: batchPackObservations pre-packs large observations at OCC compaction point with limits and telemetry', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'pier-obs-batch-test-'));
+  const sessionId = 'session_test_05';
+
+  try {
+    clearObservationMemoForTest();
+    const config = {
+      ...DEFAULT_EFFICIENCY_CONFIG.observationPack,
+      enabled: true,
+      logEnabled: true,
+      thresholdBytes: 500,
+    };
+
+    const messages = [
+      {
+        role: 'toolResult',
+        toolName: 'bash',
+        toolCallId: 'tc_batch_1',
+        content: [{ type: 'text', text: 'OUTPUT 1: long line...\n'.repeat(50) }],
+      },
+      {
+        role: 'toolResult',
+        toolName: 'bash',
+        toolCallId: 'tc_batch_2',
+        content: [{ type: 'text', text: 'OUTPUT 2: long line...\n'.repeat(50) }],
+      },
+      {
+        role: 'toolResult',
+        toolName: 'read',
+        toolCallId: 'tc_batch_3',
+        content: [{ type: 'text', text: 'small text' }],
+      },
+    ];
+
+    // Limit to max 1 item in batch
+    const packedCount = await batchPackObservations({
+      sessionRoot: tempDir,
+      sessionId,
+      messages,
+      obsConfig: config,
+      limits: { maxItems: 1 },
+    });
+
+    assert.equal(packedCount, 1);
+
+    // Verify packed-batch telemetry written
+    const logPath = join(tempDir, 'efficiency-logs', 'observation.jsonl');
+    const logData = await readFile(logPath, 'utf8');
+    assert.ok(logData.includes('"event":"packed-batch"'));
+    assert.ok(logData.includes('"source":"compaction"'));
+    assert.ok(logData.includes(`"sessionId":"${sessionId}"`));
+    assert.ok(logData.includes('"obsId":"obs_'));
+  } finally {
+    clearObservationMemoForTest();
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('ObservationPack: multi-block content matches memoKey and avoids recalculation (P1 fix §13.1)', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'pier-obs-multiblock-test-'));
+  const sessionId = 'session_test_06';
+
+  try {
+    clearObservationMemoForTest();
+    const pi = createMockPi();
+    const config = {
+      ...DEFAULT_EFFICIENCY_CONFIG.observationPack,
+      enabled: true,
+      thresholdBytes: 500,
+      fullSends: 1,
+    };
+
+    let horizonCalls = 0;
+    registerObservationPack({
+      pi,
+      getConfig: () => ({ ...DEFAULT_EFFICIENCY_CONFIG, observationPack: config }),
+      getRemainingHorizon: () => {
+        horizonCalls++;
+        return 5;
+      },
+    });
+
+    const ctx = createMockContext(tempDir, sessionId);
+    const contextHandler = pi.listeners.get('context')![0]!;
+
+    // Two-block content where text.length > approxChars (due to newline join)
+    const event = {
+      messages: [
+        {
+          role: 'toolResult',
+          toolName: 'bash',
+          toolCallId: 'tc_multi_1',
+          content: [
+            { type: 'text', text: 'Block A content line...\n'.repeat(60) },
+            { type: 'text', text: 'Block B content line...\n'.repeat(60) },
+          ],
+        },
+        { role: 'assistant', content: [] },
+      ],
+    };
+
+    // 1. First context call packs it and evaluates horizon
+    const res1 = await contextHandler(event, ctx);
+    assert.ok(res1.messages[0].content[0].text.includes('[large tool result replaced'));
+    assert.equal(horizonCalls, 1);
+
+    // 2. Second context call must hit memoKey directly and NOT re-call getRemainingHorizon!
+    const res2 = await contextHandler(event, ctx);
+    assert.equal(res2.messages[0].content[0].text, res1.messages[0].content[0].text);
+    // Horizon must NOT have been called again because memo hit early!
+    assert.equal(horizonCalls, 1);
+  } finally {
+    clearObservationMemoForTest();
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('ObservationPack: createCompactionBatchPackHook honours config, role gate and branch shape (§13.3)', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'pier-obs-hook-test-'));
+  const objectsDir = join(tempDir, 'observation-pack', 'objects');
+  const readObjects = async (): Promise<string[]> =>
+    await readdir(objectsDir).catch(() => [] as string[]);
+
+  try {
+    clearObservationMemoForTest();
+    const obsConfig = {
+      ...DEFAULT_EFFICIENCY_CONFIG.observationPack,
+      enabled: true,
+      logEnabled: true,
+      thresholdBytes: 500,
+    };
+    const branch = [
+      {
+        type: 'message',
+        id: 'm1',
+        message: {
+          role: 'toolResult',
+          toolName: 'bash',
+          toolCallId: 'tc_hook_1',
+          content: [{ type: 'text', text: 'OUTPUT: long line...\n'.repeat(50) }],
+        },
+      },
+      { type: 'custom', customType: 'pi-herdr.todo', data: {} }, // non-message entry: ignored
+      { type: 'message', id: 'm2' }, // message entry without payload: ignored
+    ];
+    const ctx = { sessionManager: { getBranch: () => branch } };
+
+    // 1. Disabled pack config -> no-op (no objects, no telemetry dir).
+    await createCompactionBatchPackHook({ getObsConfig: () => ({ ...obsConfig, enabled: false }) })(tempDir, ctx);
+    assert.deepEqual(await readObjects(), []);
+
+    // 2. Role denies obs_recall -> no-op even when packing is enabled.
+    const denyingRole = {
+      role: 'restricted-agent',
+      version: '1.0.0',
+      tools: ['bash', 'read'],
+      permissions: { '*': 'allow' },
+      unknownTools: 'deny',
+    } as RuntimeRoleManifest;
+    await createCompactionBatchPackHook({
+      getObsConfig: () => obsConfig,
+      getManifest: () => denyingRole,
+      getSessionId: () => 'session_hook',
+    })(tempDir, ctx);
+    assert.deepEqual(await readObjects(), [], 'a role without obs_recall must not receive pre-packed placeholders');
+
+    // 3. Allowed role -> packs the message entries only, and logs one packed-batch record.
+    const hook = createCompactionBatchPackHook({
+      getObsConfig: () => obsConfig,
+      getManifest: () => null,
+      getSessionId: () => 'session_hook',
+    });
+    await hook(tempDir, ctx);
+    assert.equal((await readObjects()).length, 1);
+
+    const logPath = join(tempDir, 'efficiency-logs', 'observation.jsonl');
+    const logData = await readFile(logPath, 'utf8');
+    assert.ok(logData.includes('"event":"packed-batch"'));
+    assert.ok(logData.includes('"source":"compaction"'));
+    assert.ok(logData.includes('"sessionId":"session_hook"'));
+
+    // 4. Second invocation hits the memo -> nothing repacked, no duplicate telemetry.
+    await hook(tempDir, ctx);
+    assert.equal((await readObjects()).length, 1);
+    assert.equal((await readFile(logPath, 'utf8')).trim().split('\n').length, 1);
   } finally {
     clearObservationMemoForTest();
     await rm(tempDir, { recursive: true, force: true });

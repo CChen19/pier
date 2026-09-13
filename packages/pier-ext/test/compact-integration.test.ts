@@ -178,6 +178,7 @@ test('CompactCoordinator: full lifecycle from turn_end abort through agent_settl
     },
   };
 
+  let beforeCompactCalled = false;
   const settlePromise = coordinator.onAgentSettled({
     ctx: mock.ctx,
     todos,
@@ -189,9 +190,16 @@ test('CompactCoordinator: full lifecycle from turn_end abort through agent_settl
       firstCompactionRequestScale: 2.0,
       subsequentCompactionMargin: 1.5,
     },
+    onBeforeCompact: async () => {
+      beforeCompactCalled = true;
+    },
   });
 
-  // Verify compact was called with remaining task instructions
+  // Allow async onBeforeCompact microtask to resolve
+  await new Promise((r) => setTimeout(r, 10));
+
+  // Verify onBeforeCompact hook and compact was called with remaining task instructions
+  assert.equal(beforeCompactCalled, true);
   assert.equal(mock.compactCalls.length, 1);
   const compactCall = mock.compactCalls[0];
   assert.ok(compactCall.customInstructions.includes('Remaining task'));
@@ -326,5 +334,24 @@ test('CompactCoordinator: turn_end falls back when usage.tokens is null or 0 (P2
   // Must not throw or poison with 0
   assert.equal(coordinator.state.lastContextTokens, 35000);
 });
+
+test('CompactCoordinator.getRemainingHorizon: fallback when empty and derived from samples (P2-7)', () => {
+  const coordinator = new CompactCoordinator();
+
+  // 1. No samples -> conservative fallback 4
+  assert.equal(coordinator.getRemainingHorizon(), 4);
+
+  // 2. With samples: [5, 5], remainingBoundaries = 2 -> 1 + floor(5 * 2) = 11
+  coordinator.state.completedBoundaryRequestCounts = [5, 5];
+  assert.equal(coordinator.getRemainingHorizon(2), 11);
+
+  // 3. With tight window tokens: clamps to upper bound
+  coordinator.state.lastContextTokens = 90000;
+  coordinator.state.positiveContextDeltaTotal = 2000;
+  coordinator.state.positiveContextDeltaCount = 1; // avg increment = 2000
+  // window = 100000 -> (100000 - 90000)/2000 = 5
+  assert.equal(coordinator.getRemainingHorizon(2, 100000), 5);
+});
+
 
 

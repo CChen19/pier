@@ -24,7 +24,7 @@
           "type": "integer",
           "default": 20000,
           "minimum": 1000,
-          "description": "原生压缩保留区大小（同时用于 archiveTokens 估算与 nativeCompactionFeasible 预检）。缺省等于 pi 的 compaction.keepRecentTokens 默认值；本扩展不读 pi settings，若用户改过 pi 设置需在此同步。"
+          "description": "原生压缩保留区大小（同时用于 archiveTokens 估算与 nativeCompactionFeasible 预检）。缺省自动继承 pi 的 compaction.keepRecentTokens 设置（默认 20000）。"
         }
       },
       "additionalProperties": false

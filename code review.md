@@ -8,6 +8,98 @@
 
 ---
 
+## Round 10 收尾结论（试用就绪，2026-09-13）
+
+**Round 9 §15.5 的三条延后项已全部清理，并补齐“可试用”所需的入口文档。** 最终验证：`npm test` **657/657**（含 typecheck 前置）、`pier-ext` **612/612**、`npm ci --dry-run` 通过。
+
+| 延后项 | 结果 |
+|---|---|
+| 其余 3 个新核心的变异证据 | ✅ 已归档：单元+集成 spec 子集跑 1160 mutants，整体 **58.79%**（`observation-core` 66.82% / `efficiency-config-core` 59.80% / `reducer-core` 48.52%）——**下界**（全量集只会多杀；全量集实测需 ~2–3h，未跑）。并针对最弱的 `reducer-core` 补测 + 把 `DIAGNOSTIC_COMMAND` 尾边界放宽到 shell 分隔符，复测 **52.52%**。报告：`reports/mutation/efficiency-cores*.json`、`reducer-core-trial.json` |
+| `recordPacked()` 风格收敛 | ✅ 已做：`packOneMessage` 新增可选 `log` 参数，**memo 写入与 `observation.jsonl` 单次写入合并到同一函数**（两条打包路径各删掉 ~25 行重复日志代码，不可能再出现“写了 memo 忘了日志”） |
+| index 层剪枝/路径测试 | ✅ 已做：新增 index 生命周期集成用例（`session_start` 传入 session dir → 两个 objects 目录各 301 个文件 → `session_shutdown` 后各剩 300），直接验证真实接线与默认阈值 |
+
+本轮还新增了**试用入口**：`docs/efficiency-trial.md`（开启方式 / 建议顺序 / 观测入口与字段 / 粗判划算 / 安全与回滚 / 反馈模板 / 已知限制）+ README `Configuration` 下的 “Efficiency mechanisms (D100–D103, opt-in)” 小节 + RFC 状态行与 §9 的指引。
+
+顺带的功能性改进：`DIAGNOSTIC_COMMAND` 尾边界由 `\s|$` 扩为 `[;&|()\s]|$`，使 `(npm test)`、`npm test&&echo ok`、`pytest;` 也能被 EPR 识别（`makefile`/`coqtop`/`npm run test` 仍不误判），并由新增用例钉住。
+
+**当前状态：可开始试用并收集反馈。** 反馈时请按试用指南 §6 附上 `/efficiency` 输出与脱敏后的 `efficiency-logs/*.jsonl` 片段；预期第一批反馈集中在：占位符可读性（`excerptBytes`/`thresholdBytes`）、EPR 收据粒度与 reducer 模型选择、OCC 触发时机与 `cacheWriteReadRatio`。
+
+---
+
+## Round 9 收尾结论（2026-09-13，审阅侧执行）
+
+**Round 8 §14.3 的 1–5 项全部关闭**：A4 测试改为真断言 + 完全隔离；角色门禁/批量打包/对象剪枝抽成可单测函数并补齐用例；RFC/ADR 措辞与计数修正。**额外修复**：round-8 声明 `typescript` 时漏了 lock 条目（干净机器 `npm ci` 会失败）——现已钉 `~5.9.3` 并修复 lock（`npm ci --dry-run` 通过）。
+
+- 测试：`npm test` **654/654**（含 typecheck 前置）、`pier-ext` **609/609**（Round 8 为 651/606，+3 用例）。
+- 文档：RFC 基线 609/654、§8 计数 64（42+7+9+6）、§9 全面披露变异证据边界；ADR 拆开“既有日志轮转 / 本轮对象剪枝”。
+- 明确延后（已披露）：其余 3 个新核心的变异报告、`recordPacked()` 风格收敛、index 层剪枝事件注册测试（详见 §15.5）。
+
+详细记录见 §15；逐轮历史见 Round 8–1 与 §0–§14。
+
+---
+
+## Round 8 复审结论（2026-09-13）
+
+**P1（多块 memo 键）已闭环且实测归零；P1-B、B2 均以“诚实口径”收敛；本轮无实质性代码问题，剩余仅文档措辞与两处测试覆盖细节。** 基线核对：`npm test` **651/651**、`pier-ext` **606/606**（与 RFC `:5` 的 606/651 逐字吻合）。
+
+| 项 | 状态 | 关键证据 |
+|---|---|---|
+| **P1 多块 memo 键** | ✅ 已修 + 实测闭环 | 新增单一来源 `contentJoinedLength()` + `memoKeyFor()`（`core/observation.ts:54-64`），四处共用（`:98/130` 写，`:179` 批量读，`:389/393` context 读）；**实测：单块 0.3/0.0ms，双块 0.0/0.0ms，三块 0.1/0.0ms（Round 7 双块为 33.6/32.0ms），三次请求 `horizonCalls` 均为 1**；新测 `observation-integration.test.ts:369` 用 `getRemainingHorizon` 调用次数断言“命中不再决策” |
+| 批量上限语义 | ✅ | 改为“首条不饿死、后续不越界”的软上限：`accumulatedBytes + textBytes > maxBytes && packedCount > 0 → break`（`core/observation.ts:189`）；`packed-batch` 日志补 `source: 'compaction'`（`:213`）且改为 `await` + try（`:208-210`）；测试 `:311` 覆盖 `limits.maxItems` 与遥测字段 |
+| **P1-B 门禁范围** | ✅ 以文档口径收敛 | tsconfig 仍为 16 文件（`--listFiles` 实测），ADR `:52` / RFC `:438` 已改为 “targeted typecheck gate … covering the 16 efficiency and lifecycle core modules”，与实测一致（不再声称 project-wide） |
+| **B2 变异声明** | ✅ 声明已诚实化（覆盖仍 1/4） | ADR `:53` / RFC `:439` 改为「`compact-economics-core.ts` 315 mutants、77.46%；合并测试集 78.26%」；报告目录仍是 13 Sep 10:26 那次（只含 `compact-economics-core` + `gc-core`）——**未跑其余 3 个核心，但已不再声称已跑** |
+| RFC 计数与基线 | ✅ | §8 拆为 40 纯核心 + 6 OBS + 9 OCC + 6 EPR = 61；`:5` 基线 606/651 与实测完全一致 |
+| A1/A3/A4/C1 | ✅ 无回归 | 同 Round 7（shutdown `await` 剪枝、horizon 窗口接线、pi settings 读取、批量打包去重+上限+遥测+角色门禁） |
+
+**发布面评估**：三机制默认关闭、逐项 fail-open，Round 1–8 的 P1 均已闭环；剩余项不阻塞合入。
+
+---
+
+## Round 7 复审结论（7 项修复后，2026-09-13）
+
+**`npm test` 650/650、`pier-ext` 605/605 全绿（已用仓库内 `typescript`，不再依赖全局 tsc）。** Round 6 的 P1-A / A1-await / A3-接线 / A4-信任门控 / C1-去重+上限+遥测+角色门禁 均已落地；**但引入 1 个新的 P1 回归（多块内容的 memo 键不一致），且 P1-B（门禁范围）与 B2（Stryker 证据）仍未动。**
+
+| 项 | Round 7 状态 | 关键证据 |
+|---|---|---|
+| P1-A typescript 依赖 | ✅ 已修 | 根 `package.json:46` + `packages/pier-ext/package.json:57` 声明 `typescript: ^5.3.3`，`package-lock.json` 同步；`node_modules/.bin/tsc` 存在且为 5.9.3（`require.resolve('typescript')` → 仓库内路径） |
+| **P1 新回归：memo 键不一致** | ❌ **新发现** | `packOneMessage` 写入 `${sessionRoot}:${toolCallId}:${text.length}`（`core/observation.ts:116`），而两处读取用 `approxChars = Σ b.text.length`（`:167` 批量、`:374` context）。单块时两者相等；**多块内容差 (n−1) 个换行字符** → 快路径永久 miss。实测（4MB）：单块 `60.7 / 0.3 / 0.0 ms`，**双块 `45.9 / 33.6 / 32.0 ms`**（详见 §13.1） |
+| P1-B 门禁范围 | ❌ 未动 | `tsconfig.json` 仍只列 11 个文件（program 实测 16/67）；`index.ts` / `index-master.ts` / `index-worker.ts` / `core/todo.ts` 仍不在门禁内；`ADR:52` 仍写 "project-wide typecheck gate" |
+| A1 保留策略 | ✅ 已修 | `session_shutdown` 改为 `await` 两次剪枝（`index.ts:648-649`，带 try/catch）；日志 5MB 轮转本就存在 |
+| A3 horizon 接线 | ✅ 已修 | `index.ts:599-602` 用 `latestCtx.getContextUsage().contextWindow` 传入 → 窗口截断能力在生产路径生效 |
+| A4 pi settings | ✅ 代码 + 🟡 测试 | `agentDir ?? PI_CODING_AGENT_DIR ?? homedir`（`:461`）✅；`hasExplicitKeepRecent` 已加受信判断（`:550`）✅；新增 3 用例（`efficiency-config-core.test.ts:226`），其中 `enabled===false` 那条**在无效率配置时是空断言**（默认即 false）——我用 workspace 配置直接验证了真实行为（§13.2） |
+| C1 批量打包 | ✅ 大部分 | `packOneMessage` 抽公（`:79`，context 与 batch 共用）✅；上限 20 条/10MB（`:67-68/154`）✅；`packed-batch` 遥测含 sessionId/obsId/bytes/tokens/grossSaved（`:195`）✅；角色门禁（`index.ts:477`）✅；接线断言（`compact-integration.test.ts:202`）✅。**但新特性无单测**，且受 §13.1 的键回归影响（批量看不见自己写的 memo） |
+| B2 Stryker | ❌ 未动 | `reports/mutation/` 仍是 13:10:26 的旧产物：仅 `compact-economics-core`(315, 77.46%) + `gc-core`(99, 80.81%)；`observation-core` / `reducer-core` / `efficiency-config-core` 无数据；HTML 仍是 08-29；`ADR:53` / `RFC:429/439` 仍称 78.26% 为“新核心”得分、全部通过变异验证 |
+| 文档口径 | 🟡 部分 | RFC `:121` 已改写为“自动读取 pi settings”✅，schema `description` 同步 ✅，基线 605/650 与实测完全吻合 ✅；但 RFC §8 子项拆分仍不准（实测 40 纯核心 + 5 + 9 + 6 = 60）；ADR 三条旧口径未改 |
+
+测试基线（Round 7 实测）：`node --test packages/pier-ext/test/*.test.ts` → **605/605**；`npm test`（含 typecheck 前置）→ **650/650**。
+
+**Round 8 建议顺序**：§13.1 memo 键统一（P1，一行级别）→ P1-B 门禁扩大到 `src/**` 或改写 ADR 口径 → B2 补齐三个核心的变异报告并修正文档数字 → §13.3 的批量打包新特性单测 + A4 空断言补强 → §13.4 nits。
+
+---
+
+## Round 6 复审结论（7 项剩余工作落实验证，2026-09-13）
+
+**`npm test` 649/649、`pier-ext` 604/604 全绿；7 项中 6 项功能落地可信（其中 3 项测试偏薄），B2（Stryker）证据不完整；另发现 2 个 P1 级问题与 1 个被 tsc 顺带修好的真实历史 bug。**
+
+| 项 | 状态 | 关键证据 / 问题 |
+|---|---|---|
+| A1 遥测与对象保留 | 🟡 对象 ✅ / 日志本就存在 | `pruneObjectsDirectory`（`efficiency-store.ts:79-132`，300 文件 / 50MB，每 50 次 store + `session_shutdown` 触发，单测 `efficiency-store.test.ts:135`）✅；**日志 5MB 轮转在 HEAD 已存在**（`:227/240`）——我 Round 4/5 的“无日志轮转”属误报，见 §12.4；残留：`session_shutdown` 用 `void` 触发（`index.ts:639-640`），进程可能先退出 |
+| A2 reducer `epoch` | ✅ 已实现 | `reducer-invoker.ts:61` 新增 opts 并全链路透传（`:101/117/138/…/298`），断言 `"epoch":2`（`reducer-integration.test.ts:205-207`） |
+| A3 horizon 复用 | ✅ 代码 / 🟡 接线 | 复用 `estimateRemainingRequests`（`compact-coordinator.ts:349-370`）+ 3 个单测（`compact-integration.test.ts:330+`）；新增的 `contextWindowTokens` 参数**生产路径不可达**（`index.ts:594` 闭包不传参） |
+| A4 pi `compaction.*` | ✅ 代码 / 🟡 测试 | `loadPiNativeCompactionSettings`（`efficiency-config-core.ts:455-495`）+ 接入禁用/继承逻辑（`:536-556`）；唯一测试是 `typeof settings === 'object'`（`efficiency-config-core.test.ts:215`）→ 四条真实行为（禁用传递 / keepRecent 继承 / 显式优先 / 未受信不读项目文件）无断言 |
+| C1 OBS 批量打包 | 🟡 部分 | `batchPackObservations`（`core/observation.ts:67-135`）+ OCC 回调（`compact-coordinator.ts:230/243-245`、`index.ts:474-486`）；**接线无测试**（仅函数自身单测）、**无遥测**、**无角色门禁**、**无工作量上限** |
+| B1 typecheck 门禁 | 🟡 有了但依赖环境 | 实测注入类型错误可捕获（`error TS2322` / exit=2）；但 **`typescript` 未声明为依赖**且 `node_modules/.bin/tsc` 不存在 → 干净机器/CI 上 `npm test` 直接失败（P1-A）；且 tsconfig 仅覆盖 16/67 个源文件（P1-B） |
+| B2 Stryker 证据 | ❌ 不完整 | 仅 `compact-economics-core.ts`（315 mutants，77.46%）+ `gc-core.ts`（99，80.81%）有数据；`observation-core` / `reducer-core` / `efficiency-config-core` **无任何变异数据**；ADR 的 78.26% 实为这两文件合计（324/414） |
+
+### 本轮 P1（建议合入前处理）
+
+- **P1-A. `npm test` 依赖开发机全局 `tsc`**：`package.json:34-35` 把 `tsc --noEmit` 前置进 `npm test`，但根与包 `package.json` 都没有 `typescript`，`node -e require.resolve('typescript')` → `MODULE_NOT_FOUND`，`node_modules/.bin/tsc` 不存在；本机之所以绿，是因为 `/opt/homebrew/bin/tsc`（外部 5.3.3）在 PATH 上。→ 在 devDependencies 声明 `typescript`（钉版本），否则 CI/新机器上整条测试入口报 `tsc: command not found`。
+- **P1-B. 门禁覆盖被高估**：program 只含 16/67 个 `pier-ext/src` 文件（include 列了 11 个 + 5 个传递依赖），**`index.ts` / `index-master.ts` / `index-worker.ts` / `core/todo.ts` 均不在内**——其中 `index.ts` 承载全部 OCC/OBS/EPR 接线与新增的 `(e: any)`；ADR `:52` 的“project-wide typecheck gate”与事实不符。→ 扩到全 `src`（并修完存量错误）或在 tsconfig/RFC 明写覆盖边界。
+
+其余新发现（批量打包的四个缺口、异常剪枝窗口、配置行为无测试、文档口径矛盾等）见 §12.1–§12.3。
+
+---
+
 ## Round 4 复审结论（第三轮修复后，2026-09-13）
 
 **N1′ 已彻底收敛（实测 memo 命中 0.0–0.3 ms）、P2-7/P2-9 已接线、测试 600/645 全绿**；剩余为「文档/契约未同步」与三项老遗留（遥测清理、批量打包、Stryker/typecheck 证据）。
@@ -599,3 +691,284 @@ getRemainingHorizon calls: 1          ← 命中路径不再重新决策 ✅
 | OBS 压缩点批量打包（若仍要做） | 代码（接口改动） | 需 OCC 向 OBS 暴露 bulk-pack 回调 |
 
 > 以上均已登记在 RFC §9 与 ADR「Known residuals」，不阻塞当前默认关闭（fail-open）下的发布基线。
+
+---
+
+## 12. Round 6 复审详情（7 项剩余工作落实验证）
+
+### 12.0 验证方法
+
+1. 逐项复查 7 项改动的实现、接线、测试与文档声称；
+2. `npm test`（含新的 typecheck 前置）→ **649/649**；`node --test packages/pier-ext/test/*.test.ts` → **604/604**；
+3. **门禁有效性实验**：向被覆盖文件 `observation-core.ts` 临时注入 `const x: number = "not a number"` → `error TS2322` + exit=2（证明门禁非空转），随后恢复原文件（`git diff` 无残留）；
+4. **门禁依赖实验**：`node -e require.resolve('typescript')` → `MODULE_NOT_FOUND`；`ls node_modules/.bin/tsc` → 不存在；仅 `/opt/homebrew/bin/tsc`（5.3.3）在 PATH 上；
+5. **变异报告核对**：解析 `reports/mutation/mutation.json` 与 `reports/stryker-incremental.json`，逐文件统计 mutants/killed/survived。
+
+### 12.1 批量打包（C1）的四个缺口
+
+| # | 缺口 | 位置 | 影响 |
+|---|---|---|---|
+| 1 | **接线无测试** | `index.ts:474-486` → `compact-coordinator.ts:243-245` | 测的只是 `batchPackObservations()` 函数自身（`observation-integration.test.ts:311`）；`onBeforeCompact` 在测试中**零命中**，若将来 hook 没被调用/参数错（比如 branch→messages 映射漏掉 `custom` 条目），无测试会红 |
+| 2 | **无遥测** | `core/observation.ts:67-135` | 它是**唯一绕过 `shouldPackForCache` 经济学判定**的打包路径，却不写 `observation.jsonl`、不进 `loggedPackedObsIds` → 无法事后审计“顺路免费”打包量（Round 1 §3.1.3 曾明要求记 `tailTokens`/`packedAt`） |
+| 3 | **无角色门禁** | `index.ts:474-486` | 只判 `observationPack.enabled`；角色 deny `obs_recall` 时仍会落盘 + 写 memo（`context` handler 的早期 return 保证不会把占位符交给模型，但白白消耗磁盘/CPU） |
+| 4 | **无工作量上限** | `core/observation.ts:74-81` | 一次性遍历整条 branch，对每个大输出做 `sha256 + countLines + placeholder + 落盘`（8MB 项 ~70ms/条）；长会话下压缩点可能出现秒级阻塞，与“压缩点本应顺路免费”的初衷相左。建议加“最大条目数/累计字节”上限 |
+
+另：`batchPackObservations` 与 `context` handler 的循环体重复约 40 行（id 派生 / 占位符 / store+memo），两路径容易再次跑偏（缺口 2 就是这么来的），建议抽公共 `packOneMessage()`。
+
+### 12.2 保留策略（A1）与 memo 的交互
+
+- 剪枝按 mtime 升序删到 300 文件 / 50MB 以内（`efficiency-store.ts:79-132`）✅，并在删除时清掉 `verifiedObjectCache` 对应键（`:121-123`）。
+- **已知窗口**：被剪掉的对象若仍在 `placeholderMemo` 里，模型下一次 `obs_recall` 会失败一次（随后 Round 4 的自愈机制会 invalidate + 重新落盘）。建议在 RFC/注释里写明这个“一次失败”窗口，或让剪枝跳过 memo 中仍活跃的 obsId。
+- `k.startsWith(f.path)` 的缓存清理未带 `:` 分隔符（当前命名下不会误删，但不够严谨）；`session_shutdown` 的剪枝是 `void` 异步（`index.ts:639-640`），进程退出可能赶在删除完成前。
+
+### 12.3 pi 设置读取（A4）的边界问题
+
+- `loadPiNativeCompactionSettings` 硬编码 `~/.pi/agent/settings.json`（`efficiency-config-core.ts:460`），未尊重 `PI_CODING_AGENT_DIR`（pi SDK 有 `getAgentDir()`）；项目文件已做信任门控 ✅。
+- `hasExplicitKeepRecent`（`:548-550`）读的是**原始 workspace 配置且不判信任**：未受信项目只要写入 `onlineContextCompact.keepRecentTokens` 就能阻止继承 pi 的值（影响面小，但属信任边界泄漏）。
+- `(workspaceConfig as any)` / `(userConfig as any)` 属类型绕行；`reducer-invoker.ts` 的 `(validated as { ok: false; reason: string }).reason` 与本可被 narrowing 覆盖，`AbortSignal as any` 同理。
+- 行为测试缺失（见下表），且 RFC §4.2.5/ADR 需要同步“现在会读 pi settings”这一事实。
+
+### 12.4 我此前的误报更正（日志轮转）
+
+Round 4/5 我判“日志无轮转/保留策略”，依据是 `grep -rn "rotate|prune|retention|maxLogBytes|MAX_LOG"`，该 pattern **匹配不到** `MAX_EFFICIENCY_LOG_BYTES`（`efficiency-store.ts:227`）与 `.old` 后缀重命名（`:240-244`）——该实现自 `efdfcc7`（提交版）已存在。**结论：日志轮转部分是我的误报；仅 `objects/` 剪枝确实缺失，本轮已补齐。** 教训已记于此，供后续复审参考（避免用“关键词白名单”代替逐文件阅读）。
+
+### 12.5 顺带修好的真实历史 bug（tsc 的收益）
+
+`index-master.ts` / `index-worker.ts` 在 HEAD（`efdfcc7`）中的 `appendEntry` 包装器写成 `appendEntry?.(customType, d)`——**`d` 在整个文件中未定义**（`git show HEAD:… | grep -n "\bd\b"` 只有这一处）。运行时会抛 `ReferenceError`，而 `core/todo.ts:195`（归档清理）与 `:392`（`/todos` 人工编辑，D38 注释处）两处调用都在 `try/catch` 里被静默吞掉 → **D38 的 todo 编辑持久化在 master 上长期失效**（回放时丢失人工编辑记录，但不影响内存态主流程）。本轮改为 `data` ✅。建议补一个“`appendEntry` 被调用且写入正确 payload”的测试（否则同类静默失败还会再来）。
+
+### 12.6 文档口径需修正
+
+| 位置 | 问题 |
+|---|---|
+| RFC `:121`（§3.2 保留窗口说明） | 仍写“本扩展**不读取** `compaction.*`；启用 OCC 即视为接管压缩时机”，与 A4 实现（会读，且 `enabled=false` 会禁用 OCC）**直接矛盾** |
+| RFC `:419`（§8） | 子项拆分与实测不符：实测 39 纯核心 + 5 OBS + 9 OCC + 6 EPR = 59（总数 604 正确） |
+| RFC `:429`（§9） | “全部 7 项已全量实现并通过…变异测试验证”对 B2 过度声明（3/4 新核心无变异数据） |
+| ADR `:52` | “project-wide typecheck gate” → 实际覆盖 16/67 个源文件 |
+| ADR `:53` | “new core modules reached 78.26%” → 78.26% 是 `compact-economics-core` + `gc-core` 两文件合计（324/414）；新核心单文件为 77.46% |
+| ADR `:45` | “Telemetry logs rotate at 5MB” 描述的是自 `efdfcc7` 已存在的行为（可保留，但不应计为本轮新增） |
+
+### 12.7 Round 7 最小修复集（按优先级）
+
+1. **P1-A**：devDependencies 声明 `typescript`（钉版本），并确认 `npm test` 在干净环境可跑（可用 `npm ci && npm test` 验证）。
+2. **P1-B**：tsconfig `include` 扩到 `src/**/*.ts`（或明写覆盖边界），同步 ADR 措辞。
+3. **C1 缺口 2/4**：批量打包补 `packed-batch` 遥测 + 工作量上限；顺带抽公共 `packOneMessage()`。
+4. **A4 测试**：用临时目录/临时 `settings.json` 覆盖四条行为（禁用传递 / 继承 / 显式优先 / 未受信跳过），并修 RFC `:121` 与 `hasExplicitKeepRecent` 的信任判断。
+5. **B2**：对 `observation-core` / `reducer-core` / `efficiency-config-core` 跑一次变异测试并归档（HTML 报告也需刷新，当前仍是 08-29）。
+6. 其余：A1 剪枝在 `session_shutdown` 改 `await`；A3 把 `contextWindowTokens` 接到生产路径或删参；批量打包加角色门禁；文档口径表（§12.6）逐项修正。
+
+---
+
+## 13. Round 7 复审详情（7 项修复验证 + 1 个新回归）
+
+### 13.0 验证方法
+
+1. 逐项复查 Round 6 §12.7 的最小修复集；
+2. `npm test`（typecheck 前置 + 全量测试）→ **650/650**；`node --test packages/pier-ext/test/*.test.ts` → **605/605**；
+3. 依赖验证：`ls node_modules/.bin/tsc` ✓、`require.resolve('typescript')` → 仓库内 `node_modules/typescript/lib/typescript.js`（5.9.3）→ 不再依赖 `/opt/homebrew/bin/tsc`；
+4. 两个定向实验（临时脚本已删）：① 多块 vs 单块的 memo 命中计时（§13.1）；② 用临时 workspace 效率配置直接验证 pi `compaction.enabled=false` / `keepRecentTokens` 继承 / 显式优先（§13.2）。
+
+### 13.1 P1 新回归：多块内容的 memo 键不一致（sticky 快路径失效）
+
+```ts
+// packOneMessage（:116）——写入用的键
+text = content.map(b => b.text ?? '').join('\n');           // 多块时插入 (n-1) 个 '\n'
+const memoKey = `${sessionRoot}:${toolCallId}:${text.length}`;
+
+// batchPackObservations（:167）与 context handler（:374）——读取用的键
+let approxChars = 0;
+for (const b of content) approxChars += (b.text?.length ?? 0);   // 不含分隔符
+const memoKey = `${sessionRoot}:${toolCallId}:${approxChars}`;
+```
+
+- 单块：`text.length === approxChars` → 命中（实测 0.0–0.3 ms）✅
+- **多块（常见！`index-locks.ts` 会给工具结果追加写锁告警块，EPR 也保留额外块）：键相差 (n−1)** → 写与读对不上：
+
+```text
+memo fast-path timing (request 2+ should be ~0ms if the key matches):
+single-block: 60.7ms / 0.3ms / 0.0ms   ← memo 生效
+two-block  : 45.9ms / 33.6ms / 32.0ms  ← memo 永久 miss（每次请求重算）
+```
+
+- 影响：每次 provider 请求对多块大输出重做 `sha256Hex + countLines + formatObservationPlaceholder + storeContentAddressedObject`（4MB ≈ 33 ms，8MB ≈ 70 ms）；`batchPackObservations` 也看不见自己写入的 memo（`:167` 检查永远 miss），于是压缩点可重复打包同一条；`placeholderMemo` 被写入从未被读取的死键，提前泵出活条目（LRU 压力）。占位符本身仍正确（证据不丢），所以只影响性能/审计。
+- 修复：单一键来源（如 `memoKeyFor(sessionRoot, toolCallId, chars)` 导出函数，三处共用；或在 `packOneMessage` 入参里传 `memoChars: approxChars`）。**测试**：加一个「双块内容连续两次 `context` 事件，第二次 `getRemainingHorizon` 不被调用 / prepare 耗时或 store 调用不重复」的断言（当前全套测试均为单块，所以这个回归全套绿灯）。
+
+### 13.2 A4 行为验证（shipped 测试的空断言）
+
+shipped 测试 `efficiency-config-core.test.ts:226` 的第 1 条断言（`pi enabled=false → OCC enabled=false`）在“未提供任何效率配置”时是**空断言**（默认就 false）。我用临时 workspace 效率配置直接跑了四条路径：
+
+| 场景 | 结果 | 结论 |
+|---|---|---|
+| B) workspace `OCC.enabled=true` + pi `enabled=false` | `false`，`keepRecentTokens=35000` | 真实行为 ✓（但 shipped 测试未覆盖此组合） |
+| C) 同上 + `PI_HERDR_COMPACT_ENABLE=1` | `true` | 环境变量优先 ✓ |
+| D) 显式效率配置 `keepRecentTokens=12345` + pi 35000 | `12345` | 显式优先 ✓ |
+
+建议：将 B 场景写成真实断言（临时 `.pi-herdr/config.json` 开 OCC + 临时 agentDir settings 关 pi），否则该分支回归不会被发现。另外该测试直接读真实 `~/.pi/agent/herdr-pi/config.json`（只有当开发者本机恰有该文件且开了 OCC 时会变红——属测试隔离隐患，建议把用户效率配置目录也纳入 `agentDir`/env 派生）。
+
+### 13.3 Round 7 新特性无测试
+
+| 新特性 | 位置 | 现状 |
+|---|---|---|
+| `MAX_BATCH_PACK_ITEMS` / `MAX_BATCH_PACK_BYTES` 上限 | `core/observation.ts:67-68/154` | 无用例；且检查在打包前，**单批可超 10MB 上限至多一条**（如 9.9MB + 8MB = 17.9MB），建议改为“已累计 + 本条 > 上限则停”并注明是软上限 |
+| `packed-batch` 遥测 | `:195` | 无用例（连 `event` 名都未断言） |
+| 批量打包的角色门禁 | `index.ts:477` | 无用例（Round 6 的 observation-integration diff 本轮未变，仍是单函数测试） |
+| 多块 memo 命中 | `:116` vs `:167/:374` | 无用例（见 §13.1） |
+
+### 13.4 遗留与 nits
+
+- **仍开**：P1-B（门禁范围/ADR 措辞）、B2（三个核心的变异报告 + `ADR:53`/`RFC:429/439` 数字口径）、`ADR:45` 把已有日志轮转计为本轮新增。
+- RFC §8 子项拆分仍不准（实测 40 纯核心 + 5 OBS + 9 OCC + 6 EPR = 60）。
+- `typescript: "^5.3.3"` 实际装上 5.9.3：门禁行为跟随小版本漂移，建议钉到 `~5.9.3`（或至少 CI 锁 lockfile）。
+- `packOneMessage` 的 memo 写入与 `loggedPackedObsIds` 去重分属两处，建议合并为一个 `recordPacked(result)`，避免“写了 memo 没记日志”这类偏差。
+- 批量打包仍不做 `fullSends` 判定（设计如此），但建议在 `packed-batch` 日志里带上 `source: 'compaction'` 以区分两类来源。
+
+---
+
+## 14. Round 8 复审详情（P1 闭环验证）
+
+### 14.0 验证方法
+
+1. 复查 Round 7 §13 的全部条目；
+2. `npm test`（typecheck + 全量）→ **651/651**；`node --test packages/pier-ext/test/*.test.ts` → **606/606**（RFC `:5` 声称 606/651，逐字吻合）；
+3. **多块 memo 计时实验**（临时脚本已删）：4MB 单块 / 双块 / 三块各连续三次 provider 请求，并统计 `getRemainingHorizon` 调用次数：
+
+```text
+single-block: 405.2ms / 0.3ms / 0.0ms   horizonCalls=1
+two-block   : 283.5ms / 0.0ms / 0.0ms   horizonCalls=1   ← Round 7 同一用例为 45.9/33.6/32.0ms
+three-block : 186.6ms / 0.1ms / 0.0ms   horizonCalls=1
+```
+
+（首次调用耗时含 JIT 预热，不代表稳定性；关键看第 2/3 次：均 ≤ 0.1ms。）
+
+### 14.1 代码侧评估（本轮唯一实质改动：`core/observation.ts` +28 行）
+
+- **键来源单点化**：`contentJoinedLength(content) = Σ b.text.length + (n−1)`（`:54-60`）恰好等于 `content.map(...).join('\n').length`，语义与实现一致；`packOneMessage` 新增必填 `charLength` 参数（`:98`），从签名上让“调用方与内部键不一致”不再可能。✅
+- **快路径仍为 O(#blocks)**：context handler 只累加 `b.text.length`（不做拼接/哈希）后才查 memo（`:389-394`），因此并未因修复而回退到 round-4 之前的开销。✅
+- **批量上限语义修正**：由“打包前统一判 `accumulatedBytes >= maxBytes`”改为“超出且已打包至少一条才停”，既避免单批超过上限至多一条（Round 7 的 9.9MB+8MB=17.9MB 情形），又不会因首条就超限而完全空转。✅
+- **遥测可审计**：`packed-batch` 现带 `source: 'compaction'` + `sessionId`/`obsId`/`originalBytes`/`originalTokens`/`placeholderTokens`/`grossSavedTokens`，并改为 `await` 写入（压缩前钩子本就串行，代价可接受，换来“日志不丢”）。✅
+
+### 14.2 我此前的第二次误报更正（Stryker HTML 报告）
+
+Round 6/7 我写「HTML 报告仍是 08-29 旧产物」，依据是 `ls -la reports/mutation/html/` 的**目录** mtime；实际文件为 `reports/mutation/html/index.html`，`stat` 显示 **Sep 13 10:26**（与 `mutation.json` 同一次运行）——**该报告是新的**。教训：核对文件新鲜度时应看文件本身而非目录项。（第一次误报是 Round 6 的日志轮转，已记于 §12.4。）
+
+### 14.3 剩余项（均为细节，不阻塞）
+
+| # | 项 | 位置 | 建议 |
+|---|---|---|---|
+| 1 | §9 引言仍写「全部 7 项已全量实现…并通过**变异测试**验证」 | RFC `:429` | 变异只覆盖 1 个核心（行内已限定），建议改为「…并通过自动化测试与已归档的变异测试证据（`compact-economics-core`）」 |
+| 2 | 仍把既有 5MB 日志轮转列为本轮成果 | ADR `:47` | 拆句：日志轮转（既有）+ 对象剪枝（本轮新增） |
+| 3 | `typescript: "^5.3.3"` 实装 5.9.3 | `package.json:46`、`pier-ext/package.json:57` | 若要门禁可复现，钉 `~5.9.3` |
+| 4 | A4 测试：`enabled===false` 空断言 + 读取真实 `~/.pi/agent/herdr-pi/config.json` | `efficiency-config-core.test.ts:226` | 补“workspace 开 OCC + pi 关”真断言（Round 7 已手工验证行为正确）；用户效率配置目录也应由 `agentDir` 派生以保证隔离 |
+| 5 | 角色门禁（`index.ts:477`）与 `session_shutdown` 剪枝无直接测试 | `index.ts` | 可在 index 层加一个轻量集成断言（目前只测到 coordinator 会调用 `onBeforeCompact`） |
+| 6 | memo 写入与 `loggedPackedObsIds` 去重分处两地 | `core/observation.ts` | 可选合并为 `recordPacked(result)`，避免“写了 memo 未记日志”类偏差 |
+| 7 | 其余 3 个新核心仍无变异数据（已披露） | `reports/mutation/` | 若需提高置信度，可对 `observation-core` / `reducer-core` / `efficiency-config-core` 各跑一次并归档（命令见 §15.5） |
+
+---
+
+## 15. Round 9 收尾记录（文档措辞 + 测试覆盖，2026-09-13）
+
+本节由审阅侧直接执行，关闭 Round 8 §14.3 的 1–5 项，并对工程状态做了两处额外修正。验证：`npm test` → **654/654**、`pier-ext` → **609/609**（typecheck 前置通过）。
+
+### 15.1 代码/依赖改动
+
+| 改动 | 位置 | 说明 |
+|---|---|---|
+| 配置加载器可注入 | `efficiency-config-core.ts`（`loadEfficiencyConfigFromDisk` 新增 `agentDir`/`userConfigPath`） | 让测试不再读开发者真实 `~/.pi/agent/herdr-pi/config.json` 与 `PI_CODING_AGENT_DIR`；生产行为不变（缺省值同旧） |
+| 钩子抽取 | `core/observation.ts` 新增 `createCompactionBatchPackHook({getObsConfig,getManifest,getSessionId})` | 把原先内联在 `index.ts` 里的角色门禁 + branch 映射 + 批量打包变成可单测函数；`index.ts` 降为 4 行接线，并清掉那里的 `(e: any)` |
+| 剪枝抽取 | `efficiency-store.ts` 新增 `pruneSessionObjects(sessionRoot, limits?)` | 一次处理两个 objects 目录（index.ts 的 shutdown 路径改调它） |
+| `typescript` 钉版 + lock 修复 | `package.json` / `packages/pier-ext/package.json` / `package-lock.json` | 由 `^5.3.3` 改为 `~5.9.3`；顺带发现并修复：**HEAD 的 lock 没有 `node_modules/typescript` 条目而 package.json 已声明**（干净机器上 `npm ci` 会因 lock 不同步而失败）——`npm install --package-lock-only` 后 lock 含 5.9.3，`npm ci --dry-run` 通过 |
+
+### 15.2 新增/重写测试（共 +3 用例，分布：config 11→13、store 6→7、obs-integration 6→7）
+
+| 测试 | 断言要点 |
+|---|---|
+| `loadPiNativeCompactionSettings: reads agentDir settings and gates the project file on trust` | 受信时项目 `.pi/settings.json` 胜出（99999）；未受信时忽略并回退全局（35000） |
+| `loadEfficiencyConfigFromDisk: respects Pi native compaction settings and inheritance (A4)`（重写） | 先写 workspace 效率配置显式 `enabled: true` → 断言 pi `enabled=false` 确实把它关掉（**原用例的空断言已消除**）；env 强制优先；显式 `keepRecentTokens` 优先；未受信项目文件忽略；全程不碰 `process.env`、不读真实用户配置 |
+| `createCompactionBatchPackHook honours config, role gate and branch shape` | ① 配置关 → 不落盘；② 角色 deny `obs_recall` → 不落盘；③ 允许 → 只打包 message 条目（`custom`/无 payload 条目忽略）并写 `packed-batch`（`source=compaction`、`sessionId`）；④ 二次调用命中 memo → 不重复打包、不重复记日志 |
+| `pruneSessionObjects: prunes both content-addressed dirs` | 两个 objects 目录各剪一条（`maxFiles: 1`），保留各 1 个文件 |
+
+### 15.3 文档改动
+
+- RFC `:5` 基线 → **609/654**（实测一致）；`§8` → 共 64 个用例（**42 纯核心 + 7 OBS + 9 OCC + 6 EPR**，与逐文件计数一致）。
+- RFC `§9` 引言不再宣称“全部 7 项均过变异测试”；末行明确“仅 `compact-economics-core` 有已归档变异证据（315 mutants / 77.46%；与 `gc-core` 合计 78.26%），其余 3 个新核心未跑”。§9 各行的“验证结果”列更新为本次新增的真实断言，并注明日志 5MB 轮转自首版即存在（非本轮新增）。
+- ADR `Hardening & residuals resolution`：拆分“既有日志轮转 / 本轮对象剪枝”，并补一句“其余 3 个新核心暂无变异证据（已披露，未声称）”。
+
+### 15.4 附带发现
+
+- **lock 与 package.json 不同步**（已修，见 9.1）：Round 8 声明了 `typescript` 但未生成 lock 条目，属“干净环境安装会失败”的潜在问题。
+- **本轮环境内 tsc 的一个语法怪癖**：在 `batchPackObservations({ ..., sessionId: deps.getSessionId?.(), ... })` 这种“对象字面量参数内直接内联可选调用”的写法上报 `TS1109/TS1005`（同样的代码抽成变量或在其它位置则正常）。已改为先 `const sessionId = deps.getSessionId?.();` 传入（更可读，也绕开该怪癖）；如后续遇到同类误报，优先考虑同样处理。
+
+### 15.5 明确延后（已披露，不阻塞）
+
+| # | 项 | 原因与建议命令 |
+|---|---|---|
+| 1 | `observation-core` / `reducer-core` / `efficiency-config-core` 的变异报告 | 需专门跑一次，且不能用默认 reporter（会覆盖现有 `mutation.json`）；建议：`npx stryker run --mutate "packages/pier-ext/src/observation-core.ts,packages/pier-ext/src/reducer-core.ts,packages/pier-ext/src/efficiency-config-core.ts" --jsonReporter.fileName reports/mutation/efficiency-cores.json` |
+| 2 | `packRecorded()`：memo 写入与 `loggedPackedObsIds` 去重仍分处两地 | 纯风格重构（无行为缺陷）；若日后新增第三处打包路径，一并收敛 |
+| 3 | `index.ts` 的 `session_shutdown` 剪枝与 `session_start` 路径派生 | 已由 `pruneSessionObjects` 单测覆盖路径逻辑；事件注册本身依赖现有 index 集成 harness，暂不补 |
+
+### 15.6 验证据点
+
+```text
+npm test                → 654/654（含 typecheck 前置）
+node --test packages/pier-ext/test/*.test.ts → 609/609
+npm run typecheck       → 0 error（node_modules 内 tsc 5.9.3）
+npm ci --dry-run        → 通过（lock 与 package.json 同步）
+```
+
+> 至此 Round 8 §14.3 的剩余项仅剩 15.5 中三条（均已披露且不影响交付），三机制仍为默认关闭 + fail-open。
+
+---
+
+## 16. Round 10 详情（试用就绪收尾）
+
+### 16.1 本轮改动清单
+
+| 改动 | 位置 | 说明 |
+|---|---|---|
+| 打包路径合并 | `core/observation.ts` | `packOneMessage` 新增可选 `log: PackLogOptions`；memo 写入 + `observation.jsonl` 单次去重写入收敛到同一函数；context 投影路径与 compaction 批量路径各删 ~25 行重复日志代码 |
+| 命令识别边界放宽 | `reducer-core.ts` `DIAGNOSTIC_COMMAND` | 尾边界 `\s|$` → `[;&|()\s]|$`（子 shell / `&&` 链 / `;` 结尾可识别），并加注释说明边界集合与“词内不误判”约束 |
+| 最弱核心补测 | `test/reducer-core.test.ts` | +2 用例：① 逐条钉住 `DIAGNOSTIC_COMMAND` 的每个 alternation、分隔符、词边界（含 `npm run test`/`makefile`/`coqtop` 反例）；② `formatReceiptText` 的行分隔与 `line=?` 占位 |
+| index 生命周期测试 | `test/index-integration.test.ts` | 真实 composition root：`session_start` 传 session dir → 每目录 301 个对象 → `session_shutdown` 后各剩 300（验证 `sessionRoot` 派生 + 默认剪枝阈值 + `await` 生效） |
+| 变异证据归档 | `reports/mutation/{efficiency-cores,efficiency-cores-integration,reducer-core-trial}.json` | 见 §16.2（`reports/` 已被 `.gitignore` 忽略，属本地证据；命令见 §16.4） |
+| 试用入口文档 | `docs/efficiency-trial.md`（新增）、`README.md` | README `Configuration` 下新增 “Efficiency mechanisms (D100–D103, opt-in)” 小节；试用指南含开启顺序、观测字段、回滚、反馈模板 |
+| 文档数字同步 | `docs/rfc-sol-pi-absorption.md`、`docs/adr/0005-*.md` | 基线 612/657；§8 计数 67（44 纯核心 + 7 OBS + 9 OCC + 6 EPR + 1 index）；§9 与 ADR 的变异证据行改为三档（全量集 / 子集下界 / 补测后复测）；§4.3 补 `DIAGNOSTIC_COMMAND` 边界说明；状态行改为“可开始试用”并指向试用指南 |
+
+### 16.2 变异测试结果（本轮新增证据）
+
+| 文件 | 测试集 | mutants | 分数 | 性质 |
+|---|---|---|---|---|
+| `compact-economics-core.ts` | 全量（655 测试） | 315 | 77.46% | 既有证据（同批次 `gc-core.ts` 合计 78.26%） |
+| `observation-core.ts` | 单元+集成 spec 子集 | 214 | 66.82% | 下界 |
+| `efficiency-config-core.ts` | 单元+集成 spec 子集 | 709 | 59.80% | 下界 |
+| `reducer-core.ts` | 单元+集成 spec 子集 | 237 → 238 | 48.52% → **52.52%**（补测+边界放宽后） | 下界 |
+| 三者合计 | 单元+集成 spec 子集 | 1160 | 58.79% | 下界 |
+
+说明：子集 = 该模块自身的 spec + 对应集成 spec（⊂ 全量集），因此分数是**下界**——全量集只会多杀。全量集跑这 3 个文件的实测 ETA 为 ~2–3h（1160 mutants × 全量套件 ≈8s/mutant、并发 4），本轮未跑并已在 RFC/ADR 中如实标注。
+
+`reducer-core.ts` 补测后的剩余 survivor（113 个）仍集中在 `DIAGNOSTIC_COMMAND` 正则（23）与收据/校验分支的字符串字面量与条件表达式（合计 ~70），属后续可继续收敛的点（不影响试用）。
+
+### 16.3 试用就绪检查表
+
+- [x] 三机制默认关闭、逐项 fail-open（不开启即零介入）
+- [x] 开启方式双通道（环境变量 / 配置文件）+ 优先级与整体覆盖语义已文档化
+- [x] 观测入口：`/efficiency` + `efficiency-logs/*.jsonl`（字段表）+ `objects/` 归档路径与剪枝策略
+- [x] 安全边界：项目信任门控、密钥正则回退、EPR `localOnly`、日志脱敏（只记 sha256/字节数）
+- [x] 回滚路径：置 `enabled:false` / 删环境变量即恢复
+- [x] 反馈模板（附 `/efficiency` 输出 + 脱敏日志片段 + 模型与比率 + 观感）
+- [x] 已知限制清单（horizon 回退 4、粘性打包、批量上限 20/10MB、memo 256、pi 设置启动时读取、变异证据边界）
+- [x] `npm test` 657/657（含 typecheck 前置）、`npm ci --dry-run` 通过
+
+### 16.4 复现命令
+
+```bash
+npm test                                    # typecheck + 全量 657
+node --test packages/pier-ext/test/*.test.ts # 仅 pier-ext 612
+npm run typecheck                            # 仓库内 typescript 5.9.3
+```
+
+变异复测（会向 `reports/mutation/` 写新报告；勿覆盖既有归档）：
+
+```bash
+# 单元+集成 spec 子集（下界），3 个核心
+npx stryker run --mutate "packages/pier-ext/src/observation-core.ts,packages/pier-ext/src/reducer-core.ts,packages/pier-ext/src/efficiency-config-core.ts"
+# 注意：CLI 不支持 --jsonReporter.fileName 点号写法，需用临时 config 文件指定独立的 reporter 文件名
+```

@@ -452,15 +452,66 @@ export function defaultUserEfficiencyConfigFile(): string {
   return join(defaultUserEfficiencyConfigDir(), 'config.json');
 }
 
+export function loadPiNativeCompactionSettings(opts: {
+  cwd?: string;
+  isProjectTrusted?: boolean;
+  agentDir?: string;
+} = {}): { enabled?: boolean; keepRecentTokens?: number } {
+  const cwd = opts.cwd ?? process.cwd();
+  const agentDir = opts.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join(homedir(), '.pi', 'agent');
+  const globalPath = join(agentDir, 'settings.json');
+  const projectPath = join(cwd, '.pi', 'settings.json');
+
+  const result: { enabled?: boolean; keepRecentTokens?: number } = {};
+
+  if (existsSync(globalPath)) {
+    try {
+      const parsed = JSON.parse(readFileSync(globalPath, 'utf8'));
+      if (parsed?.compaction && typeof parsed.compaction === 'object') {
+        if (typeof parsed.compaction.enabled === 'boolean') {
+          result.enabled = parsed.compaction.enabled;
+        }
+        if (typeof parsed.compaction.keepRecentTokens === 'number') {
+          result.keepRecentTokens = parsed.compaction.keepRecentTokens;
+        }
+      }
+    } catch {
+      /* ignore read errors */
+    }
+  }
+
+  if (opts.isProjectTrusted && existsSync(projectPath)) {
+    try {
+      const parsed = JSON.parse(readFileSync(projectPath, 'utf8'));
+      if (parsed?.compaction && typeof parsed.compaction === 'object') {
+        if (typeof parsed.compaction.enabled === 'boolean') {
+          result.enabled = parsed.compaction.enabled;
+        }
+        if (typeof parsed.compaction.keepRecentTokens === 'number') {
+          result.keepRecentTokens = parsed.compaction.keepRecentTokens;
+        }
+      }
+    } catch {
+      /* ignore read errors */
+    }
+  }
+
+  return result;
+}
+
 export function loadEfficiencyConfigFromDisk(opts: {
   cwd?: string;
   isProjectTrusted?: boolean;
   env?: Record<string, string | undefined>;
   onWarning?: (msg: string) => void;
+  /** Override the Pi agent dir used to read native `settings.json` (tests/isolation). */
+  agentDir?: string;
+  /** Override the user-level efficiency config file path (tests/isolation). */
+  userConfigPath?: string;
 } = {}): EfficiencyConfig {
   const cwd = opts.cwd ?? process.cwd();
   const wsPath = defaultWorkspaceEfficiencyConfigFile(cwd);
-  const userPath = defaultUserEfficiencyConfigFile();
+  const userPath = opts.userConfigPath ?? defaultUserEfficiencyConfigFile();
 
   let workspaceConfig: unknown = undefined;
   if (existsSync(wsPath)) {
@@ -480,12 +531,35 @@ export function loadEfficiencyConfigFromDisk(opts: {
     }
   }
 
-  return resolveEfficiencyConfig({
+  const resolved = resolveEfficiencyConfig({
     workspaceConfig,
     userConfig,
     isProjectTrusted: opts.isProjectTrusted,
     env: opts.env,
     onWarning: opts.onWarning,
   });
+
+  const piSettings = loadPiNativeCompactionSettings({
+    cwd,
+    isProjectTrusted: opts.isProjectTrusted,
+    agentDir: opts.agentDir,
+  });
+
+  // If user disabled compaction globally in pi settings, and env didn't explicitly force OCC enable, respect it!
+  const env = opts.env ?? process.env;
+  if (piSettings.enabled === false && !env.PI_HERDR_COMPACT_ENABLE) {
+    resolved.onlineContextCompact.enabled = false;
+  }
+
+  // If keepRecentTokens was not explicitly configured in efficiency configs, inherit pi's setting
+  const hasExplicitKeepRecent =
+    (opts.isProjectTrusted && (workspaceConfig as any)?.onlineContextCompact?.keepRecentTokens !== undefined) ||
+    (userConfig as any)?.onlineContextCompact?.keepRecentTokens !== undefined;
+
+  if (!hasExplicitKeepRecent && typeof piSettings.keepRecentTokens === 'number') {
+    resolved.onlineContextCompact.keepRecentTokens = piSettings.keepRecentTokens;
+  }
+
+  return resolved;
 }
 
