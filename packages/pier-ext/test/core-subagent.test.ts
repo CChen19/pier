@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Context } from '@deepseek-ai/cordis';
-import subagentPlugin from '../src/core/subagent.ts';
+import subagentPlugin, { resolveTaskIdPrefix } from '../src/core/subagent.ts';
 import { PiSurface } from '../src/pi-surface.ts';
 import { DisposeLedger } from '../src/ledger.ts';
 import type { HerdrClientLike } from '../src/herdr-client.ts';
@@ -102,4 +102,51 @@ test('core/subagent：墓碑（ledger.disposeKey 本文件）→ 工具 inert + 
   assert.equal(typeof port.current?.reconcileOnReply, 'function');
   await root.fiber.dispose();
 });
+
+test('resolveTaskIdPrefix (B1): 唯一前缀 (>=4)、歧义列表、过短 (<4) 与精确匹配', () => {
+  const candidates = [
+    'c1b5274d-1111-2222-3333-444455556666',
+    'c1b5899a-aaaa-bbbb-cccc-ddddeeeeffff',
+    'a2f48901-0000-1111-2222-333344445555',
+    'p2',
+  ];
+
+  // 唯一前缀 (8 字符与 4 字符)
+  const r1 = resolveTaskIdPrefix('c1b5274d', candidates);
+  assert.equal(r1.kind, 'resolved');
+  if (r1.kind === 'resolved') assert.equal(r1.taskId, candidates[0]);
+
+  const r2 = resolveTaskIdPrefix('a2f4', candidates);
+  assert.equal(r2.kind, 'resolved');
+  if (r2.kind === 'resolved') assert.equal(r2.taskId, candidates[2]);
+
+  // 大小写不敏感
+  const rCase = resolveTaskIdPrefix('A2F4', candidates);
+  assert.equal(rCase.kind, 'resolved');
+  if (rCase.kind === 'resolved') assert.equal(rCase.taskId, candidates[2]);
+
+  // 歧义前缀 (c1b5 匹配 candidates[0] 和 candidates[1])
+  const rAmb = resolveTaskIdPrefix('c1b5', candidates);
+  assert.equal(rAmb.kind, 'ambiguous');
+  if (rAmb.kind === 'ambiguous') {
+    assert.deepEqual(rAmb.candidates, [candidates[0], candidates[1]]);
+  }
+
+  // 前缀过短 (< 4 字符且非精确匹配)
+  const rShort = resolveTaskIdPrefix('c1b', candidates);
+  assert.equal(rShort.kind, 'too_short');
+
+  // 未找到
+  const rNotFound = resolveTaskIdPrefix('ffff', candidates);
+  assert.equal(rNotFound.kind, 'not_found');
+
+  // 空输入
+  assert.equal(resolveTaskIdPrefix('  ', candidates).kind, 'not_found');
+
+  // 精确匹配不受长度限制 (例如 'p2' 长度 2 也能精确解析)
+  const rExact = resolveTaskIdPrefix('p2', candidates);
+  assert.equal(rExact.kind, 'resolved');
+  if (rExact.kind === 'resolved') assert.equal(rExact.taskId, 'p2');
+});
+
 
