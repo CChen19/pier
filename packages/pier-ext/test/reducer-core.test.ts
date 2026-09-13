@@ -7,6 +7,7 @@ import {
   containsLikelySecret,
   formatReceiptText,
   isDiagnosticCommand,
+  mergeUsage,
   REDUCER_RECEIPT_PREFIX,
   REDUCER_RECEIPT_SCHEMA,
   sha256Hex,
@@ -217,4 +218,32 @@ test('formatReceiptText: generates receipt banner with source artifact path and 
   assert.ok(receipt.includes('source_artifact=/tmp/session/objects/abcdef1234567890.txt'));
   assert.ok(receipt.includes('readback=use bash with explicit range'));
   assert.ok(receipt.includes('reducer_model=cliproxy/gemini-3.8-flash-high'));
+});
+
+test('mergeUsage: always returns a COMPLETE pi Usage (footer reads cost.total unguarded)', () => {
+  // Regression guard: returning only { input, output, totalTokens } crashed pi with
+  // "TypeError: Cannot read properties of undefined (reading 'total')" (2026-09-13, subagent pane).
+  const empty = mergeUsage();
+  assert.deepEqual(Object.keys(empty).sort(), ['cacheRead', 'cacheWrite', 'cost', 'input', 'output', 'totalTokens']);
+  assert.deepEqual(Object.keys(empty.cost).sort(), ['cacheRead', 'cacheWrite', 'input', 'output', 'total']);
+  for (const [k, v] of Object.entries(empty)) {
+    if (k === 'cost') continue;
+    assert.equal(typeof v, 'number', `${k} must be numeric`);
+  }
+  for (const v of Object.values(empty.cost)) assert.equal(typeof v, 'number');
+});
+
+test('mergeUsage: sums both sides field by field and tolerates missing cost', () => {
+  const merged = mergeUsage(
+    { input: 100, output: 10, totalTokens: 110 },
+    { input: 5, output: 7, cacheRead: 3, cacheWrite: 2, totalTokens: 17, cost: { total: 0.25, input: 0.1 } },
+  );
+  assert.deepEqual(merged, {
+    input: 105,
+    output: 17,
+    cacheRead: 3,
+    cacheWrite: 2,
+    totalTokens: 127,
+    cost: { input: 0.1, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.25 },
+  });
 });

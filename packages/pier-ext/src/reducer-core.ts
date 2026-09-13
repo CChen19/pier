@@ -235,3 +235,51 @@ export function formatReceiptText(opts: {
   lines.push(`readback=use bash with explicit range on ${opts.sourceArtifactPath} to inspect raw log`);
   return lines.join('\n');
 }
+
+/**
+ * Usage shapes accepted from / returned to pi.
+ *
+ * pi persists a tool result's `usage` into the session and renders it in the footer through
+ * `addUsageToTotals`, which reads `usage.cost.total` WITHOUT a guard. Returning a partial object
+ * (for example only `{ input, output, totalTokens }`) therefore crashes the whole pi process with
+ * "TypeError: Cannot read properties of undefined (reading 'total')" — observed 2026-09-13 in a
+ * subagent pane (stack: FooterComponent.render -> addUsageToTotals). pi's own definition lives in
+ * docs/session-format.md; always emit the complete `UsageTotals` below.
+ */
+export interface UsageLike {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  totalTokens?: number;
+  cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; total?: number };
+}
+
+/** Complete pi `Usage`: every field present, so footer/report renderers never dereference undefined. */
+export interface UsageTotals {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  totalTokens: number;
+  cost: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
+}
+
+/** Sum two (possibly partial) usage records into one complete `UsageTotals`. */
+export function mergeUsage(a?: UsageLike, b?: UsageLike): UsageTotals {
+  const sum = (x?: number, y?: number): number => (x ?? 0) + (y ?? 0);
+  return {
+    input: sum(a?.input, b?.input),
+    output: sum(a?.output, b?.output),
+    cacheRead: sum(a?.cacheRead, b?.cacheRead),
+    cacheWrite: sum(a?.cacheWrite, b?.cacheWrite),
+    totalTokens: sum(a?.totalTokens, b?.totalTokens),
+    cost: {
+      input: sum(a?.cost?.input, b?.cost?.input),
+      output: sum(a?.cost?.output, b?.cost?.output),
+      cacheRead: sum(a?.cost?.cacheRead, b?.cost?.cacheRead),
+      cacheWrite: sum(a?.cost?.cacheWrite, b?.cost?.cacheWrite),
+      total: sum(a?.cost?.total, b?.cost?.total),
+    },
+  };
+}

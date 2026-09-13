@@ -22,10 +22,13 @@ import {
   DEFAULT_TIMEOUT_MS,
   formatReceiptText,
   isDiagnosticCommand,
+  mergeUsage,
   reducerInputPrompt,
   reducerInstructions,
   sha256Hex,
   validateReceipt,
+  type UsageLike,
+  type UsageTotals,
 } from './reducer-core.ts';
 import {
   appendEfficiencyLog,
@@ -44,12 +47,13 @@ export interface ToolResultEventLike {
   content: Array<{ type: string; text?: string; [k: string]: unknown }>;
   details?: Record<string, unknown>;
   isError: boolean;
-  usage?: { input?: number; output?: number; totalTokens?: number };
+  usage?: UsageLike;
 }
 
 export interface ReducerInvocationResult {
   content?: Array<{ type: string; text?: string; [k: string]: unknown }>;
-  usage?: { input?: number; output?: number; totalTokens?: number };
+  /** Complete pi `Usage` (see mergeUsage): a partial object crashes pi's footer renderer. */
+  usage?: UsageTotals;
 }
 
 let untrustedWarningEmitted = false;
@@ -258,12 +262,13 @@ export async function handleReducerToolResult(
   // 10. Block-level replacement: only replace the log text block, preserving warnings
   const nextContent = event.content.map((b) => (b === logBlock ? { ...b, text: receipt } : b));
 
-  // Backfill usage tokens
-  const nextUsage = {
-    input: (event.usage?.input ?? 0) + (modelResult?.usage?.input ?? 0),
-    output: (event.usage?.output ?? 0) + (modelResult?.usage?.output ?? 0),
-    totalTokens: (event.usage?.totalTokens ?? 0) + (modelResult?.usage?.totalTokens ?? 0),
-  };
+  // Backfill usage tokens: the nested reducer model call plus whatever the tool result already carried.
+  // MUST stay a COMPLETE pi `Usage`: pi persists this onto the tool-result message and its footer
+  // renders it through `addUsageToTotals`, which reads `usage.cost.total` unguarded. Emitting only
+  // { input, output, totalTokens } killed the whole pi process with
+  // "TypeError: Cannot read properties of undefined (reading 'total')" (observed 2026-09-13 in a
+  // subagent pane, stack: FooterComponent.render -> addUsageToTotals). See docs/session-format.md.
+  const nextUsage = mergeUsage(event.usage, modelResult?.usage);
 
   if (config.logEnabled) {
     await logReducerAttempt(sessionRoot, sessionId ?? 'unknown', epoch, {
