@@ -5,6 +5,9 @@
 > 无法从代码上下文中 100% 确定原决策完整定义的条目，均如实标注为 `（推断，代码用法见 path:line）`。
 > 本索引按编号排序，每条均给出至少一个代码锚点以供追溯。
 
+> **文档边界**：本索引（含代码锚点）入库；单特性设计说明、ADR 与历史归档属本地开发文档
+> （`docs/adr/`、`docs/history/`、`docs/rfc-*.md`、`code review.md`，见 `.gitignore`），不入库。
+
 | 编号 (ID) | 决策摘要 (Summary) | 代码锚点 (Anchor) |
 |---|---|---|
 | WS-D6 | 移除角色档案中的限速约束（`rate_limits`），pier 仅负责权限边界，资源配额由集成方接管 | `packages/pier-ext/src/index.ts:313` |

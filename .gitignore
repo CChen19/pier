@@ -15,5 +15,5 @@ reports/
 code review.md
 docs/rfc-*.md
 docs/pier-config-command.md
-docs/adr/0005-efficiency-mechanisms-absorption.md
-docs/adr/0006-config-guide-command.md
+docs/adr/
+docs/history/
