@@ -62,7 +62,6 @@ import { handlePipeRequest } from './index-pipe.ts';
 import { installWriteLocks } from './index-locks.ts';
 import { registerObservationPack, createCompactionBatchPackHook, RECALL_TOOL_NAME } from './core/observation.ts';
 import { installConfigCommand } from './config-command.ts';
-import { collectConfigSnapshot, efficiencyPointerLine } from './config-guide.ts';
 import { CompactCoordinator } from './compact-coordinator.ts';
 import { handleReducerToolResult, type ToolResultEventLike } from './reducer-invoker.ts';
 import {
@@ -591,32 +590,10 @@ export default async function (pi: ExtensionAPI) {
     },
   });
 
-  pi.registerCommand('efficiency', {
-    description: 'Show pier efficiency status (D100-D103); full picture via /pier-config show efficiency',
-    handler: async (_args, ctx) => {
-      const ui = (ctx as { ui?: { notify?: (text: string, level?: string) => void } }).ui;
-      let pointer = 'details: /pier-config show efficiency';
-      try {
-        const trusted = typeof (ctx as { isProjectTrusted?: () => boolean }).isProjectTrusted === 'function'
-          ? (ctx as { isProjectTrusted: () => boolean }).isProjectTrusted()
-          : false;
-        pointer = efficiencyPointerLine(collectConfigSnapshot({
-          cwd: (ctx as { cwd?: string }).cwd ?? process.cwd(),
-          isProjectTrusted: trusted,
-        }));
-      } catch {
-        /* keep the static pointer when the config snapshot cannot be read */
-      }
-      const lines = [
-        '⚡ pier efficiency status (D100-D103):',
-        `  ${pointer}`,
-        `  cacheRatio: ${effConfig.onlineContextCompact.cacheWriteReadRatio} · threshold: ${effConfig.observationPack.thresholdBytes}B · fullSends: ${effConfig.observationPack.fullSends} · reducer model: ${effConfig.evidencePreservingReducer.model ?? 'inherit current'}`,
-      ];
-      ui?.notify?.(lines.join('\n'), 'info');
-    },
-  });
+  /* ── D104: /pier-config (read-only config guide + guided-change handoff) ──
+   * Supersedes the former /efficiency command: the index line reports OCC/OBS/EPR state and
+   * `show efficiency` lists every D100-D103 knob with its effective value and source. */
 
-  /* ── D104: /pier-config (read-only config guide + guided-change handoff) ── */
   installConfigCommand({ pi });
 
   pi.registerTool({

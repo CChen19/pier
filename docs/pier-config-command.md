@@ -58,7 +58,7 @@ pier 的配置散落在 **5 个平面、4 种文件、17 个环境变量**里：
 
 - **参数补全**：`getArgumentCompletions()` 返回 `show|check|doc|efficiency|roles|pi|boot|env|all`。
 - **长文本策略**：完整表格不进 `notify`；`show` 超限时提示 `/pier-config doc`。
-- **`/efficiency` 收敛**：保留为兼容入口，输出改为"3 个开关一行摘要 + 指向 `/pier-config show efficiency`"。
+- **`/efficiency` 已删除**（D104 定稿后按用户要求移除）：命令尚未发布任何 tag，功能被完全覆盖 —— 三机制状态在 `/pier-config` 索引行，全部键值/来源在 `/pier-config show efficiency`。不保留兼容别名。
 - **可见性**：注册在公共段（worker 也能读自身配置）；提示词里带上"当前 pane 是否受信 / 角色"，由 agent 自行约束写入动作。
 
 ---
@@ -129,7 +129,7 @@ declare function renderIndex/ renderPlane/ renderReport(...): string;   // 纯�
 |---|---|---|
 | Pure core | `src/config-catalog-core.ts` | 目录、provenance、索引/报告渲染、校验汇总（无 I/O，100% 单测，入 Stryker mutate 列表） |
 | Adapter | `src/config-guide.ts` | 真实文件/env 读取（路径可注入）、角色层序探测、boot-config 探测、`check` 聚合 |
-| Entry | `src/config-command.ts`，由 `index.ts` 公共段 `installConfigCommand({ pi, ... })` 调用 | 注册 `/pier-config`、子命令解析、补全、注入提示、`/efficiency` 收敛 |
+| Entry | `src/config-command.ts`，由 `index.ts` 公共段 `installConfigCommand({ pi, ... })` 调用 | 注册 `/pier-config`、子命令解析、补全、注入提示 |
 | Docs | `docs/configuration.md`（叙述：为什么/怎么改，人工维护）+ `/pier-config doc` 生成的"有效值报告"（机器真值，落 `.pi-herdr/`，不进版本库） | 叙述与真值分工，不重复 |
 
 接线细节：命令走 pi 的 Map 注册（覆写即替换，HMR 安全，无需 ledger）；`index.ts` 公共段注册以获得 worker 可见性；`getConfig`/`enabled` 等读取沿用现有闭包，不引入新的全局状态。
@@ -153,7 +153,7 @@ declare function renderIndex/ renderPlane/ renderReport(...): string;   // 纯�
 |---|---|
 | `test/config-catalog-core.test.ts` | provenance（env > 受信工作区 > 用户 > 默认）、渲染覆盖全部键、白名单不出 `process.env`、未受信标注、疑似密钥脱敏、**schema ↔ catalog 双向覆盖断言** |
 | `test/config-guide.test.ts` | 临时目录/env 下的 `show`/`check`/`doc`：坏 JSON、未知键、越界、缺文件、未受信、角色层覆盖 |
-| `test/index-integration.test.ts` +1 | 命令已注册；`/pier-config show` 不抛错且含来源列；无参时注入提示（fake pi 捕获 `sendUserMessage`）；`/efficiency` 仍可用且指向新命令 |
+| `test/index-integration.test.ts` +1 | 命令已注册；`/pier-config show` 不抛错且含来源列；无参时注入提示（fake pi 捕获 `sendUserMessage`）；断言旧的 `/efficiency` 已不再注册 |
 | `stryker.conf.json` | 加入 `src/config-catalog-core.ts` |
 
 **验收**：`npm test` 全绿（含 typecheck 前置）；TUI 与 RPC 模式均可运行（RPC 降级为纯文本 + 注入提示）；`docs/configuration.md` 与 README 各加一处指引。
@@ -165,7 +165,7 @@ declare function renderIndex/ renderPlane/ renderReport(...): string;   // 纯�
 | 期 | 交付 | 验收 |
 |---|---|---|
 | **P0** | `config-catalog-core.ts` + `config-guide.ts` 的 `show`/`check` + `config-command.ts` 注册（无注入） + 两个测试文件 + Stryker 名单 | `npm test` 全绿；`/pier-config show efficiency` 能列出 20 键的有效值与来源 |
-| **P1** | `/pier-config` 无参注入英文提示词 + `docs/configuration.md` + README 指引 + `/efficiency` 收敛 | 真机会话里 `/pier-config` 能把改动引导闭环（含 diff 与 check 回读） |
+| **P1** | `/pier-config` 无参注入英文提示词 + `docs/configuration.md` + README 指引 + 删除 `/efficiency` | 真机会话里 `/pier-config` 能把改动引导闭环（含 diff 与 check 回读） |
 | **P2** | `/pier-config doc` 报告导出（默认 `.pi-herdr/config-report.md`）+ 参数补全 + RPC 降级路径 | 报告覆盖 5 平面且与 `check` 结果一致 |
 | **P3（可选）** | `ui.select` picker（仅 D100–D103 高频布尔/数字项）+ 应用后 `ctx.reload()` 提示 | 见后续反馈再定 |
 
@@ -178,10 +178,10 @@ declare function renderIndex/ renderPlane/ renderReport(...): string;   // 纯�
 | 期 | 状态 | 说明 |
 |---|---|---|
 | P0 | ✅ | `config-catalog-core.ts`（目录 / provenance / 渲染 / 校验汇总）、`config-guide.ts`（文件+env 读取、角色层、boot-config 探测）、`config-command.ts` + `index.ts` 注册 `show`/`check` |
-| P1 | ✅ | 无参注入英文引导提示（`pi-herdr.config-guide` 隐藏消息，`triggerTurn`）、`docs/configuration.md`、README 指引、`/efficiency` 收敛为指向新命令 |
+| P1 | ✅ | 无参注入英文引导提示（`pi-herdr.config-guide` 隐藏消息，`triggerTurn`）、`docs/configuration.md`、README 指引、**删除 `/efficiency`**（无兼容别名，功能已被覆盖） |
 | P2 | ✅ | `doc [path]` 报告导出（默认 `<repo>/.pi-herdr/config-report.md` + gitignore 提示）、`getArgumentCompletions`、无 UI 时降级为 `console.log` |
 | P3 | ⏸ 未实现（有意保留） | TUI picker（仅 D100–D103 高频布尔/数字项）；等试用反馈决定是否值得 |
 
-测试：`test/config-catalog-core.test.ts`（8，含 schema/env 漂移守卫）、`test/config-guide.test.ts`（5，临时目录）、`test/index-integration.test.ts` +1（命令注册、`show`/`check`/`doc`/注入、`/efficiency` 指向）；`config-catalog-core.ts` 进入 Stryker mutate 名单。基线：`packages/pier-ext` 626/626、monorepo 671/671。
+测试：`test/config-catalog-core.test.ts`（8，含 schema/env 漂移守卫）、`test/config-guide.test.ts`（5，临时目录）、`test/index-integration.test.ts` +1（命令注册、`show`/`check`/`doc`/注入、`/efficiency` 已移除断言）；`config-catalog-core.ts` 进入 Stryker mutate 名单。基线：`packages/pier-ext` 628/628、monorepo 673/673（含 §11 的删除 `/efficiency`）。
 
 **仍未验证**（需要真人环境）：真实 TUI 下 `show all` 的长输出渲染与滚动体验；RPC 模式的实际降级路径（仅由无 UI 分支的单测覆盖）；以及 agent 对注入提示词的遵守程度（依赖模型，属试用反馈项）。

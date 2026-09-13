@@ -1029,7 +1029,19 @@ node --test packages/pier-ext/test/*.test.ts → 626/626（新增 14）
 
 修复后实测（不注入任何 env，等价于 pane 内执行）：`boot` 平面 `ok`，并列出用户模式与 dev 两份 boot-config。
 
-### 17.5 明确未做（有意保留）
+### 17.5 `/efficiency` 删除（2026-09-13）
+
+D104 落地后按用户要求删除前一代 `/efficiency` 命令（尚未发布任何 tag，因此不保留兼容别名）。
+
+- **覆盖性核对**：原 `/efficiency` 输出 = 三机制开关 + `cacheWriteReadRatio` / `thresholdBytes` / `fullSends` / reducer model +
+  指向新命令。现在：三机制状态在 `/pier-config`（无参）索引行；上述四个参数与其余全部 16 个键的**生效值/来源/影响**在
+  `/pier-config show efficiency` —— 严格超集。
+- **改动**：`index.ts` 删除注册块与两个已无用 import；`config-guide.ts` 删除 `efficiencyPointerLine()`（及其单测断言）；
+  `test/index-integration.test.ts` 改为断言 `/efficiency` **不再注册**；文档同步 5 处（pier-ext README 命令表与降级矩阵、
+  `docs/efficiency-trial.md` 观测入口与反馈模板、设计说明 §4/§11、ADR 0006 Consequences、RFC D103 描述行）。
+- **验证**：`npm test` 673/673、`pier-ext` 628/628；`/pier-config` 的四种用法不受影响。
+
+### 17.6 明确未做（有意保留）
 
 - P3 的 TUI picker（`ui.select` 逐项改）——等反馈证明"文本索引 + agent 引导"不够用再做；
 - 未把 typecheck 门禁扩到全 `src`（会暴露存量错误，见 §12/§13 的 P1-B 记录），仅纳入 3 个新文件。

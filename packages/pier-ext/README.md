@@ -53,7 +53,6 @@ The installer also verifies node / pi / herdr versions, probes local paths, and 
 |---|---|
 | `/todos` | Show the todo list, or edit it: `/todos done|drop|rm|unblock <fuzzy match>` |
 | `/locks` | Show write locks held by this pane and by live panes (herdr only) |
-| `/efficiency` | One-line D100–D103 status (OCC/OBS/EPR) + pointer to the next command |
 | `/pier-config` | Read-only configuration guide over five planes: bare call = index + hands a guided change to the agent; `show [plane\|all]` = effective value + source (`env > workspace > user > default`); `check` = validate all planes; `doc [path]` = write a report |
 
 ### Behaviors
@@ -78,7 +77,7 @@ This extension mutates the pi session even outside herdr. After `pi install npm:
 | Hidden inject (`before_agent_start` todo-read; settle reminder) | live | live |
 | `subagent`, `terminal` | **not registered** | live |
 | `/locks`, write-lock on `write`/`edit` | not installed | live |
-| `/efficiency`, `/pier-config` (config guide: read-only) | live | live |
+| `/pier-config` (read-only config guide over 5 planes) | live | live |
 | slim-frame overlay, pane title, pipe, isolate worktree | off | live |
 | `setActiveTools` role visible layer | off | on (herdr master) |
 

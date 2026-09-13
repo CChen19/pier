@@ -25,7 +25,6 @@ import {
   renderReport,
   resolveConfigKnobs,
   resolveEnvKnobs,
-  summarizePlane,
   type CheckReport,
   type ConfigPlaneId,
   type ResolvedKnob,
@@ -353,15 +352,6 @@ export function guideReportMarkdown(snapshot: ConfigGuideSnapshot, meta: { gener
   }
   const checkSection = ['', '## Checks', '', ...guideCheckLines(snapshot).map((l) => `- ${l.trim()}`)];
   return `${body}\n${filesSection.join('\n')}\n${checkSection.join('\n')}\n`;
-}
-
-/** Summary line shown by `/efficiency` after convergence. */
-export function efficiencyPointerLine(snapshot: ConfigGuideSnapshot): string {
-  const occ = snapshot.entries.find((e) => e.knob.key === 'onlineContextCompact.enabled');
-  const obs = snapshot.entries.find((e) => e.knob.key === 'observationPack.enabled');
-  const epr = snapshot.entries.find((e) => e.knob.key === 'evidencePreservingReducer.enabled');
-  const state = (entry: ResolvedKnob | undefined): string => (entry ? entry.value : 'false');
-  return `OCC ${state(occ)} / OBS ${state(obs)} / EPR ${state(epr)} — details: /pier-config show efficiency (${summarizePlane(snapshot.entries.filter((e) => e.knob.plane === 'efficiency'))})`;
 }
 
 /** Small helper used by tests and `show` for reading a single knob. */

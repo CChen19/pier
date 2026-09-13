@@ -110,7 +110,9 @@ PI_HERDR_COMPACT_ENABLE=1 PI_HERDR_COMPACT_LOG=1 PI_HERDR_CACHE_RATIO=auto pi
 ## 3. 看什么（观测入口）
 
 ```bash
-/efficiency          # pi 会话内：打印三个机制的当前开关与关键参数
+/pier-config                 # 5 平面索引（含 OCC/OBS/EPR 的一行状态）
+/pier-config show efficiency # 三个机制全部键的 生效值 / 来源 / 影响
+/pier-config check           # 校验（含 boot-config 路径、env 越界）
 ```
 
 日志与对象都在 pi 会话目录下（`ctx.sessionManager.getSessionDir()`，通常形如
@@ -155,7 +157,7 @@ PI_HERDR_COMPACT_ENABLE=1 PI_HERDR_COMPACT_LOG=1 PI_HERDR_CACHE_RATIO=auto pi
 
 ## 6. 反馈模板（贴这几样就能定位问题）
 
-1. `/efficiency` 的完整输出。
+1. `/pier-config show all` 的完整输出（或 `/pier-config doc` 生成的报告文件）。
 2. 对应 `efficiency-logs/*.jsonl` 的相关片段（**日志本身已脱敏**，只有 sha256 与字节数，可放心贴）。
 3. 当时的模型 id 与 `PI_HERDR_CACHE_RATIO`（若是 `auto`，附 `ctx.model.cost` 的 `cacheRead`/`cacheWrite`）。
 4. 观感一句话：占位符是否影响可读性 / 收据是否够定位失败 / 压缩后续跑是否顺畅。

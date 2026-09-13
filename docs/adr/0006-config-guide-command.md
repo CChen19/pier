@@ -49,8 +49,9 @@ secret-shaped ones).
 
 ## Consequences
 
-- `/efficiency` is kept as a compatibility entry point that now points at
-  `/pier-config show efficiency`.
+- The former `/efficiency` command is **removed** rather than kept as an alias: no tag had been
+  released, and its information is fully covered by the `/pier-config` index line (OCC/OBS/EPR
+  state) and `show efficiency` (every knob with effective value and source).
 - The typecheck gate gained the three new D104 files (which surfaced a pre-existing
   non-strict narrowing bug in `role-loader.ts`, fixed with `result.ok === false`).
 - P3 (an optional TUI picker for the high-frequency efficiency toggles) stays unimplemented until

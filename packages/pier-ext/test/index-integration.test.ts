@@ -453,7 +453,7 @@ test('index: /pier-config reports configuration and hands a guided change to the
   await pier(pi as never);
 
   assert.ok(pi.commands.has('pier-config'), 'D104 command is registered');
-  assert.ok(pi.commands.has('efficiency'), 'legacy /efficiency stays available');
+  assert.equal(pi.commands.has('efficiency'), false, '/efficiency was superseded by /pier-config (not yet released)');
 
   const notes: Array<{ text: string; level?: string }> = [];
   const cwd = cleanup.tempDir('pier-config-ws').path;
@@ -485,13 +485,6 @@ test('index: /pier-config reports configuration and hands a guided change to the
   assert.match(docOutput, /config report written:/);
   const { existsSync } = await import('node:fs');
   assert.equal(existsSync(join(cwd, '.pi-herdr', 'config-report.md')), true, 'report file is written into the workspace');
-
-  notes.length = 0;
-  const legacy = pi.commands.get('efficiency') as { handler?: (...a: unknown[]) => Promise<void> };
-  await legacy.handler?.('', ctx);
-  const legacyOutput = notes.map((n) => n.text).join('\n');
-  assert.match(legacyOutput, /pier efficiency status/);
-  assert.match(legacyOutput, /\/pier-config show efficiency|details:/, '/efficiency points at the new command');
 
   notes.length = 0;
   await command.handler?.('', ctx);

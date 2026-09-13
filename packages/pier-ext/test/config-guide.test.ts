@@ -14,7 +14,6 @@ import {
   CONFIG_GUIDANCE_PROMPT,
   collectConfigSnapshot,
   defaultHerdrPluginConfigDirs,
-  efficiencyPointerLine,
   guideCheckLines,
   guideIndexLines,
   guidePlaneLines,
@@ -133,7 +132,6 @@ test('collectConfigSnapshot: reports effective values, sources and per-plane che
     assert.match(report, /# pier config report/);
     assert.match(report, /## Files observed/);
     assert.match(report, new RegExp(fx.paths.herdrDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-    assert.match(efficiencyPointerLine(snapshot), /OCC false \/ OBS true \/ EPR false/);
   } finally {
     await rm(fx.base, { recursive: true, force: true });
   }
