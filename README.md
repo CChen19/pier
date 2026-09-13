@@ -154,7 +154,7 @@ them automatically; manually, copy `packages/pier-workbench/scripts/boot-config.
 packages/
   pier-ext/        # pi extension (npm: pi-pier): todo/subagent tools, herdr client, vocab authority, skill
   pier-workbench/  # herdr plugin (pier.workbench): workspace bootstrap + blocked notify + heat layout
-docs/              # install guide, role profile docs, sidebar role config
+docs/              # install guide, configuration overview, role profile docs, sidebar role config
 ```
 
 ## Testing
@@ -194,6 +194,16 @@ PI_HERDR_OBS_PACK_ENABLE=1 PI_HERDR_OBS_PACK_LOG=1 pi   # start here
 ```
 
 Full quick start, what to watch in `efficiency-logs/*.jsonl`, rollback steps and a feedback template: **[docs/efficiency-trial.md](docs/efficiency-trial.md)**.
+
+Everything above (plus roles, pi settings, boot-config and the `PIER_*`/`PI_HERDR_*` env knobs) is also inspectable in-session:
+
+```text
+/pier-config            # 5-plane index; hands a guided change to the agent
+/pier-config show all   # effective value + source (env > workspace > user > default) per key
+/pier-config check      # validation across planes   ·   /pier-config doc → written report
+```
+
+Read-only by design — see **[docs/configuration.md](docs/configuration.md)** for the plane map and the "which plane do I edit?" table.
 
 ## Design principles
 

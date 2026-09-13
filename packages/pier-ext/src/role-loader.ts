@@ -143,7 +143,8 @@ function parseAndValidate(name: string, fileName: string, text: string, layerLab
     throw new RoleLoaderError('INVALID_ROLE_CONFIG', `role "${name}"（${layerLabel}）不是合法 JSON: ${(err as Error).message}`);
   }
   const result = validateRoleManifest(parsed);
-  if (!result.ok) {
+  // `ok === false` (instead of `!ok`) is required to narrow without strictNullChecks.
+  if (result.ok === false) {
     throw new RoleLoaderError(
       'INVALID_ROLE_CONFIG',
       `role "${name}"（${layerLabel}）校验失败:\n${result.issues.map((i) => `  - ${i}`).join('\n')}`,

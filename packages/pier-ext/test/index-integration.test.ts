@@ -13,6 +13,7 @@ interface FakePi {
   commands: Map<string, { handler?: (...a: unknown[]) => unknown }>;
   listeners: Map<string, Array<(...a: unknown[]) => unknown>>;
   entries: Array<[string, unknown]>;
+  sent: Array<{ message: unknown; options: unknown }>;
   events: {
     emitted: Array<{ channel: string; data: unknown }>;
     on(channel: string, handler: (data: unknown) => void): () => void;
@@ -22,6 +23,7 @@ interface FakePi {
   registerCommand(name: string, options: { handler?: (...a: unknown[]) => unknown }): void;
   on(event: string, handler: (...a: unknown[]) => unknown): void;
   appendEntry(customType: string, data: unknown): void;
+  sendMessage(message: unknown, options?: unknown): void;
   sendUserMessage(): Promise<void>;
   getActiveTools(): string[];
   setActiveTools(names: string[]): void;
@@ -35,6 +37,7 @@ function fakePi(): FakePi {
     commands: new Map(),
     listeners: new Map(),
     entries: [],
+    sent: [],
     events: {
       emitted,
       on(channel, handler) {
@@ -59,6 +62,9 @@ function fakePi(): FakePi {
     },
     appendEntry(customType, data) {
       this.entries.push([customType, data]);
+    },
+    sendMessage(message, options) {
+      this.sent.push({ message, options });
     },
     sendUserMessage() {
       return Promise.resolve();
@@ -433,4 +439,67 @@ test('index session lifecycle: derives the session object root and prunes it on 
     const files = await readdir(dir);
     assert.equal(files.length, 300, `${dir} must be pruned to the default cap on shutdown`);
   }
+}));
+
+test('index: /pier-config reports configuration and hands a guided change to the agent', withCleanup(async (cleanup) => {
+  const env = cleanup.env();
+  env.set('PI_HERDR_SUBAGENT', '1');
+  env.delete('HERDR_ENV');
+  env.delete('HERDR_PLUGIN_CONFIG_DIR');
+  env.delete('PI_HERDR_ROLE_MANIFEST');
+
+  const { join } = await import('node:path');
+  const pi = fakePi();
+  await pier(pi as never);
+
+  assert.ok(pi.commands.has('pier-config'), 'D104 command is registered');
+  assert.ok(pi.commands.has('efficiency'), 'legacy /efficiency stays available');
+
+  const notes: Array<{ text: string; level?: string }> = [];
+  const cwd = cleanup.tempDir('pier-config-ws').path;
+  const ctx = {
+    cwd,
+    ui: { notify: (text: string, level?: string) => { notes.push({ text, level }); } },
+    isProjectTrusted: () => false,
+  };
+  const command = pi.commands.get('pier-config') as { handler?: (...a: unknown[]) => Promise<void> };
+
+  await command.handler?.('show efficiency', ctx);
+  const showOutput = notes.map((n) => n.text).join('\n');
+  assert.match(showOutput, /efficiency — Efficiency mechanisms/);
+  assert.match(showOutput, /observationPack\.enabled = /);
+  assert.match(showOutput, /evidencePreservingReducer\.timeoutMs = /);
+
+  notes.length = 0;
+  await command.handler?.('show bogus', ctx);
+  assert.match(notes.map((n) => n.text).join('\n'), /unknown plane "bogus"/);
+  assert.equal(notes[0]?.level, 'warning');
+
+  notes.length = 0;
+  await command.handler?.('check', ctx);
+  assert.match(notes.map((n) => n.text).join('\n'), /pier config check \(workspace trusted: false\)/);
+
+  notes.length = 0;
+  await command.handler?.('doc', ctx);
+  const docOutput = notes.map((n) => n.text).join('\n');
+  assert.match(docOutput, /config report written:/);
+  const { existsSync } = await import('node:fs');
+  assert.equal(existsSync(join(cwd, '.pi-herdr', 'config-report.md')), true, 'report file is written into the workspace');
+
+  notes.length = 0;
+  const legacy = pi.commands.get('efficiency') as { handler?: (...a: unknown[]) => Promise<void> };
+  await legacy.handler?.('', ctx);
+  const legacyOutput = notes.map((n) => n.text).join('\n');
+  assert.match(legacyOutput, /pier efficiency status/);
+  assert.match(legacyOutput, /\/pier-config show efficiency|details:/, '/efficiency points at the new command');
+
+  notes.length = 0;
+  await command.handler?.('', ctx);
+  assert.match(notes.map((n) => n.text).join('\n'), /asking the agent to guide the change/);
+  assert.equal(pi.sent.length, 1, 'bare invocation injects exactly one guidance message');
+  const injected = pi.sent[0]!.message as { customType?: string; content?: string; display?: boolean };
+  assert.equal(injected.customType, 'pi-herdr.config-guide');
+  assert.equal(injected.display, false);
+  assert.match(String(injected.content), /^\[PIER-CONFIG\]/);
+  assert.deepEqual(pi.sent[0]!.options, { triggerTurn: true });
 }));

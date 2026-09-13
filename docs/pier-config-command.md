@@ -1,6 +1,6 @@
 # 设计说明：`/pier-config` —— 配置说明与 agent 引导式改配置（D104 候选）
 
-> **状态**：方案（待实现）
+> **状态**：已实现（P0–P2；命令 `/pier-config`，纯核 `config-catalog-core.ts` + 适配层 `config-guide.ts` + 入口 `config-command.ts`）
 > **关键决策来源**：本文 §2（已与用户确认）
 > **关联**：`docs/efficiency-trial.md`（D100–D103 试用指南）、`schemas/efficiency-config.schema.json`、`schemas/role-manifest.schema.json`、`src/runtime-policy.ts`、`install.mjs`、`docs/sidebar-role-config.md`
 > **命名**：命令名带品牌前缀 `/pier-config`（避免与 pi 内建 `/settings` 及未来其它插件冲突；改名成本 = 1 个常量 + 文档）
@@ -171,9 +171,17 @@ declare function renderIndex/ renderPlane/ renderReport(...): string;   // 纯�
 
 ---
 
-## 11. 待确认 / 后续
+## 11. 落地状态与遗留
 
-1. 命令名最终确认（`/pier-config` 为推荐；备选 `/pi-herdr-config`、`/piercfg`）。
-2. `/efficiency` 是保留兼容（推荐）还是在下一主版本移除。
-3. 报告文件默认路径与是否加入 `.gitignore`（建议 `.pi-herdr/` 整目录忽略）。
-4. 是否需要在 `check` 里加入"pi 版本 / pier 版本与配置键兼容性"检查（例如未来 pi 引入新 `compaction.*` 键）。
+已确认并落地：命令名 **`/pier-config`**；只读 + 注入引导；覆盖 5 个平面；文本索引 + 英文提示词。
+
+| 期 | 状态 | 说明 |
+|---|---|---|
+| P0 | ✅ | `config-catalog-core.ts`（目录 / provenance / 渲染 / 校验汇总）、`config-guide.ts`（文件+env 读取、角色层、boot-config 探测）、`config-command.ts` + `index.ts` 注册 `show`/`check` |
+| P1 | ✅ | 无参注入英文引导提示（`pi-herdr.config-guide` 隐藏消息，`triggerTurn`）、`docs/configuration.md`、README 指引、`/efficiency` 收敛为指向新命令 |
+| P2 | ✅ | `doc [path]` 报告导出（默认 `<repo>/.pi-herdr/config-report.md` + gitignore 提示）、`getArgumentCompletions`、无 UI 时降级为 `console.log` |
+| P3 | ⏸ 未实现（有意保留） | TUI picker（仅 D100–D103 高频布尔/数字项）；等试用反馈决定是否值得 |
+
+测试：`test/config-catalog-core.test.ts`（8，含 schema/env 漂移守卫）、`test/config-guide.test.ts`（5，临时目录）、`test/index-integration.test.ts` +1（命令注册、`show`/`check`/`doc`/注入、`/efficiency` 指向）；`config-catalog-core.ts` 进入 Stryker mutate 名单。基线：`packages/pier-ext` 626/626、monorepo 671/671。
+
+**仍未验证**（需要真人环境）：真实 TUI 下 `show all` 的长输出渲染与滚动体验；RPC 模式的实际降级路径（仅由无 UI 分支的单测覆盖）；以及 agent 对注入提示词的遵守程度（依赖模型，属试用反馈项）。

@@ -15,7 +15,8 @@
     "packages/pier-ext/src/efficiency-config-core.ts",
     "packages/pier-ext/src/compact-economics-core.ts",
     "packages/pier-ext/src/observation-core.ts",
-    "packages/pier-ext/src/reducer-core.ts"
+    "packages/pier-ext/src/reducer-core.ts",
+    "packages/pier-ext/src/config-catalog-core.ts"
   ],
   "thresholds": {
     "high": 80,
@@ -27,7 +28,12 @@
   "incremental": true,
   "incrementalFile": "reports/stryker-incremental.json",
   "coverageAnalysis": "off",
-  "reporters": ["html", "clear-text", "progress", "json"],
+  "reporters": [
+    "html",
+    "clear-text",
+    "progress",
+    "json"
+  ],
   "htmlReporter": {
     "fileName": "reports/mutation/html/index.html"
   },

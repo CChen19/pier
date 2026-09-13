@@ -6,3 +6,5 @@ packages/pier-workbench/scripts/boot-config.json
 docs/research/
 reports/
 .stryker-tmp/
+# /pier-config doc output (machine-truth report; regenerate on demand)
+.pi-herdr/config-report.md

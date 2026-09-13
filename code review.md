@@ -972,3 +972,46 @@ npm run typecheck                            # 仓库内 typescript 5.9.3
 npx stryker run --mutate "packages/pier-ext/src/observation-core.ts,packages/pier-ext/src/reducer-core.ts,packages/pier-ext/src/efficiency-config-core.ts"
 # 注意：CLI 不支持 --jsonReporter.fileName 点号写法，需用临时 config 文件指定独立的 reporter 文件名
 ```
+
+---
+
+## 17. D104 `/pier-config` 实现记录（2026-09-13）
+
+> 本实现由审阅侧按已确认方案（`docs/pier-config-command.md` §2 决策）完成；本节记录交付内容、验证证据与**尚未验证**的部分。
+
+### 17.1 交付内容
+
+| 层 | 文件 | 内容 |
+|---|---|---|
+| Pure core | `src/config-catalog-core.ts` | 5 平面/57 键目录（efficiency 20 + roles 8 + pi 2 + boot 6 + env 17 + 4 个 meta）、dotted 读取、provenance（env > workspace > user > default，含未受信标注与 `pi compaction.enabled=false → OCC 失效`规则）、密钥键脱敏、索引/平面/报告/校验渲染 |
+| Adapter | `src/config-guide.ts` | 真实文件与 env 读取（路径可注入）、角色三层枚举 + 校验、boot-config 探测（`$HERDR_PLUGIN_CONFIG_DIR` → dev 路径）、`check` 聚合、英文引导提示词常量 |
+| Entry | `src/config-command.ts` + `index.ts` | `/pier-config` 注册（`show|check|doc|<plane>`、参数补全、无 UI 降级 `console.log`）、无参注入隐藏 custom 消息 `pi-herdr.config-guide`（`triggerTurn`）、`/efficiency` 收敛为指向新命令 |
+| Docs | `docs/configuration.md`（新增）、`docs/adr/0006-*.md`（新增）、`docs/decisions.md` D104、`README.md`、`docs/pier-config-command.md` 状态 | 平面表、需求→平面查表、引导流程、安全与排障、试用入口 |
+| 工程 | `tsconfig.json` include +3 文件、`stryker.conf.json` +1 mutate、`.gitignore` +`config-report.md` | 新代码进入类型门禁与变异名单 |
+
+### 17.2 验证证据
+
+```text
+npm test                                  → 671/671（typecheck 前置）
+node --test packages/pier-ext/test/*.test.ts → 626/626（新增 14）
+```
+
+| 测试 | 覆盖 |
+|---|---|
+| `test/config-catalog-core.test.ts`（8） | **漂移守卫**：efficiency/role schema 键 ↔ catalog 双向；runtime-policy/terminal/todo-reminder/config-core 中出现的 env 名 ↔ catalog（允许列表仅 5 个内部/pi 名）。provenance 优先级、未受信忽略、pi 禁用 OCC 的有效值、env 越界与 0 值告警、密钥键脱敏、渲染紧凑性 |
+| `test/config-guide.test.ts`（5） | 临时目录+注入 env：工作区/用户/pi/boot 四类文件的读取与来源、未受信标注、坏 JSON/非法角色/保留角色名/env 非法四类 issue、boot 与 pi 设置缺失时不抛异常、引导提示词结构 |
+| `test/index-integration.test.ts` +1 | 真实 composition root：命令注册、`show efficiency` 输出键值、`show bogus` 警告、`check` 头、`doc` 写入文件、无参注入 `pi-herdr.config-guide`（断言 `customType`/`display:false`/`triggerTurn`）、`/efficiency` 指向新命令 |
+
+附带修复：`tsconfig` 纳入新文件后暴露 `role-loader.ts` 的非严格模式判别联合 narrowing 缺陷（`!result.ok` 在未开启 `strictNullChecks` 时不收窄），已改为 `result.ok === false`；`config-command.ts` 的 `sendMessage` 曾以解绑方式调用（fake pi 捕获到 0 条注入），改为在接收者上调用。
+
+### 17.3 尚未验证（试用期反馈项）
+
+- 真实 TUI 下 `show all`（约 60 行）的实际渲染/滚动体验；
+- RPC 模式降级路径（当前仅由“无 `ui.notify` 时 `console.log`”分支的单测覆盖）；
+- agent 对注入提示词的遵守程度（依赖模型，属 D104 的核心观感指标）；
+- 报告文件在真实工作区中的可读性（字段/来源标注是否够用）。
+
+### 17.4 明确未做（有意保留）
+
+- P3 的 TUI picker（`ui.select` 逐项改）——等反馈证明"文本索引 + agent 引导"不够用再做；
+- 未把 typecheck 门禁扩到全 `src`（会暴露存量错误，见 §12/§13 的 P1-B 记录），仅纳入 3 个新文件。
