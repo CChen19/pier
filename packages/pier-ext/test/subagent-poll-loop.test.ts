@@ -58,7 +58,7 @@ interface FakeHostFixture {
     throwOnListAgents: boolean;
   };
   sessionIo: {
-    subSessionResponses: Array<{ text: string | null; pendingTool: boolean; activity: boolean }>;
+    subSessionResponses: Array<{ text: string | null; pendingTool: boolean; activity: boolean; turnEnded?: boolean }>;
     askFlagResponses: Array<string | null>;
     resolvedSessionFile: string | null;
   };
@@ -615,11 +615,12 @@ test('pollLoop: settlement handles injectNotice rejection silently', async () =>
   assert.equal(entry.status, 'consumed');
 });
 
-test('pollLoop: settles with no closing message when only activity without pending tool', async () => {
+test('pollLoop: settles with no closing message when the turn ENDED without text (A16)', async () => {
   const entry = makeEntry('p-no-msg', { observationStartedAt: 10_000 });
   const f = createFakeHost({ initialTime: 13_000, entry });
   f.client.waitAgentQueue = ['idle'];
-  f.sessionIo.subSessionResponses = [{ text: null, pendingTool: false, activity: true }];
+  // A16 之前这里只给 activity=true 就结算，把"工具间空档期"误判成完工；现在必须 turnEnded。
+  f.sessionIo.subSessionResponses = [{ text: null, pendingTool: false, activity: true, turnEnded: true }];
 
   const poller = createPoller(f.host);
   await poller.startPoller('p-no-msg', '/tmp', 0, 0, 'desc', 'req-1');

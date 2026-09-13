@@ -24,7 +24,7 @@ test('subSessionState: missing reported jsonl is skipped (01a055c5 null.length)'
   const sessionsDir = mkdtempSync(join(tmpdir(), 'pier-session-io-'));
   const ghost = join(sessionsDir, 'not-created-yet.jsonl');
   const state = await io(ghost, sessionsDir).subSessionState('wC:p4', sessionsDir, Date.now());
-  assert.deepEqual(state, { text: null, pendingTool: false, activity: false });
+  assert.deepEqual(state, { text: null, pendingTool: false, activity: false, turnEnded: false });
 });
 
 test('subSessionState: readable session after injectTs still settles', async () => {
@@ -41,5 +41,20 @@ test('subSessionState: readable session after injectTs still settles', async () 
     },
   }) + '\n');
   const state = await io(file, sessionsDir).subSessionState('wC:p4', sessionsDir, ts);
-  assert.deepEqual(state, { text: 'ok', pendingTool: false, activity: true });
+  assert.deepEqual(state, { text: 'ok', pendingTool: false, activity: true, turnEnded: true });
+});
+
+test('subSessionState (A16): toolResult 已写、下一条 assistant 未到时，回合未结束', async () => {
+  const sessionsDir = mkdtempSync(join(tmpdir(), 'pier-session-io-'));
+  const file = join(sessionsDir, 'child-midflight.jsonl');
+  const ts = 1_800_000_000_000;
+  const lines = [
+    { type: 'message', message: { role: 'user', content: [{ type: 'text', text: 'task' }], timestamp: ts } },
+    { type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall' }], timestamp: ts + 10, stopReason: 'toolUse' } },
+    { type: 'message', message: { role: 'toolResult', content: [{ type: 'text', text: 'ok' }], timestamp: ts + 20 } },
+  ];
+  writeFileSync(file, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  const state = await io(file, sessionsDir).subSessionState('wC:p4', sessionsDir, ts);
+  // activity=true 但 turnEnded=false —— 旧规则会在这里误判完工。
+  assert.deepEqual(state, { text: null, pendingTool: false, activity: true, turnEnded: false });
 });

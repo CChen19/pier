@@ -91,13 +91,22 @@ export function planVacuumTick(input: {
   return { refreshActivity, action: 'continue' };
 }
 
-/** Determine whether subSessionState qualifies as an observation candidate. */
+/**
+ * Determine whether subSessionState qualifies as an observation candidate.
+ *
+ * A16: closing text (only produced by a terminal assistant message) OR an ENDED turn settles.
+ * Merely having an assistant message — the state a worker is in between tool calls, while the next
+ * assistant message streams — must NOT qualify: on 2026-09-13 three live workers were announced as
+ * "finished … left no closing message" and one was closed mid-task by GC afterwards.
+ */
 export function isSettlementCandidate(input: {
   text: string | null;
   pendingTool: boolean;
   activity: boolean;
+  turnEnded?: boolean;
 }): boolean {
-  return Boolean(input.text || (!input.pendingTool && input.activity));
+  if (input.text) return true;
+  return !input.pendingTool && input.turnEnded === true;
 }
 
 /** Formats the combined settlement notice with optional git worktree stat. */

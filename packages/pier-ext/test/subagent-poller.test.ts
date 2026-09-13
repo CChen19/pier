@@ -83,11 +83,19 @@ test('planVacuumTick: null waitState is heartbeat; dead pane beats timeout', () 
   }), { refreshActivity: false, action: 'timeout' });
 });
 
-test('isSettlementCandidate: text present or activity without pending tool', () => {
+test('isSettlementCandidate: 定稿文本，或"回合已结束且无待决工具"', () => {
   assert.equal(isSettlementCandidate({ text: 'ready', pendingTool: false, activity: false }), true);
-  assert.equal(isSettlementCandidate({ text: null, pendingTool: false, activity: true }), true);
-  assert.equal(isSettlementCandidate({ text: null, pendingTool: true, activity: true }), false);
+  assert.equal(isSettlementCandidate({ text: null, pendingTool: false, activity: true, turnEnded: true }), true);
+  assert.equal(isSettlementCandidate({ text: null, pendingTool: true, activity: true, turnEnded: true }), false);
   assert.equal(isSettlementCandidate({ text: null, pendingTool: false, activity: false }), false);
+});
+
+test('isSettlementCandidate (A16): 只有 activity 而回合未结束 → 绝不结算', () => {
+  // 实测回归：三个仍在工作的 worker 被通知"finished … left no closing message"，
+  // 其中一个随后被 GC 关掉 pane。工具间空档期（toolResult 已写、下一条 assistant 未到）正是这个形状。
+  assert.equal(isSettlementCandidate({ text: null, pendingTool: false, activity: true }), false);
+  assert.equal(isSettlementCandidate({ text: null, pendingTool: false, activity: true, turnEnded: false }), false);
+  assert.equal(isSettlementCandidate({ text: null, pendingTool: true, activity: true, turnEnded: false }), false);
 });
 
 test('buildSettlementNoticeText: combines notice and optional statLine', () => {

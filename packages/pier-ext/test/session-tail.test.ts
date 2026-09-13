@@ -7,6 +7,7 @@ import {
   hasAssistantAfter,
   hasPendingToolCall,
   lastAssistantText,
+  lastAssistantTurnEnded,
   listSessionFiles,
   parseSessionEntries,
   sessionDirName,
@@ -96,4 +97,22 @@ test('listSessionFiles/sessionFileById: 候选定位（v1.3 M7 结算串线修�
   assert.equal(sessionFileById('F:\\herdr-pi', tmp, 'zzzz'), null);
   assert.equal(sessionFileById('Z:\\nowhere', tmp, 'bbbb'), null);
   fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('lastAssistantTurnEnded (A16): 只有结束的回合才算结束，toolUse 中间态不算', () => {
+  const entries = [
+    mkMsg('user', 'task', 1),
+    mkMsg('assistant', 'thinking', 2, 'toolUse'),
+    mkMsg('toolResult', 'ok', 3),
+  ];
+  // 工具已回、下一条 assistant 还没来——真实工作流里最常见的一刻，绝不能当作结算。
+  assert.equal(lastAssistantTurnEnded(entries, 1), false);
+  // 补上真正的收尾（stop）后就结束了。
+  assert.equal(lastAssistantTurnEnded([...entries, mkMsg('assistant', 'done', 4, 'stop')], 1), true);
+  // 没有 assistant 消息 / 早于注入点：都不算结束。
+  assert.equal(lastAssistantTurnEnded([mkMsg('user', 'task', 1)], 1), false);
+  assert.equal(lastAssistantTurnEnded([mkMsg('assistant', 'done', 5, 'stop')], 10), false);
+  // stopReason 缺失（流式中间态）保守地按"未结束"处理。
+  const streaming = [{ type: 'message', message: { role: 'assistant', content: [{ type: 'text', text: 'x' }], timestamp: 6 } }];
+  assert.equal(lastAssistantTurnEnded(streaming, 1), false);
 });

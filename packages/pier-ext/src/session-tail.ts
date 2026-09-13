@@ -91,6 +91,34 @@ export function hasAssistantAfter(
   });
 }
 /**
+ * Return whether the NEWEST assistant message after `sinceTs` ended its turn.
+ *
+ * Why (A16): a worker sitting between tool calls (tool result already written, next assistant
+ * message still streaming) has "an assistant message" but has NOT finished. Treating any assistant
+ * message as activity made the poller announce such workers as finished — three real workers were
+ * declared settled while still working on 2026-09-13 and one was later closed mid-task by GC.
+ *
+ * `stopReason === 'toolUse'` means the model requested tools, so the turn continues; a non-string
+ * stopReason (message still streaming / older shapes) is treated as "not ended" on purpose — the
+ * cost of waiting is small, the cost of a false settlement is losing supervision of live work.
+ */
+export function lastAssistantTurnEnded(
+  entries: readonly SessionEntryLike[],
+  sinceTs: number,
+): boolean {
+  let newest: { ts: number; stopReason: unknown } | null = null;
+  for (const entry of entries) {
+    const m = messageOf(entry);
+    if (!m || m.role !== 'assistant') continue;
+    const ts = typeof m.timestamp === 'number' ? m.timestamp : 0;
+    if (ts < sinceTs) continue;
+    if (!newest || ts >= newest.ts) newest = { ts, stopReason: m.stopReason };
+  }
+  if (!newest) return false;
+  const sr = newest.stopReason;
+  return typeof sr === 'string' && sr !== 'toolUse' && sr !== 'pending';
+}
+/**
  * Return whether an initiated toolCall still lacks a result after injection (for example,
  * ask_user_question waiting on human input), meaning settlement has not actually completed
  * (v1.3 M8 settlement-race fix). Parallel calls are tracked by depth.

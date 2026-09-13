@@ -12,6 +12,7 @@ import {
   hasAssistantAfter,
   hasPendingToolCall,
   lastAssistantText,
+  lastAssistantTurnEnded,
   listSessionFiles,
   readSessionFile,
   sessionFileById,
@@ -32,7 +33,7 @@ export interface SessionIo {
   collectFinalText(paneId: string, cwd: string, sinceTs: number, attempts?: number): Promise<string | null>;
   readAskFlag(paneId: string): Promise<string | null>;
   probeAlive(paneId: string, cwd: string): Promise<AliveProbe>;
-  subSessionState(paneId: string, cwd: string, sinceTs: number): Promise<{ text: string | null; pendingTool: boolean; activity: boolean }>;
+  subSessionState(paneId: string, cwd: string, sinceTs: number): Promise<{ text: string | null; pendingTool: boolean; activity: boolean; turnEnded: boolean }>;
 }
 
 export function createSessionIo(h: SessionIoHost): SessionIo {
@@ -119,7 +120,7 @@ export function createSessionIo(h: SessionIoHost): SessionIo {
     paneId: string,
     cwd: string,
     sinceTs: number,
-  ): Promise<{ text: string | null; pendingTool: boolean; activity: boolean }> {
+  ): Promise<{ text: string | null; pendingTool: boolean; activity: boolean; turnEnded: boolean }> {
     for (const file of await resolveSessionFileCandidates(paneId, cwd)) {
       const entries = readSessionFile(file);
       // readSessionFile returns null when the path is missing or unreadable.
@@ -128,11 +129,20 @@ export function createSessionIo(h: SessionIoHost): SessionIo {
       // `Cannot read properties of null (reading 'length')` (session 01a055c5).
       if (!entries?.length) continue;
       const r = lastAssistantText(entries, { sinceTs });
-      if (r?.text) return { text: r.text, pendingTool: false, activity: true };
-      if (hasPendingToolCall(entries, sinceTs)) return { text: null, pendingTool: true, activity: true };
-      if (hasAssistantAfter(entries, sinceTs)) return { text: null, pendingTool: false, activity: true };
+      // Closing text is by construction terminal (lastAssistantText requires stopReason 'stop').
+      if (r?.text) return { text: r.text, pendingTool: false, activity: true, turnEnded: true };
+      if (hasPendingToolCall(entries, sinceTs)) return { text: null, pendingTool: true, activity: true, turnEnded: false };
+      if (hasAssistantAfter(entries, sinceTs)) {
+        // A16: an assistant message alone is not a settlement; the turn must have ENDED.
+        return {
+          text: null,
+          pendingTool: false,
+          activity: true,
+          turnEnded: lastAssistantTurnEnded(entries, sinceTs),
+        };
+      }
     }
-    return { text: null, pendingTool: false, activity: false };
+    return { text: null, pendingTool: false, activity: false, turnEnded: false };
   }
 
   return {
