@@ -1011,7 +1011,25 @@ node --test packages/pier-ext/test/*.test.ts → 626/626（新增 14）
 - agent 对注入提示词的遵守程度（依赖模型，属 D104 的核心观感指标）；
 - 报告文件在真实工作区中的可读性（字段/来源标注是否够用）。
 
-### 17.4 明确未做（有意保留）
+### 17.4 本机陈旧配置修复（2026-09-13，试用前置）
+
+启动检查发现本机**实际生效**的用户模式 boot-config（`~/.config/herdr/plugins/config/pier.workbench/boot-config.json`）里的
+`extPath` 指向 `/Users/yehaoyu/.pi/agent/npm/node_modules/pi-pier/src/index.ts` —— 该路径已不存在（早先 npm 安装的残留），
+于是每个 pi pane 启动都会打印一条 `Failed to load extension: Cannot find module …`（实测非致命：`discoverAndLoadExtensions`
+把它记为一条诊断后继续，pier 仍由 `~/.pi/agent/settings.json` 的 `packages` 指向本 checkout 正常加载）。
+
+处理：
+1. 备份 `boot-config.json.bak-20260913`，把 `extPath` 改为 `/Users/yehaoyu/Documents/pier/packages/pier-ext/src/index.ts`；
+2. **去重验证**：`packages` 的目录条目与 `-e <file>` 指向同一入口时 pi 只加载一次（用 dummy 扩展包实测 `dir+file → extensions=1`），
+   所以修完不会出现"重复注册 handler"；
+3. `config-guide.ts` 的 boot 平面新增两项能力：**默认路径探测**（未显式注入 env 时探测 `$XDG_CONFIG_HOME`/`~/.config`
+   与 `%LOCALAPPDATA%` 下的 `herdr/plugins/config/pier.workbench/`，因此 pane 内不依赖 `HERDR_PLUGIN_CONFIG_DIR` 也能看到用户模式配置）
+   与**路径存在性校验**（`piNode`/`piCli`/`extPath` 缺失即 FAIL 并给出 `npx pier-setup@latest update --force` 提示）；
+4. 文档同步：`docs/configuration.md` 与 `docs/pier-config-command.md` 的 boot 行、`docs/INSTALL.md` §4 的安装自检步骤。
+
+修复后实测（不注入任何 env，等价于 pane 内执行）：`boot` 平面 `ok`，并列出用户模式与 dev 两份 boot-config。
+
+### 17.5 明确未做（有意保留）
 
 - P3 的 TUI picker（`ui.select` 逐项改）——等反馈证明"文本索引 + agent 引导"不够用再做；
 - 未把 typecheck 门禁扩到全 `src`（会暴露存量错误，见 §12/§13 的 P1-B 记录），仅纳入 3 个新文件。

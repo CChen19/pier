@@ -106,6 +106,17 @@ function defaultRepoRoot(): string {
   }
 }
 
+/** Standard herdr plugin config dirs: XDG config on macOS/Linux, LOCALAPPDATA on Windows. */
+export function defaultHerdrPluginConfigDirs(env: Record<string, string | undefined> = process.env): string[] {
+  const out: string[] = [];
+  const xdg = env.XDG_CONFIG_HOME && env.XDG_CONFIG_HOME.trim() !== '' ? env.XDG_CONFIG_HOME : join(homedir(), '.config');
+  out.push(join(xdg, 'herdr', 'plugins', 'config', 'pier.workbench'));
+  if (env.LOCALAPPDATA && env.LOCALAPPDATA.trim() !== '') {
+    out.push(join(env.LOCALAPPDATA, 'herdr', 'plugins', 'config', 'pier.workbench'));
+  }
+  return out;
+}
+
 function readJsonLayer(path: string): { value: unknown; issue?: string } {
   if (!existsSync(path)) return { value: undefined };
   try {
@@ -224,6 +235,15 @@ export function collectConfigSnapshot(deps: ConfigGuideDeps = {}): ConfigGuideSn
   const bootIssues: string[] = [];
   const bootCandidates: Array<{ path: string; label: string }> = [];
   if (herdrPluginConfigDir) bootCandidates.push({ path: join(herdrPluginConfigDir, 'boot-config.json'), label: 'herdr plugin config-dir' });
+  // herdr does not always export HERDR_PLUGIN_CONFIG_DIR into the pi process, so production also
+  // probes the standard plugin config locations (the same file `install.mjs` writes in user mode).
+  // Tests inject env/herdrPluginConfigDir and therefore stay hermetic.
+  const probeDefaultDirs = deps.herdrPluginConfigDir === undefined && deps.env === undefined;
+  if (probeDefaultDirs) {
+    for (const dir of defaultHerdrPluginConfigDirs(env)) {
+      bootCandidates.push({ path: join(dir, 'boot-config.json'), label: 'herdr plugin config (default)' });
+    }
+  }
   bootCandidates.push({ path: join(repoRoot, 'packages', 'pier-workbench', 'scripts', 'boot-config.json'), label: 'dev (repo)' });
   let bootFound: { path: string; label: string } | null = null;
   for (const candidate of bootCandidates) {

@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import {
   CONFIG_GUIDANCE_PROMPT,
   collectConfigSnapshot,
+  defaultHerdrPluginConfigDirs,
   efficiencyPointerLine,
   guideCheckLines,
   guideIndexLines,
@@ -220,6 +221,17 @@ test('collectConfigSnapshot: missing boot-config and missing pi settings are rep
   } finally {
     await rm(fx.base, { recursive: true, force: true });
   }
+});
+
+test('defaultHerdrPluginConfigDirs follows XDG and LOCALAPPDATA', () => {
+  const xdg = defaultHerdrPluginConfigDirs({ XDG_CONFIG_HOME: '/xdg' });
+  assert.deepEqual(xdg, [join('/xdg', 'herdr', 'plugins', 'config', 'pier.workbench')]);
+  const win = defaultHerdrPluginConfigDirs({ XDG_CONFIG_HOME: '/xdg', LOCALAPPDATA: '/local' });
+  assert.equal(win.length, 2);
+  assert.equal(win[1], join('/local', 'herdr', 'plugins', 'config', 'pier.workbench'));
+  const fallback = defaultHerdrPluginConfigDirs({});
+  assert.equal(fallback.length, 1);
+  assert.match(fallback[0]!, /herdr[/\\]plugins[/\\]config[/\\]pier\.workbench$/);
 });
 
 test('guidance prompt stays a stable instruction block', () => {

@@ -26,7 +26,7 @@
 | `efficiency` | `<repo>/.pi-herdr/config.json`、`~/.pi/agent/herdr-pi/config.json`、`PI_HERDR_*` env | env > 工作区 > 用户 > 默认 | ✅ 工作区需项目受信 | pier（D100–D103） |
 | `roles` | `<repo>/.pi-herdr/roles/<name>.json`、`~/.pi/agent/herdr-pi/roles/<name>.json`、内置 `src/roles/` | 工作区/用户层覆盖（内置名不可劫持，D11） | 加载期校验（schema） | pier（D82/D11） |
 | `pi` | `~/.pi/agent/settings.json`（+ 受信项目 `.pi/settings.json`） | 项目 > 全局 | ✅ | pi 本体 |
-| `boot` | `$HERDR_PLUGIN_CONFIG_DIR/boot-config.json`、`packages/pier-workbench/scripts/boot-config.json` | 唯一 | — | workbench（`install.mjs` 写入） |
+| `boot` | `$HERDR_PLUGIN_CONFIG_DIR/boot-config.json`（缺省即 `~/.config/herdr/plugins/config/pier.workbench/boot-config.json`）、`packages/pier-workbench/scripts/boot-config.json` | 唯一 | — | workbench（`install.mjs` 写入） |
 | `env` | `PIER_*`（runtime policy）、`PI_HERDR_*`（终端/待办/诊断/能效覆盖） | env 唯一（无文件） | — | pier |
 
 **为什么这么分层**：能效与角色是 pier 的**行为策略**，所以放在 pier 自己的目录（用户级 + 工作区级），并用 env 提供最高优先级的临时覆盖；而 pi 的模型/压缩等属于**宿主设置**，pier 只读其中与 OCC 有关的 `compaction.*`，其余引导用户走 pi 的 `/settings`；boot-config 是**安装期产物**，手改路径容易与 `install.mjs` 打架。

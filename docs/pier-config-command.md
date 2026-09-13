@@ -40,7 +40,7 @@ pier 的配置散落在 **5 个平面、4 种文件、17 个环境变量**里：
 | `efficiency` | 用户 `~/.pi/agent/herdr-pi/config.json`；工作区 `<repo>/.pi-herdr/config.json`；env `PI_HERDR_{COMPACT,OBS_PACK,REDUCER}_*` | env > 工作区 > 用户 > 默认 | ✅ 工作区需 `isProjectTrusted()` | `validateEfficiencyConfig()` + schema | 20 键 + 8 env |
 | `roles` | 内置 `src/roles/{master,worker-default}.json`；工作区 `.pi-herdr/roles/<name>.json`；用户 `~/.pi/agent/herdr-pi/roles/<name>.json` | 工作区/用户层覆盖（内置名不可劫持，D11） | ✅ 加载期校验 | `role-manifest.schema.json` + `role-loader.ts` | `role/version/model/description/manifest{unknownTools,tools,rules}/services.todos` |
 | `pi` | `~/.pi/agent/settings.json`（+ 受信项目 `.pi/settings.json`） | 项目 > 全局 | ✅ | pi 自身 | 本命令只**只读**展示 `compaction.enabled/keepRecentTokens`（OCC 相关），其余引导走 `/settings` |
-| `boot` | herdr plugin config-dir 的 `boot-config.json`（用户模式）/ `packages/pier-workbench/scripts/boot-config.json`（dev）；模板 `.example.json` | 唯一 | — | `install.mjs` 探测与写入 | `mainTabLabel/piNode/piCli/extPath/workbenchPluginId/hmrDev` |
+| `boot` | herdr plugin config-dir 的 `boot-config.json`（用户模式；缺省探测 `$XDG_CONFIG_HOME`/`~/.config` 与 `%LOCALAPPDATA%` 下的 `herdr/plugins/config/pier.workbench/`）/ `packages/pier-workbench/scripts/boot-config.json`（dev）；模板 `.example.json` | 唯一 | — | `install.mjs` 探测与写入；`check` 额外校验 `piNode`/`piCli`/`extPath` **路径存在** | `mainTabLabel/piNode/piCli/extPath/workbenchPluginId/hmrDev` |
 | `env` | `PIER_*`（`runtime-policy.ts` 9 项）+ `PI_HERDR_{TRACE,HMR,SLIM_FRAME,TODO_GRACE_MS,TERM_IDLE_MS,TERM_GRACE_MS,TERM_READ_MAX}` + `PIER_ISOLATE_SWEEP_ORPHANS` | env 唯一 | — | `parseEnvInt()` 边界（非法 → 告警并回默认值） | 17 项 |
 
 > `PI_HERDR_ROLE_MANIFEST` 由 spawn 注入、非用户配置项，仅在 `show env` 中标注为"由 pier 注入"；`PI_CODING_AGENT_DIR` 归 pi 所有，只读展示。
