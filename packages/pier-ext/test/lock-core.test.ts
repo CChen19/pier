@@ -12,6 +12,7 @@ import {
   WRITE_TOOLS,
   acquireTokensFor,
   findLockConflict,
+  findLockHolders,
   fnv1a64,
   formatConflictWarning,
   isLockTokenKey,
@@ -128,7 +129,7 @@ test('planWriteGuard：软模式（默认）→ warn（归一路径匹配，工�
   const g = planWriteGuard({ toolName: 'write', input: { path: LOCKED_ALT, content: '' }, agents, ownPaneId: 'pB', cwd: CWD, hard: false });
   assert.equal(g.kind, 'warn');
   if (g.kind !== 'warn') return;
-  assert.equal(g.holderPaneId, 'pA');
+  assert.deepEqual(g.holderPaneIds, ['pA']);
   assert.match(g.warning, /pA/);
   assert.match(g.warning, /a\.cs/i);
   assert.deepEqual(g.paths, [LOCKED]);
@@ -139,7 +140,7 @@ test('planWriteGuard：硬模式 → block（reason 给模型）', () => {
   const g = planWriteGuard({ toolName: 'edit', input: { path: LOCKED_ALT, edits: [] }, agents, ownPaneId: 'pB', cwd: CWD, hard: true });
   assert.equal(g.kind, 'block');
   if (g.kind !== 'block') return;
-  assert.equal(g.holderPaneId, 'pA');
+  assert.deepEqual(g.holderPaneIds, ['pA']);
   assert.match(g.reason, /pA/);
   assert.match(g.reason, /locked/i);
 });
@@ -159,10 +160,39 @@ test('acquire/release tokens：键=哈希、acquire 值=paneId|path、release �
 });
 
 test('formatConflictWarning：含路径与持有者', () => {
-  const w = formatConflictWarning('f:/a.cs', 'pA');
+  const w = formatConflictWarning('f:/a.cs', ['pA']);
   assert.match(w, /pA/);
   assert.match(w, /a\.cs/);
   assert.match(w, /conflict|locked/i);
+  assert.match(w, /\/locks/, 'warning points at the human view');
+  assert.match(w, /herdr agent list/, 'warning points at the agent-readable view');
+});
+
+test('findLockHolders / formatConflictWarning：列出全部持有者、去重并排除自己', () => {
+  const agents = [
+    { paneId: 'pA', tokens: { [lockTokenKey('f:/a.cs')]: lockTokenValue('f:/a.cs', 'pA') } },
+    { paneId: 'pB', tokens: { [lockTokenKey('f:/a.cs')]: lockTokenValue('f:/a.cs', 'pB') } },
+    { paneId: 'pC', tokens: { [lockTokenKey('f:/a.cs')]: lockTokenValue('f:/a.cs', 'pA') } }, // duplicate holder
+    { paneId: 'pD', tokens: { unrelated: 'x' } },
+  ];
+  assert.deepEqual(findLockHolders(agents, 'pZ', 'f:/a.cs'), ['pA', 'pB']);
+  assert.deepEqual(findLockHolders(agents, 'pA', 'f:/a.cs'), ['pB'], 'self is excluded');
+  assert.deepEqual(findLockHolders(agents, 'pZ', 'f:/zz.cs'), []);
+
+  const warn = formatConflictWarning('f:/a.cs', ['pA', 'pB']);
+  assert.match(warn, /panes pA, pB/);
+  const single = formatConflictWarning('f:/a.cs', ['pA']);
+  assert.match(single, /by pane pA /);
+});
+
+test('planWriteGuard：硬模式的 block reason 列出全部持有者并附查询提示', () => {
+  const agents = [agent('pA', { [LOCKED]: 'pA' }), agent('pB', { [LOCKED]: 'pB' })];
+  const plan = planWriteGuard({ toolName: 'write', input: { path: LOCKED_ALT, content: '' }, agents, ownPaneId: 'pZ', cwd: CWD, hard: true });
+  assert.equal(plan.kind, 'block');
+  if (plan.kind !== 'block') return;
+  assert.deepEqual(plan.holderPaneIds, ['pA', 'pB']);
+  assert.match(plan.reason, /panes pA, pB/);
+  assert.match(plan.reason, /herdr agent list/);
 });
 
 test('常量：env 名与工具集锁定', () => {

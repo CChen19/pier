@@ -1045,3 +1045,24 @@ D104 落地后按用户要求删除前一代 `/efficiency` 命令（尚未发布
 
 - P3 的 TUI picker（`ui.select` 逐项改）——等反馈证明"文本索引 + agent 引导"不够用再做；
 - 未把 typecheck 门禁扩到全 `src`（会暴露存量错误，见 §12/§13 的 P1-B 记录），仅纳入 3 个新文件。
+
+---
+
+## 18. 写锁信息补全与受众标注（2026-09-13，方案 C）
+
+用户观察：`/locks` 更像"agent 会用到的东西"，而不是人类主动调用的命令。核对结论：**机制本体全自动、第一读者是 agent**
+（soft 警告与 hard block reason 都落在它自己的工具结果里），`/locks` 是**人类/主控的排障视图**，且锁的原始 token
+（`lock-<hash>` → `paneId|path`）在 `herdr agent list` 里对 agent 也是可读的 —— 缺的不是数据，而是"提示+完整性"。
+
+按方案 C（只补信息与受众标注，不动工具面）落地：
+
+| 改动 | 位置 | 说明 |
+|---|---|---|
+| 列出**全部**持有者 | `lock-core.ts` 新增 `findLockHolders()`（去重、排除自己），`planWriteGuard` 的 warn/block 由 `holderPaneId` 改为 `holderPaneIds` | 锁是信标不是互斥量，同一路径可能被多个 pane 同时持有；原先只报首个 |
+| 查询提示 | 新增 `LOCK_HOLDERS_HINT`，同时进入 soft 警告与 hard block reason | `holders: /locks (human view in this pane) · herdr agent list → tokens (agent-readable)` |
+| 文案与受众 | `packages/pier-ext/README.md`（`/locks` 行 + Soft locks 条目）、根 `README.md` | 明确"agent 读自己的警告、人类看 `/locks`"，并写明只覆盖 `write`/`edit`、`bash` 写入不在保护范围 |
+| 门禁覆盖 | `tsconfig.json` 纳入 `src/lock-core.ts` | 本次改动的纯核进入 typecheck 门禁（原 include 未覆盖） |
+
+测试：`lock-core.test.ts` 15/15（新增 2 个用例：全部持有者/去重/排除自己；hard reason 的多人列表与提示），
+`npm test` 全绿（见下方）。仍未做：给 agent 一个**事前**查询面（方案 A：新工具或在 `subagent` 加 action，需动角色清单与门禁）——
+按用户决定暂不做，等试用反馈。

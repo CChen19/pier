@@ -52,7 +52,7 @@ The installer also verifies node / pi / herdr versions, probes local paths, and 
 | Command | Purpose |
 |---|---|
 | `/todos` | Show the todo list, or edit it: `/todos done|drop|rm|unblock <fuzzy match>` |
-| `/locks` | Show write locks held by this pane and by live panes (herdr only) |
+| `/locks` | Show write locks held by this pane and by live panes — the **human/operator view** of the write-lock beacons (herdr only). Agents see the holders inside their own write warnings; the raw tokens are readable via `herdr agent list` |
 | `/pier-config` | Read-only configuration guide over five planes: bare call = index + hands a guided change to the agent; `show [plane\|all]` = effective value + source (`env > workspace > user > default`); `check` = validate all planes; `doc [path]` = write a report |
 
 ### Behaviors
@@ -61,7 +61,7 @@ The installer also verifies node / pi / herdr versions, probes local paths, and 
 - **Blocking dialogs block the pane**: pi's `ui_prompt_start` / `ui_prompt_end` events cover the inherently blocking `ctx.ui` dialogs (`select` / `confirm` / `input` / `editor`), so a dialog from any extension (not only pier's own ask tool) reports the pane as blocked and emits the `herdr:blocked` edge; nested gates are coalesced. `custom` is excluded because pi also routes resident overlays through it (pier's slim-frame overlay never calls `done()`, and a resident overlay keeps pi's prompt span open anyway)
 - **Role gate stops early**: a tool call denied by the role manifest returns `terminate`, so a batch whose results are all terminating ends without another model round trip
 - **Readable transcript**: pier's own session entries (todo edits, subagent/terminal registries, role manifests, soft approvals) and its reminder messages render as compact cards instead of raw JSON
-- **Soft locks**: write paths lock per-pane; conflicts warn/block instead of racing
+- **Soft locks**: write paths register per-pane beacons; conflicts warn (default) or block (`PI_HERDR_WRITE_LOCK=1`) instead of racing silently. Warnings name **every** holder — the audience split is: agent reads its own tool-result warning, human reads `/locks` (or `herdr agent list` for the raw token table). `write`/`edit` only — `bash` writes are not covered
 - **Role profiles**: built-in `master` / `worker-default`; custom roles mount from `.pi-herdr/roles/<name>.json`. Toolsets converge per role — deny rules cannot be bypassed
 - **Settlement notices folded**: background subagent completions inject between turns (max 3 shown, rest collapsed) instead of flood-filling at run end
 

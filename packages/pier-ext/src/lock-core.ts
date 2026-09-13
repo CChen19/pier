@@ -67,19 +67,43 @@ export function writePathsOfTool(toolName: string, input: unknown): string[] {
 
 /** Why: Preserve the established compatibility and safety behavior. */
 
+/**
+ * Every *other* pane currently holding a beacon for this path (deduped, in list order).
+ * A lock is a beacon rather than a mutex, so several panes can hold the same path.
+ */
+export function findLockHolders(
+  agents: readonly LockAgentView[],
+  ownPaneId: string,
+  normPath: string,
+): string[] {
+  const key = lockTokenKey(normPath);
+  const holders: string[] = [];
+  for (const a of agents) {
+    const v = a.tokens[key];
+    if (typeof v !== 'string' || !v) continue;
+    const parsed = parseLockTokenValue(v);
+    if (parsed && parsed.holderPaneId !== ownPaneId && !holders.includes(parsed.holderPaneId)) {
+      holders.push(parsed.holderPaneId);
+    }
+  }
+  return holders;
+}
+
 export function findLockConflict(
   agents: readonly LockAgentView[],
   ownPaneId: string,
   normPath: string,
 ): { holderPaneId: string } | null {
-  const key = lockTokenKey(normPath);
-  for (const a of agents) {
-    const v = a.tokens[key];
-    if (typeof v !== 'string' || !v) continue;
-    const parsed = parseLockTokenValue(v);
-    if (parsed && parsed.holderPaneId !== ownPaneId) return { holderPaneId: parsed.holderPaneId };
-  }
-  return null;
+  const [first] = findLockHolders(agents, ownPaneId, normPath);
+  return first === undefined ? null : { holderPaneId: first };
+}
+
+/** Where to look for the full holder table: humans use the slash command, agents can read herdr's tokens. */
+export const LOCK_HOLDERS_HINT =
+  'holders: /locks (human view in this pane) · herdr agent list → tokens (agent-readable)';
+
+function holdersLabel(holders: readonly string[]): string {
+  return holders.length === 1 ? `pane ${holders[0]}` : `panes ${holders.join(', ')}`;
 }
 
 /** Why: Preserve the established compatibility and safety behavior. */
@@ -87,8 +111,8 @@ export function findLockConflict(
 export type WriteGuardPlan =
   | { kind: 'skip' }
   | { kind: 'pass'; paths: string[] }
-  | { kind: 'warn'; paths: string[]; holderPaneId: string; warning: string }
-  | { kind: 'block'; paths: string[]; holderPaneId: string; reason: string };
+  | { kind: 'warn'; paths: string[]; holderPaneIds: string[]; warning: string }
+  | { kind: 'block'; paths: string[]; holderPaneIds: string[]; reason: string };
 
 export function planWriteGuard(opts: {
   toolName: string;
@@ -102,21 +126,21 @@ export function planWriteGuard(opts: {
   if (raw.length === 0) return { kind: 'skip' };
   const paths = raw.map((p) => normalizeLockPath(p, opts.cwd));
   for (const norm of paths) {
-    const conflict = findLockConflict(opts.agents, opts.ownPaneId, norm);
-    if (!conflict) continue;
+    const holders = findLockHolders(opts.agents, opts.ownPaneId, norm);
+    if (holders.length === 0) continue;
     if (opts.hard) {
       return {
         kind: 'block',
         paths,
-        holderPaneId: conflict.holderPaneId,
-        reason: `file locked by pane ${conflict.holderPaneId}: ${norm} is being edited in another pane. Wait for it to settle, or coordinate before writing.`,
+        holderPaneIds: holders,
+        reason: `file locked by ${holdersLabel(holders)}: ${norm} is being edited in another pane. Wait for it to settle, or coordinate before writing. ${LOCK_HOLDERS_HINT}`,
       };
     }
     return {
       kind: 'warn',
       paths,
-      holderPaneId: conflict.holderPaneId,
-      warning: formatConflictWarning(norm, conflict.holderPaneId),
+      holderPaneIds: holders,
+      warning: formatConflictWarning(norm, holders),
     };
   }
   return { kind: 'pass', paths };
@@ -136,6 +160,6 @@ export function releaseTokensFor(normPaths: readonly string[]): Record<string, n
   return out;
 }
 
-export function formatConflictWarning(normPath: string, holderPaneId: string): string {
-  return `⚠️ write conflict: ${normPath} is locked by pane ${holderPaneId} (it edited this file and has not settled). This write went through (soft mode) — coordinate to avoid clobbering each other's changes.`;
+export function formatConflictWarning(normPath: string, holders: readonly string[]): string {
+  return `⚠️ write conflict: ${normPath} is locked by ${holdersLabel(holders)} (edited in another pane that has not settled). This write went through (soft mode) — coordinate to avoid clobbering each other's changes. ${LOCK_HOLDERS_HINT}`;
 }
