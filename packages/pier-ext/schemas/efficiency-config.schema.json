@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://herdr-pi.local/schemas/efficiency-config.schema.json",
+  "title": "pier efficiency configuration (D100-D103)",
+  "type": "object",
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "onlineContextCompact": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false, "description": "是否启用待办驱动的在线上下文压缩" },
+        "logEnabled": { "type": "boolean", "default": false, "description": "是否记录在线压缩的决策与节省量日志" },
+        "cacheWriteReadRatio": {
+          "oneOf": [
+            { "type": "number", "minimum": 0 },
+            { "type": "string", "enum": ["auto"] }
+          ],
+          "default": "auto",
+          "description": "KV 缓存写入与读取成本比。auto 表示从 ctx.model.cost 自动推导"
+        },
+        "firstCompactionRequestScale": { "type": "number", "default": 2.0, "minimum": 1.0 },
+        "subsequentCompactionMargin": { "type": "number", "default": 1.5, "minimum": 1.0 },
+        "keepRecentTokens": {
+          "type": "integer",
+          "default": 20000,
+          "minimum": 1000,
+          "description": "原生压缩保留区大小（同时用于 archiveTokens 估算与 nativeCompactionFeasible 预检）。缺省等于 pi 的 compaction.keepRecentTokens 默认值；本扩展不读 pi settings，若用户改过 pi 设置需在此同步。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "observationPack": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false, "description": "是否启用大工具输出冷热分级打包" },
+        "logEnabled": { "type": "boolean", "default": false, "description": "是否记录观察结果打包与召回日志" },
+        "thresholdBytes": { "type": "integer", "default": 10240, "minimum": 1024 },
+        "fullSends": { "type": "integer", "default": 2, "minimum": 1 },
+        "recallChunkBytes": { "type": "integer", "default": 16384, "minimum": 1024 },
+        "excerptBytes": { "type": "integer", "default": 1024, "minimum": 128 }
+      },
+      "additionalProperties": false
+    },
+    "evidencePreservingReducer": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false, "description": "是否启用长测试日志保真提炼" },
+        "logEnabled": { "type": "boolean", "default": false, "description": "是否记录提炼比对、耗时与回退日志" },
+        "model": {
+          "type": "string",
+          "description": "专用的轻量 Reducer 模型 (provider/model)。缺省使用当前模型并在日志中提示经济性"
+        },
+        "minBytes": { "type": "integer", "default": 4096, "minimum": 512 },
+        "maxChars": { "type": "integer", "default": 600000 },
+        "maxOutputTokens": { "type": "integer", "default": 2048 },
+        "timeoutMs": { "type": "integer", "default": 5000, "description": "同步拦截超时上限，默认 5 秒避免阻塞" },
+        "localOnly": { "type": "boolean", "default": false, "description": "仅本地归档长日志并跳过模型提炼" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

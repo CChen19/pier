@@ -21,6 +21,8 @@ export const D96_REPEAT_NOTICE_MS = 10 * 60_000;
 export interface SettleWakeInput {
   /** stopReason of the last assistant turn before this settlement (unknown = null, treated as natural completion). */
   lastStopReason: string | null;
+  /** True when abort was triggered intentionally by internal mechanisms like OCC. */
+  intentionalAbort?: boolean;
   /** Background subagents still running (empty means none). */
   running: ReadonlyArray<{ paneId: string }>;
   /** Set key recorded for the previous D96 notice (none = null). */
@@ -41,7 +43,7 @@ export interface SettleWakePlan {
 }
 
 export function planSettleWake(input: SettleWakeInput): SettleWakePlan {
-  if (input.lastStopReason === ABORT_STOP_REASON) {
+  if (input.intentionalAbort || input.lastStopReason === ABORT_STOP_REASON) {
     return { wake: false, notice: false, noticeKey: input.lastNoticeKey, noticeAt: input.lastNoticeAt };
   }
   const key = input.running.length === 0 ? null : input.running.map((s) => s.paneId).sort().join(',');

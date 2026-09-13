@@ -15,6 +15,14 @@ export interface TodosConfig {
   allowParallelInProgress: boolean;
 }
 
+export type TodoCompletionSource = 'tool' | 'reconcile' | 'human' | 'archive';
+
+export interface TodoCompletedEvent {
+  count: number;
+  at: number;
+  source: TodoCompletionSource;
+}
+
 export class TodosService extends EventEmitter {
   private _items: TodoItem[] = [];
   /**
@@ -45,33 +53,37 @@ export class TodosService extends EventEmitter {
     return this._items.map((it) => ({ ...it }));
   }
 
-  replace(items: readonly TodoItem[]): { changed: boolean } {
+  replace(items: readonly TodoItem[], opts?: { source?: TodoCompletionSource }): { changed: boolean } {
     const next = items.map((it) => ({ ...it }));
     if (listsEqual(this._items, next)) return { changed: false };
     const before = this._items;
     this._items = next;
     this.lastWriteAt = Date.now();
-    this.emitCompletedTransitions(before, this._items);
+    this.emitCompletedTransitions(before, this._items, opts?.source ?? 'tool');
     this.emit('todo.updated', { items: this._items });
     return { changed: true };
   }
 
-  applyEdits(edits: readonly TodoEdit[]): { changed: boolean } {
+  applyEdits(edits: readonly TodoEdit[], opts?: { source?: TodoCompletionSource }): { changed: boolean } {
     const before = this._items;
     const next = applyTodoEdits(this._items, edits);
     if (listsEqual(before, next)) return { changed: false };
     this._items = next;
     this.lastWriteAt = Date.now();
-    this.emitCompletedTransitions(before, this._items);
+    this.emitCompletedTransitions(before, this._items, opts?.source ?? 'reconcile');
     this.emit('todo.edited', { edits, items: this._items });
     this.emit('todo.updated', { items: this._items });
     return { changed: true };
   }
 
   /** Why: Preserve the established compatibility and safety behavior (M16). */
-  private emitCompletedTransitions(before: readonly TodoItem[], after: readonly TodoItem[]): void {
+  private emitCompletedTransitions(
+    before: readonly TodoItem[],
+    after: readonly TodoItem[],
+    source: TodoCompletionSource = 'tool',
+  ): void {
     const count = countCompletedTransitions(before, after);
-    if (count > 0) this.emit('todo.completed', { count, at: Date.now() });
+    if (count > 0) this.emit('todo.completed', { count, at: Date.now(), source });
   }
 
   rebuild(entries: readonly unknown[]): void {

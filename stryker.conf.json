@@ -11,7 +11,11 @@
     "packages/pier-ext/src/reconcile-core.ts",
     "packages/pier-ext/src/lock-core.ts",
     "packages/pier-ext/src/pipe-channel.ts",
-    "packages/pier-ext/src/gc-core.ts"
+    "packages/pier-ext/src/gc-core.ts",
+    "packages/pier-ext/src/efficiency-config-core.ts",
+    "packages/pier-ext/src/compact-economics-core.ts",
+    "packages/pier-ext/src/observation-core.ts",
+    "packages/pier-ext/src/reducer-core.ts"
   ],
   "thresholds": {
     "high": 80,

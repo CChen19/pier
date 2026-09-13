@@ -59,6 +59,14 @@ import { emptySubagentPortBox } from './subagent-port.ts';
 import { createNoticeBuffer } from './index-notices.ts';
 import { handlePipeRequest } from './index-pipe.ts';
 import { installWriteLocks } from './index-locks.ts';
+import { registerObservationPack } from './core/observation.ts';
+import { CompactCoordinator } from './compact-coordinator.ts';
+import { handleReducerToolResult, type ToolResultEventLike } from './reducer-invoker.ts';
+import {
+  loadEfficiencyConfigFromDisk,
+  resolveEfficiencyConfig,
+  type EfficiencyConfig,
+} from './efficiency-config-core.ts';
 
 /**
  * WS-D7: apply the master-pane manifest to itself through the same mandatory chain as subagents
@@ -96,6 +104,8 @@ export default async function (pi: ExtensionAPI) {
     (mode.composeMaster ? composeMasterRuntime() : null);
   const todos = new TodosService(TodosService.configFromRuntime(runtimeManifest, isSubagent));
   const { client, env } = createHerdrClient();
+  let effConfig: EfficiencyConfig = resolveEfficiencyConfig();
+  const coordinator = new CompactCoordinator();
 
   // Transcript polish for pier's own custom entries and reminder messages; display-only and
   // best-effort (older pi builds without the renderer API simply keep the raw rows).
@@ -115,6 +125,7 @@ export default async function (pi: ExtensionAPI) {
       const entries = (ctx as { sessionManager?: { getBranch?: () => readonly unknown[] } })
         ?.sessionManager?.getBranch?.() ?? [];
       todos.rebuild(entries);
+      coordinator.rebuildFromBranch(entries);
     } catch {
       // A reconstruction failure must not disrupt the main flow; the next todo_write re-anchors state.
     }
@@ -199,7 +210,7 @@ export default async function (pi: ExtensionAPI) {
         } catch {
           /* Best effort persistence; in-memory state still advances. */
         }
-        todos.applyEdits(plan.edits);
+        todos.applyEdits(plan.edits, { source: 'reconcile' });
         mirrorTodos();
       }
       return plan.noteLines;
@@ -215,8 +226,9 @@ export default async function (pi: ExtensionAPI) {
 
   /* ── M16: progress and tool badges (title suffix + report_agent.message; no new protocol) ── */
 
-  todos.on('todo.completed', (e: { count: number; at: number }) => {
+  todos.on('todo.completed', (e: { count: number; at: number; source?: import('./todos-service.ts').TodoCompletionSource }) => {
     for (let i = 0; i < e.count; i++) completedStamps.push(e.at);
+    coordinator.recordBoundaryCompleted(e.count, e.source);
     mirrorTodos();
   });
 
@@ -244,6 +256,13 @@ export default async function (pi: ExtensionAPI) {
     }
   });
 
+  /* ── D102: Evidence-Preserving Reducer (runs before append-handlers like write-locks) ── */
+  pi.on('tool_result', async (event, ctx) => {
+    if (!effConfig.evidencePreservingReducer.enabled) return;
+    if (!event || typeof event !== 'object') return;
+    return handleReducerToolResult(event as unknown as ToolResultEventLike, ctx, effConfig.evidencePreservingReducer);
+  });
+
   if (env) {
     installWriteLocks(pi, {
       client,
@@ -261,6 +280,12 @@ export default async function (pi: ExtensionAPI) {
 
   pi.on('session_start', async (event, ctx) => {
     sessionId = resolveSessionId(ctx);
+    const cwd = (ctx as { cwd?: string }).cwd ?? process.cwd();
+    const isTrusted =
+      typeof (ctx as { isProjectTrusted?: () => boolean }).isProjectTrusted === 'function'
+        ? (ctx as { isProjectTrusted: () => boolean }).isProjectTrusted()
+        : false;
+    effConfig = loadEfficiencyConfigFromDisk({ cwd, isProjectTrusted: isTrusted });
     rebuildFromBranch(ctx);
     // v1.3 M9 fix (observed): on resume pi restores widget state from the session;
     // calling setWidget again breaks the TUI '/' command-panel route ('/' would be sent to the model as message text).
@@ -362,9 +387,29 @@ export default async function (pi: ExtensionAPI) {
   let lastStopReason: string | null = null;
   pi.on('turn_start', async () => {
     agentActive = true;
+    // Safety fallback: if previous compaction finished without clean callback settlement,
+    // ensure flags are reset. Pi core prohibits prompts while compaction is active, so this is safe.
+    coordinator.compactionInFlight = false;
+    coordinator.intentionalAbort = false;
     reportAgent('working', currentActivity(todos.items));
   });
-  pi.on('turn_end', async (event: unknown) => {
+
+  pi.on('before_provider_request', (_event: unknown, ctx: unknown) => {
+    const usage = (ctx as { getContextUsage?: () => { tokens?: number | null } })?.getContextUsage?.();
+    if (typeof usage?.tokens === 'number') {
+      coordinator.onBeforeProviderRequest(usage.tokens);
+    }
+  });
+
+  pi.on('input', (event: unknown) => {
+    if (event && typeof event === 'object') {
+      coordinator.onInput(event as { text?: string; source?: string; streamingBehavior?: string });
+    }
+  });
+
+  pi.on('session_before_tree', () => (coordinator.compactionInFlight ? { cancel: true } : undefined));
+
+  pi.on('turn_end', async (event: unknown, ctx) => {
     if (event === null || typeof event !== 'object' || !('message' in event)) return;
     const msg = (event as { message: unknown }).message; // 'message' in has been guarded.
     if (msg === null || typeof msg !== 'object') return;
@@ -372,13 +417,22 @@ export default async function (pi: ExtensionAPI) {
     if (role === 'assistant' && typeof stopReason === 'string') {
       lastStopReason = stopReason;
     }
+    if (ctx && typeof ctx === 'object') {
+      coordinator.onTurnEnd({
+        ctx,
+        todos: todos.items,
+        config: effConfig.onlineContextCompact,
+        cancelReminder: todoUi.cancelReminder,
+      });
+    }
   });
 
-  pi.on('agent_settled', async () => {
+  pi.on('agent_settled', async (_event: unknown, ctx) => {
     agentActive = false;
     reportAgent('idle', null);
     const plan = planSettleWake({
       lastStopReason,
+      intentionalAbort: coordinator.intentionalAbort,
       running: subagentPort.current?.listRunningSubs() ?? [],
       lastNoticeKey: d96NoticeKey,
       lastNoticeAt: d96NoticeAt,
@@ -397,6 +451,15 @@ export default async function (pi: ExtensionAPI) {
       const brief = running.map((s) => `${s.paneId} (${s.description})`).join('、');
       const notice = `注意：仍有 ${running.length} 个后台 subagent 在运行：${brief}。若你的任务依赖它们，请等待其结算（subagent list 查看状态）；若不等待，请说明放弃原因。`;
       void sendUserMessageIn(notice);
+    }
+    if (ctx && typeof ctx === 'object') {
+      void coordinator.onAgentSettled({
+        ctx,
+        todos: todos.items,
+        pi,
+        config: effConfig.onlineContextCompact,
+        cancelReminder: todoUi.cancelReminder,
+      });
     }
   });
 
@@ -498,6 +561,28 @@ export default async function (pi: ExtensionAPI) {
 
   /* ── Tool: ask_user_question (v1.3 M8 human gate, available to master and subagents) ── */
 
+  /* ── D101: ObservationPack (obs_recall tool & context projector) ── */
+  registerObservationPack({
+    pi,
+    getConfig: () => effConfig,
+    getRuntimeManifest: () => runtimeManifest,
+    getRemainingHorizon: () => coordinator.getRemainingHorizon(),
+  });
+
+  pi.registerCommand('efficiency', {
+    description: 'Show pier efficiency status and configuration (D100-D103)',
+    handler: async (_args, ctx) => {
+      const ui = (ctx as { ui?: { notify?: (text: string, level?: string) => void } }).ui;
+      const lines = [
+        '⚡ pier efficiency status (D100-D103):',
+        `  OCC: ${effConfig.onlineContextCompact.enabled ? 'enabled' : 'disabled'} (cacheRatio: ${effConfig.onlineContextCompact.cacheWriteReadRatio})`,
+        `  ObservationPack: ${effConfig.observationPack.enabled ? 'enabled' : 'disabled'} (threshold: ${effConfig.observationPack.thresholdBytes}B, fullSends: ${effConfig.observationPack.fullSends})`,
+        `  EPR: ${effConfig.evidencePreservingReducer.enabled ? 'enabled' : 'disabled'} (model: ${effConfig.evidencePreservingReducer.model ?? 'inherit current'})`,
+      ];
+      ui?.notify?.(lines.join('\n'), 'info');
+    },
+  });
+
   pi.registerTool({
     name: ASK_TOOL_NAME,
     label: 'Ask User',
@@ -523,6 +608,8 @@ export default async function (pi: ExtensionAPI) {
   });
 
   pi.on('session_shutdown', async () => {
+    coordinator.compactionInFlight = false;
+    coordinator.intentionalAbort = false;
     client.close();
   });
 
@@ -637,6 +724,8 @@ export default async function (pi: ExtensionAPI) {
       reconcileOnSettlement,
       withReconcileNotes,
       claimSettleNotice,
+      isCompactionInFlight: () => coordinator.compactionInFlight,
+      isIntentionalAbort: () => coordinator.intentionalAbort,
     });
   } else {
     const { mountTodoOnly } = await import('./index-worker.ts');
@@ -652,6 +741,8 @@ export default async function (pi: ExtensionAPI) {
             stopReminder: {
               getBlockedDepth: () => blockedDepth,
               getRunningSubs: () => subagentPort.current?.listRunningSubs().length ?? 0,
+              isCompactionInFlight: () => coordinator.compactionInFlight,
+              isIntentionalAbort: () => coordinator.intentionalAbort,
             },
           }),
     });

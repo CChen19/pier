@@ -37,6 +37,10 @@ export function todoReminderGraceMs(): number {
 export interface TodoReminderInput {
   /** Stop reason of the last assistant turn before this settlement (null means treat it as natural completion). */
   lastStopReason: string | null;
+  /** True when abort was triggered intentionally by internal mechanisms like OCC. */
+  intentionalAbort?: boolean;
+  /** True when compaction is currently in-flight. */
+  compactionInFlight?: boolean;
   /** Number of reminders already injected. */
   reminders: number;
   /** Number of running background subagents; a positive value means the master is already waiting. */
@@ -67,6 +71,7 @@ function noInject(reminders: number): TodoReminderPlan {
  * (the missing guard in the 01a040cc incident).
  */
 export function planStopTodoReminder(input: TodoReminderInput): TodoReminderPlan {
+  if (input.intentionalAbort || input.compactionInFlight) return noInject(input.reminders);
   if (input.lastStopReason === ABORT_STOP_REASON) return noInject(input.reminders);
   if (input.reminders >= TODO_REMINDERS_MAX) return noInject(input.reminders);
   if (input.runningSubs > 0) return noInject(input.reminders);

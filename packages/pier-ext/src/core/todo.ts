@@ -33,6 +33,8 @@ export interface TodoUiSlot {
   renderWidget: (ctx: unknown) => void;
   /** Re-render from the last seen context without a fresh event (human-gate open/close). */
   rerenderWidget?: () => void;
+  /** Cancel any pending unfinished-todo reminder timer. */
+  cancelReminder?: () => void;
 }
 
 interface TodoDeps {
@@ -49,6 +51,8 @@ interface TodoDeps {
   stopReminder?: {
     getBlockedDepth: () => number;
     getRunningSubs: () => number;
+    isCompactionInFlight?: () => boolean;
+    isIntentionalAbort?: () => boolean;
   };
 }
 
@@ -192,7 +196,7 @@ export default function todoPlugin(ctx: Context): void {
       } catch {
         /* Persistence is best-effort because the in-memory clear must still proceed. */
       }
-      todos.replace([]);
+      todos.replace([], { source: 'archive' });
     }
     todoReadTurn += 1;
     if (!plan.inject) return;
@@ -221,6 +225,7 @@ export default function todoPlugin(ctx: Context): void {
         todoReminderTimer = null;
       }
     }
+    state.cancelReminder = cancelTodoReminder;
     scoped.on('turn_end', async (event: unknown) => {
       if (event === null || typeof event !== 'object' || !('message' in event)) return;
       const msg = (event as { message: unknown }).message;
@@ -234,8 +239,12 @@ export default function todoPlugin(ctx: Context): void {
     scoped.on('session_shutdown', () => cancelTodoReminder());
     scoped.on('agent_settled', async () => {
       cancelTodoReminder();
+      const inFlight = stopReminder.isCompactionInFlight?.() ?? false;
+      const intentional = stopReminder.isIntentionalAbort?.() ?? false;
       const plan = planStopTodoReminder({
         lastStopReason: lastAssistantStopReason,
+        intentionalAbort: intentional,
+        compactionInFlight: inFlight,
         reminders: todoReminders,
         runningSubs: stopReminder.getRunningSubs(),
         blockedDepth: stopReminder.getBlockedDepth(),
@@ -245,6 +254,7 @@ export default function todoPlugin(ctx: Context): void {
       const content = plan.content;
       todoReminderTimer = setTimeout(() => {
         todoReminderTimer = null;
+        if (stopReminder.isCompactionInFlight?.()) return;
         void (async () => {
           const send = pi.sendMessage;
           if (typeof send !== 'function') return;
@@ -322,7 +332,7 @@ export default function todoPlugin(ctx: Context): void {
       // D36/D37 surface completion transitions and regressions to the caller.
       const completed = completionTransitions(todos.items, next);
       const reverted = revertedCompleted(todos.items, next);
-      todos.replace(next);
+      todos.replace(next, { source: 'tool' });
       if (todos.items.length > maxItems) {
         onUpdate?.(makeProgressUpdate(`Note: list has ${todos.items.length} entries; consider keeping it under ${maxItems}.`));
       }
@@ -372,7 +382,7 @@ export default function todoPlugin(ctx: Context): void {
         const content = candidates[0];
         const edit = { op: opArg as 'done' | 'drop' | 'rm' | 'unblock', content };
         const before = todos.items;
-        todos.applyEdits([edit]);
+        todos.applyEdits([edit], { source: 'human' });
         if (listsEqual(before, todos.items)) {
           ui?.notify?.(`no change: "${content}" is already in that state`, 'info');
           return;

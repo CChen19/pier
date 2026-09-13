@@ -35,6 +35,8 @@ export interface MasterPluginMount {
   reconcileOnSettlement: (description: string, outcome: 'settled' | 'failed') => string[];
   withReconcileNotes: (base: string, notes: readonly string[]) => string;
   claimSettleNotice: (key: string) => boolean;
+  isCompactionInFlight?: () => boolean;
+  isIntentionalAbort?: () => boolean;
 }
 
 async function loadEntry(
@@ -93,6 +95,8 @@ export async function mountMasterPlugins(m: MasterPluginMount): Promise<void> {
     stopReminder: {
       getBlockedDepth: m.getBlockedDepth,
       getRunningSubs: () => m.port.current?.listRunningSubs().length ?? 0,
+      isCompactionInFlight: m.isCompactionInFlight,
+      isIntentionalAbort: m.isIntentionalAbort,
     },
   });
   await loadEntry(sessionRoot, useLoader, './core/todo.ts', todoPlugin);
