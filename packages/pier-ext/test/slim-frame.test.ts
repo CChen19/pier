@@ -110,7 +110,7 @@ test('registerSlimFrame：注册 → visible 随尺寸切换 → dispose 后可�
   // dispose 回收单例 → 重注册不被 no-op
   comp.dispose();
   let called = 0;
-  registerSlimFrame({ ui: { custom: (f, o) => { called += 1; factory = f; options = o; return new Promise<never>(() => {}); } } });
+  registerSlimFrame({ ui: { custom: (f: (tui: { requestRender(): void }, theme: { fg(c: string, s: string): string }) => object, o: Record<string, unknown>) => { called += 1; factory = f; options = o; return new Promise<never>(() => {}); } } });
   assert.equal(called, 1, 'dispose 后可重注册');
 });
 

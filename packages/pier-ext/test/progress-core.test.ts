@@ -58,15 +58,15 @@ test('estimateEta：爆发后停顿（完成点新鲜度超窗）→ null', () =
 
 test('formatProgressSuffix：保守 N/M；无 eta 只报计数；total=0 空', () => {
   assert.equal(formatProgressSuffix({ completed: 3, total: 7, eta: null }), '3/7');
-  assert.equal(formatProgressSuffix({ completed: 3, total: 7, eta: { etaMs: 240_000, confidence: 'ok' } }), '3/7 ~4m');
+  assert.equal(formatProgressSuffix({ completed: 3, total: 7, eta: { remaining: 4, etaMs: 240_000, confidence: 'ok' } }), '3/7 ~4m');
   assert.equal(formatProgressSuffix({ completed: 0, total: 0, eta: null }), '');
   assert.equal(formatProgressSuffix({ completed: 5, total: 5, eta: null }), '5/5 ✓');
 });
 
 test('formatProgressSuffix：eta 取整到分钟（<60s 显示 <1m；小时用 h）', () => {
-  assert.equal(formatProgressSuffix({ completed: 1, total: 9, eta: { etaMs: 30_000, confidence: 'ok' } }), '1/9 <1m');
-  assert.equal(formatProgressSuffix({ completed: 1, total: 9, eta: { etaMs: 90_000, confidence: 'ok' } }), '1/9 ~2m');
-  assert.equal(formatProgressSuffix({ completed: 1, total: 9, eta: { etaMs: 3_600_000, confidence: 'ok' } }), '1/9 ~1h');
+  assert.equal(formatProgressSuffix({ completed: 1, total: 9, eta: { remaining: 8, etaMs: 30_000, confidence: 'ok' } }), '1/9 <1m');
+  assert.equal(formatProgressSuffix({ completed: 1, total: 9, eta: { remaining: 8, etaMs: 90_000, confidence: 'ok' } }), '1/9 ~2m');
+  assert.equal(formatProgressSuffix({ completed: 1, total: 9, eta: { remaining: 8, etaMs: 3_600_000, confidence: 'ok' } }), '1/9 ~1h');
 });
 
 /* ── 工具徽标（report_agent.message 通道） ─────────────────────── */

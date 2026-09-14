@@ -8,8 +8,6 @@ import {
   estimateRemainingRequests,
   nativeCompactionFeasible,
   resolveCacheRatioFromCost,
-  type CompactionEconomics,
-  DEFAULT_COMPACTION_ECONOMICS,
 } from '../src/compact-economics-core.ts';
 import type { SessionEntry } from '@earendil-works/pi-coding-agent';
 
@@ -144,7 +142,7 @@ test('decideCompaction: deferred_carried_debt prevents debt accumulation on subs
 });
 
 test('decideCompaction: deferred_subsequent_margin requires 1.5x margin', () => {
-  const decision = decideCompaction({
+  decideCompaction({
     writeTokens: 30000,
     archiveTokens: 11000,
     memoTokens: 1000,
@@ -156,9 +154,7 @@ test('decideCompaction: deferred_subsequent_margin requires 1.5x margin', () => 
     priorCompactionCount: 1,
     carriedDebtTokens: 0,
     cacheDebtRepaymentTokens: 0,
-    cacheWriteReadRatio: 3.0, // incremental = 2.0, single breakeven = (30000*2)/10000 = 6.0
-    // 6.0 <= 11, but 6.0 * 1.5 = 9.0 <= 11? Wait, let's make breakeven = 8.0 -> 8.0 * 1.5 = 12.0 > 11
-    // (writeTokens * 2) / 10000 = 8.0 => writeTokens = 40000
+    cacheWriteReadRatio: 3.0,
   });
 
   const decisionMargin = decideCompaction({

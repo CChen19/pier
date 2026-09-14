@@ -14,6 +14,7 @@ import {
   applyTodoEdits,
   fuzzyFind,
   boundedView,
+  type TodoItem,
 } from '../src/todo-core.ts';
 
 test('validateTodos: 合法列表通过并规范化', () => {
@@ -228,12 +229,12 @@ test('listsEqual: 全等判定（含 blocker/phase）', () => {
 });
 
 test('completionTransitions/revertedCompleted: 过渡与回退', () => {
-  const prev = [
+  const prev: TodoItem[] = [
     { content: 'a', status: 'in_progress' },
     { content: 'b', status: 'pending' },
     { content: 'c', status: 'completed' },
   ];
-  const next = [
+  const next: TodoItem[] = [
     { content: 'a', status: 'completed' },
     { content: 'b', status: 'completed' },
     { content: 'c', status: 'pending' },
@@ -243,7 +244,7 @@ test('completionTransitions/revertedCompleted: 过渡与回退', () => {
 });
 
 test('applyTodoEdits: done/drop/rm 语义与幂等', () => {
-  const items = [
+  const items: TodoItem[] = [
     { content: 'a', status: 'pending' },
     { content: 'b', status: 'in_progress' },
     { content: 'c', status: 'blocked', blocker: 'x' },
@@ -288,7 +289,7 @@ test('foldLatestTodos: 双源折叠（快照 + 人类编辑交错）', () => {
 });
 
 test('fuzzyFind: 精确 → 前缀 → 子串，歧义列出候选', () => {
-  const items = [
+  const items: TodoItem[] = [
     { content: '修 board 路径 bug', status: 'pending' },
     { content: 'board 渲染', status: 'pending' },
     { content: '路径测试', status: 'pending' },
@@ -299,7 +300,7 @@ test('fuzzyFind: 精确 → 前缀 → 子串，歧义列出候选', () => {
   assert.deepEqual(fuzzyFind(items, '路径'), ['路径测试']);
   assert.deepEqual(fuzzyFind(items, '测试'), ['路径测试']);
   // 无精确/前缀命中 → 子串层，多条即歧义
-  const items2 = [
+  const items2: TodoItem[] = [
     { content: '修 board 路径 bug', status: 'pending' },
     { content: '写 board 测试', status: 'pending' },
   ];
@@ -308,13 +309,13 @@ test('fuzzyFind: 精确 → 前缀 → 子串，歧义列出候选', () => {
 });
 
 test('boundedView: 预算内原样；超预算隐最老保最新（open 超额截头部，completed 尾部填充）', () => {
-  const items = [
+  const items: TodoItem[] = [
     { content: 'o1', status: 'pending' },
     { content: 'o2', status: 'in_progress' },
     { content: 'c1', status: 'completed' },
   ];
   assert.deepEqual(boundedView(items, 10), { visible: items, hiddenCompleted: 0, hiddenOpen: 0 });
-  const big = [
+  const big: TodoItem[] = [
     { content: 'o1', status: 'pending' },
     { content: 'o2', status: 'pending' },
     { content: 'o3', status: 'pending' },

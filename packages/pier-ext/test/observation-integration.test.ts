@@ -300,8 +300,6 @@ test('ObservationPack: memoization fast-path and self-healing on missing disk ob
     assert.equal(res2.messages[0].content[0].text, res1.messages[0].content[0].text);
 
     // 3. Self-healing: simulate file removal from disk
-    const match = res1.messages[0].content[0].text.match(/id:\s+(obs_[a-f0-9]{24})/);
-    const obsId = match![1]!;
     // Deliberately query non-existent/corrupted file to trigger self-healing invalidation
     const recallFail = await recallTool.execute('call_fail', { id: 'obs_000000000000000000000000' }, undefined, undefined, ctx);
     assert.ok(recallFail.content[0].text.includes('Error: failed to recall observation'));

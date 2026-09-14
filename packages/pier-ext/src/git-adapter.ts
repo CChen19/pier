@@ -22,8 +22,17 @@ export interface GitError extends Error {
 export type GitExecFile = (
   file: string,
   args: readonly string[],
-  options: { timeout: number; encoding: 'utf8' },
-) => Promise<{ stdout: string; stderr: string }>
+  options: { timeout: number; encoding: 'utf8'; maxBuffer: number },
+) => Promise<{ stdout: string; stderr: string }>;
+
+/**
+ * Output ceiling for one git call. `execFile` defaults to 1MB, which a large checkout exceeds
+ * (`status --porcelain` on a repo with tens of thousands of untracked files, or `diff --stat`
+ * across a wide change): the call then fails with ENOBUFS, callers normalize it to null, and the
+ * user sees a silently missing stat line — or "failed to create worktree" for a worktree that was
+ * in fact created. 64MB bounds memory without hitting realistic repositories.
+ */
+const GIT_MAX_BUFFER = 64 * 1024 * 1024;
 
 /**
  * Minimal Git adapter for worktree and status operations.
@@ -79,7 +88,7 @@ export class NodeGitAdapter implements GitAdapter {
       const { stdout, stderr } = await this.exec(
         this.gitExecutable,
         ['-C', cwd, ...args],
-        { timeout: this.timeoutMs, encoding: 'utf8' },
+        { timeout: this.timeoutMs, encoding: 'utf8', maxBuffer: GIT_MAX_BUFFER },
       )
       return { stdout, stderr }
     } catch (err) {

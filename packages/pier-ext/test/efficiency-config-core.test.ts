@@ -7,12 +7,11 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  DEFAULT_EFFICIENCY_CONFIG,
   loadEfficiencyConfigFromDisk,
-  loadPiNativeCompactionSettings,
   resolveEfficiencyConfig,
   validateEfficiencyConfig,
 } from '../src/efficiency-config-core.ts';
+import { loadPiNativeCompactionSettings } from '../src/efficiency-config-io.ts';
 
 test('validateEfficiencyConfig: default empty object is valid and returns defaults', () => {
   const res = validateEfficiencyConfig({});

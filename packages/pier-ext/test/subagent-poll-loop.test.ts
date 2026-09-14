@@ -30,15 +30,16 @@ function makeEntry(paneId: string = 'p1', overrides?: Partial<SubEntry>): SubEnt
     taskId: `task-${paneId}`,
     kind: 'task',
     paneId,
+    tabId: 'tab-1',
+    tabName: 'main',
     cwd: '/fake/cwd',
     description: `task description for ${paneId}`,
     background: true,
     status: 'running',
     consumedAt: null,
     sessionFile: null,
-    launchCommand: ['pi'],
-    createdAt: 1000,
-    revivedFrom: null,
+    launchCommand: [],
+    createdAt: Date.now(),
     ...overrides,
   };
 }
@@ -115,7 +116,7 @@ function createFakeHost(options?: {
       if (clientMock.throwOnListAgents) throw new Error('simulated listAgents failure');
       return clientMock.agents;
     },
-    waitAgent: async (_paneId, _states, _timeout) => {
+    waitAgent: async (_paneId: string, _states: HerdrAgentState[], _timeout: number) => {
       if (clientMock.waitAgentQueue.length > 0) {
         const next = clientMock.waitAgentQueue.shift()!;
         if (next instanceof Error) throw next;
@@ -134,9 +135,10 @@ function createFakeHost(options?: {
   const fakeSession: SessionIo = {
     subSessionState: async () => {
       if (sessionMock.subSessionResponses.length > 0) {
-        return sessionMock.subSessionResponses.shift()!;
+        const response = sessionMock.subSessionResponses.shift()!;
+        return { ...response, turnEnded: response.turnEnded ?? false };
       }
-      return { text: 'completed task', pendingTool: false, activity: true };
+      return { text: 'completed task', pendingTool: false, activity: true, turnEnded: false };
     },
     readAskFlag: async () => {
       if (sessionMock.askFlagResponses.length > 0) {
@@ -144,9 +146,10 @@ function createFakeHost(options?: {
       }
       return null;
     },
+    resolveSessionFileCandidates: async () => [],
     resolveSessionFile: async () => sessionMock.resolvedSessionFile,
     collectFinalText: async () => null,
-    probeAlive: async () => ({ alive: true }),
+    probeAlive: async () => ({ alive: true, paneExists: true, agentStatus: 'working', lastActivityMs: Date.now() }),
   };
 
   const fakeGit: GitIo = {
@@ -751,14 +754,21 @@ test('startPoller: cleans up fiber and handles fiber.dispose rejection gracefull
   const f = createFakeHost({ entry });
   f.client.waitAgentQueue = ['idle'];
   f.sessionIo.subSessionResponses = [{ text: 'done', pendingTool: false, activity: true }];
-
-  // Corrupt sessionRoot plugin mount or disposal
+  // Inject a disposal failure through the runtime object; Cordis exposes plugin as readonly.
   const origPlugin = f.host.sessionRoot.plugin.bind(f.host.sessionRoot);
-  f.host.sessionRoot.plugin = async (def, config) => {
-    const fiber = await origPlugin(def, config);
-    fiber.dispose = async () => { throw new Error('fiber dispose error'); };
-    return fiber;
-  };
+  Object.defineProperty(f.host.sessionRoot, 'plugin', {
+    configurable: true,
+    value: (...args: unknown[]) => {
+      const fiber = Reflect.apply(origPlugin, f.host.sessionRoot, args);
+      return Promise.resolve(fiber).then((result) => {
+        Object.defineProperty(result, 'dispose', {
+          configurable: true,
+          value: async () => { throw new Error('fiber dispose error'); },
+        });
+        return result;
+      });
+    },
+  });
 
   const poller = createPoller(f.host);
   await poller.startPoller('p-fiber-err', '/tmp', 0, 0, 'desc', 'req-1');
@@ -770,9 +780,10 @@ test('startPoller: cleans up fiber and handles fiber.dispose rejection gracefull
 test('startPoller: removes from pollers on crash in startup scope', async () => {
   const entry = makeEntry('p-crash');
   const f = createFakeHost({ entry });
-  f.host.sessionRoot.plugin = async () => {
-    throw new Error('catastrophic scope plugin failure');
-  };
+  Object.defineProperty(f.host.sessionRoot, 'plugin', {
+    configurable: true,
+    value: () => Promise.reject(new Error('catastrophic scope plugin failure')),
+  });
 
   const poller = createPoller(f.host);
   await poller.startPoller('p-crash', '/tmp', 0, 0, 'desc', 'req-1');

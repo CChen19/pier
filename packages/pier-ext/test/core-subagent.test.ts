@@ -5,7 +5,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Context } from '@deepseek-ai/cordis';
-import subagentPlugin, { resolveTaskIdPrefix } from '../src/core/subagent.ts';
+import subagentPlugin from '../src/core/subagent.ts';
+import { resolveTaskIdPrefix } from '../src/subagent-resolution.ts';
 import { PiSurface } from '../src/pi-surface.ts';
 import { DisposeLedger } from '../src/ledger.ts';
 import type { HerdrClientLike } from '../src/herdr-client.ts';

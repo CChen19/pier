@@ -32,9 +32,9 @@ import {
 import {
   defaultUserEfficiencyConfigFile,
   defaultWorkspaceEfficiencyConfigFile,
-  loadPiNativeCompactionSettings,
   validateEfficiencyConfig,
 } from './efficiency-config-core.ts';
+import { loadPiNativeCompactionSettings } from './efficiency-config-io.ts';
 import { RESERVED_ROLE_NAMES, loadRoleConfig, roleLayers } from './role-loader.ts';
 
 export const CONFIG_GUIDANCE_PROMPT = [

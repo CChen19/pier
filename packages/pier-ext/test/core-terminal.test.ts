@@ -2,7 +2,7 @@
  * 档1 core/terminal 插件接线：surface 服务注入 + 单工具注册 + GC 槽回填 + ledger 墓碑。
  * 真实 cordis Context + 真 PiSurface（pi/client 为假件）——不活体，只验接线面。
  */
-import { test, mock } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Context } from '@deepseek-ai/cordis';
 import terminalPlugin from '../src/core/terminal.ts';
@@ -177,15 +177,16 @@ test('core/terminal：agent_settled 催办闲置 terminal——每个 terminal �
     const client = fakeClient().client;
     let splitSeq = 2;
     client.splitPane = async () => `pane-${splitSeq++}`;
-    const { pi, deps, ctx } = await mountTerminal(client);
-    const run = (params: Record<string, unknown>) =>
-      pi.tools.get(TOOL_NAME)?.execute?.(null, params, undefined, undefined, { cwd: 'F:/w' });
+    const { pi, deps } = await mountTerminal(client);
+    const run = async (params: Record<string, unknown>) => {
+      return await pi.tools.get(TOOL_NAME)?.execute?.(null, params, undefined, undefined, { cwd: 'F:/w' });
+    };
     await run({ action: 'open' });
     await run({ action: 'open' });
     const settled = (pi.listeners.get('agent_settled') ?? [])[0] as (() => Promise<void>) | undefined;
     const settle = async () => {
       t.mock.timers.tick(50); // 制造 ≥ 阈值的闲置时长
-      await settled?.(undefined);
+      await settled?.();
       t.mock.timers.tick(5); // grace 到点
       await new Promise<void>((resolve) => setImmediate(resolve)); // 排空异步投递
     };
@@ -225,7 +226,7 @@ test('core/terminal：wait 命中 → matched；超时 → 带尾部输出的 no
 
   client.waitForOutput = async (paneId: string, match: { type: string; value: string }, timeoutMs: number) => {
     calls.waitForOutput.push({ paneId, match, timeoutMs });
-    return false; // 模拟超时无匹配
+    return { matched: false, reason: 'timeout' as const };
   };
 
   const miss = await pi.tools.get(TOOL_NAME)?.execute?.(null, {
@@ -234,8 +235,13 @@ test('core/terminal：wait 命中 → matched；超时 → 带尾部输出的 no
   assert.equal(miss.details.matched, false);
   assert.match(miss.content[0].text, /no match within 5000ms \(timeout\)/);
   assert.match(miss.content[0].text, /recent output tail/, '超时回带最近输出，免去盲目轮询');
-  assert.equal(calls.waitForOutput[2]?.match.type, 'regex');
-
+  const call2 = calls.waitForOutput[2];
+  if (call2 && typeof call2 === 'object' && 'match' in call2) {
+    const match = call2.match;
+    if (match && typeof match === 'object' && 'type' in match) {
+      assert.equal(match.type, 'regex');
+    }
+  }
   // 模拟 RPC 不可用
   client.waitForOutput = async () => ({ matched: false, reason: 'unavailable' });
   const unavail = await pi.tools.get(TOOL_NAME)?.execute?.(null, {

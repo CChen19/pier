@@ -74,7 +74,8 @@ class RecordingServer {
   async close(): Promise<void> {
     const server = this.server;
     if (!server) return;
-    server.closeAllConnections?.();
+    const s = server as unknown as { closeAllConnections?: () => void };
+    s.closeAllConnections?.();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 }

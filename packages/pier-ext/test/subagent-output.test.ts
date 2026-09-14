@@ -13,7 +13,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createServer, type Server } from 'node:net';
+import { createServer } from 'node:net';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,7 +21,6 @@ import { randomUUID } from 'node:crypto';
 import { Context } from '@deepseek-ai/cordis';
 import subagentPlugin from '../src/core/subagent.ts';
 import { PiSurface } from '../src/pi-surface.ts';
-import { DisposeLedger } from '../src/ledger.ts';
 import { HerdrClient, NoopHerdrClient, herdrSocketTarget, type HerdrClientLike, type AgentInfo } from '../src/herdr-client.ts';
 import { emptySubagentPortBox } from '../src/subagent-port.ts';
 import { SUBS_CUSTOM_TYPE, type SubEntry } from '../src/subagent-core.ts';
@@ -31,7 +30,6 @@ import {
   extractTail,
   formatSubagentOutput,
   resolveSubagentStatus,
-  OUTPUT_DEFAULT_MAX_CHARS,
   type SubagentOutputCursor,
 } from '../src/subagent-output-core.ts';
 

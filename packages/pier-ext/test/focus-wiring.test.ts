@@ -99,7 +99,11 @@ function fakeHerdrServer(socketPath: string, focuses: Array<string | null>): Pro
     server.listen(socketPath, () => {
       resolve({
         calls,
-        close: () => new Promise<void>((done) => { server.closeAllConnections?.(); server.close(() => done()); }),
+        close: () => new Promise<void>((done) => { 
+          const s = server as unknown as { closeAllConnections?: () => void }; 
+          s.closeAllConnections?.(); 
+          server.close(() => done()); 
+        }),
       });
     });
   });

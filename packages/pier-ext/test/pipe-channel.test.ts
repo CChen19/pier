@@ -211,7 +211,8 @@ test('pipeRequest (F16): 对端在回包前断开 → 立刻报错（不再等�
   } finally {
     // 半开连接不销毁时 server.close() 的回调永不触发（会让整个文件被 runner 取消）
     for (const s of live) s.destroy();
-    server.closeAllConnections?.();
+    const s = server as unknown as { closeAllConnections?: () => void };
+    s.closeAllConnections?.();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
@@ -236,7 +237,8 @@ test('startPipeServer (F04): listen 失败必须可见（onError），且无人�
       setTimeout(() => resolve(null), 2500);
     });
     assert.ok(seen, 'a failed listen must surface through onError (or a throw)');
-    assert.match(String(seen.code ?? ''), /EADDRINUSE/);
+    const code = seen && typeof seen === 'object' && 'code' in seen ? seen.code : undefined;
+    assert.match(String(code ?? ''), /EADDRINUSE/);
     // 同一失败场景、不传 onError：进程必须存活（若 error 无监听，整个测试文件会直接挂掉）
     const noListener = startPipeServer(name, async (req) => ({ type: 'ok', id: req.id }));
     noListener.on('error', () => { /* keep the test process alive on purpose */ });

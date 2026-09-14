@@ -28,6 +28,7 @@ function q(over: Partial<AskQuestion> = {}): AskQuestion {
     question: 'Which database?',
     options: [REDIS, POSTGRES],
     multi: false,
+    allowOther: true,
     ...over,
   };
 }

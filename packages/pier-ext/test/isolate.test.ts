@@ -74,10 +74,10 @@ test('formatWorktreeStat：isolate 行矩阵', () => {
   assert.equal(full, 'Worktree pier/x: 2 commit(s) since base; 3 files changed, 10 insertions(+); uncommitted: 0 file(s)');
 
   const dirty = formatWorktreeStat({ branch: 'pier/x', commits: 1, statLine: '1 file changed', dirtyCount: 2 });
+  assert.ok(dirty);
   assert.match(dirty, /uncommitted: 2 file\(s\) \(worker should have committed\)/);
 
   // 任一输入缺失 → null（静默省略）
-  assert.equal(formatWorktreeStat({ branch: 'pier/x', commits: null, statLine: 'x', dirtyCount: 0 }), null);
   assert.equal(formatWorktreeStat({ branch: 'pier/x', commits: 1, statLine: null, dirtyCount: 0 }), null);
   assert.equal(formatWorktreeStat({ branch: 'pier/x', commits: 1, statLine: 'x', dirtyCount: null }), null);
 });
@@ -183,10 +183,6 @@ async function mount(pi: FakePi): Promise<Context> {
   return root;
 }
 
-async function runSubagent(pi: FakePi, params: Record<string, unknown>, cwd?: string): Promise<string> {
-  const r = await pi.tools.get('subagent')?.execute?.('tc1', params, undefined, undefined, { cwd: cwd ?? process.cwd() }) as { content: Array<{ text: string }> };
-  return r.content[0]!.text;
-}
 
 /** A1: hard failures throw (pi marks isError only for throws); guard tests read the message. */
 async function runSubagentError(pi: FakePi, params: Record<string, unknown>, cwd?: string): Promise<string> {

@@ -33,7 +33,7 @@ test('validateRoleManifest：定稿 probe-role 档案通过并保留全部语义
   assert.equal(r.value.version, '1.1.0');
   assert.equal(r.value.manifest.rules?.bash, 'ask');
   assert.equal(r.value.manifest.rules?.write, 'deny');
-  assert.equal(r.value.services?.todos.mode, 'serial');
+  assert.equal(r.value.services?.todos?.mode, 'serial');
 });
 
 test('version：必须 x.y.z 三段数字；"1.0"/"v1.0.0"/数字 都报 issue', () => {

@@ -13,9 +13,9 @@
  *  - Environment variables (PI_HERDR_*) take highest precedence.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { loadPiNativeCompactionSettings, readJsonConfig } from './efficiency-config-io.ts';
 
 export interface OnlineContextCompactConfig {
   enabled: boolean;
@@ -452,53 +452,6 @@ export function defaultUserEfficiencyConfigFile(): string {
   return join(defaultUserEfficiencyConfigDir(), 'config.json');
 }
 
-export function loadPiNativeCompactionSettings(opts: {
-  cwd?: string;
-  isProjectTrusted?: boolean;
-  agentDir?: string;
-} = {}): { enabled?: boolean; keepRecentTokens?: number } {
-  const cwd = opts.cwd ?? process.cwd();
-  const agentDir = opts.agentDir ?? process.env.PI_CODING_AGENT_DIR ?? join(homedir(), '.pi', 'agent');
-  const globalPath = join(agentDir, 'settings.json');
-  const projectPath = join(cwd, '.pi', 'settings.json');
-
-  const result: { enabled?: boolean; keepRecentTokens?: number } = {};
-
-  if (existsSync(globalPath)) {
-    try {
-      const parsed = JSON.parse(readFileSync(globalPath, 'utf8'));
-      if (parsed?.compaction && typeof parsed.compaction === 'object') {
-        if (typeof parsed.compaction.enabled === 'boolean') {
-          result.enabled = parsed.compaction.enabled;
-        }
-        if (typeof parsed.compaction.keepRecentTokens === 'number') {
-          result.keepRecentTokens = parsed.compaction.keepRecentTokens;
-        }
-      }
-    } catch {
-      /* ignore read errors */
-    }
-  }
-
-  if (opts.isProjectTrusted && existsSync(projectPath)) {
-    try {
-      const parsed = JSON.parse(readFileSync(projectPath, 'utf8'));
-      if (parsed?.compaction && typeof parsed.compaction === 'object') {
-        if (typeof parsed.compaction.enabled === 'boolean') {
-          result.enabled = parsed.compaction.enabled;
-        }
-        if (typeof parsed.compaction.keepRecentTokens === 'number') {
-          result.keepRecentTokens = parsed.compaction.keepRecentTokens;
-        }
-      }
-    } catch {
-      /* ignore read errors */
-    }
-  }
-
-  return result;
-}
-
 export function loadEfficiencyConfigFromDisk(opts: {
   cwd?: string;
   isProjectTrusted?: boolean;
@@ -513,24 +466,11 @@ export function loadEfficiencyConfigFromDisk(opts: {
   const wsPath = defaultWorkspaceEfficiencyConfigFile(cwd);
   const userPath = opts.userConfigPath ?? defaultUserEfficiencyConfigFile();
 
-  let workspaceConfig: unknown = undefined;
-  if (existsSync(wsPath)) {
-    try {
-      workspaceConfig = JSON.parse(readFileSync(wsPath, 'utf8'));
-    } catch (err) {
-      opts.onWarning?.(`无法解析工作区能效配置文件 ${wsPath}: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-
-  let userConfig: unknown = undefined;
-  if (existsSync(userPath)) {
-    try {
-      userConfig = JSON.parse(readFileSync(userPath, 'utf8'));
-    } catch (err) {
-      opts.onWarning?.(`无法解析用户能效配置文件 ${userPath}: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-
+  const warnFile = (label: string, filePath: string, error: unknown): void => {
+    opts.onWarning?.(`${label} ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
+  };
+  const workspaceConfig = readJsonConfig(wsPath, (error) => warnFile('无法解析工作区能效配置文件', wsPath, error));
+  const userConfig = readJsonConfig(userPath, (error) => warnFile('无法解析用户能效配置文件', userPath, error));
   const resolved = resolveEfficiencyConfig({
     workspaceConfig,
     userConfig,
@@ -551,10 +491,12 @@ export function loadEfficiencyConfigFromDisk(opts: {
     resolved.onlineContextCompact.enabled = false;
   }
 
-  // If keepRecentTokens was not explicitly configured in efficiency configs, inherit pi's setting
-  const hasExplicitKeepRecent =
-    (opts.isProjectTrusted && (workspaceConfig as any)?.onlineContextCompact?.keepRecentTokens !== undefined) ||
-    (userConfig as any)?.onlineContextCompact?.keepRecentTokens !== undefined;
+  const hasExplicitKeepRecent = [
+    opts.isProjectTrusted ? workspaceConfig : undefined,
+    userConfig,
+  ].some((config) => isPlainObject(config)
+    && isPlainObject(config.onlineContextCompact)
+    && config.onlineContextCompact.keepRecentTokens !== undefined);
 
   if (!hasExplicitKeepRecent && typeof piSettings.keepRecentTokens === 'number') {
     resolved.onlineContextCompact.keepRecentTokens = piSettings.keepRecentTokens;

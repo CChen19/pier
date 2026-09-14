@@ -64,15 +64,16 @@ function makeEntry(paneId: string, cwd: string): SubEntry {
     taskId: `task-${paneId}`,
     kind: 'task',
     paneId,
-    tabId: 'tMAIN', // main tab → 走 pane 级回收（D86 R4：main 永不整关）
+    tabId: 'tMAIN',
     tabName: 'main',
     cwd,
     description: 'pane-gc 回归',
     background: true,
-    status: 'consumed', // GC只处理consumed状态的pane
-    consumedAt: Date.now() - 120_000, // 远早于测试中的prevTurnStart
+    status: 'consumed',
+    consumedAt: Date.now() - 120_000,
     sessionFile: null,
     launchCommand: [],
+    createdAt: Date.now() - 150_000,
     revivedFrom: null,
   };
 }

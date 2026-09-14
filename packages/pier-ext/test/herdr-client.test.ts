@@ -140,12 +140,12 @@ test('NoopHerdrClient: queries empty; spawn/split/createTab throw', async () => 
   assert.equal(c.available, false);
   assert.deepEqual(await c.listAgents(), []);
   assert.deepEqual(await c.tabList(), []);
-  assert.equal(await c.tabGet('t'), null);
-  assert.equal(await c.waitAgent('p', ['idle'], 10), null);
-  assert.deepEqual(await c.readPane('p'), { text: '', revision: 0, truncated: false });
-  await assert.rejects(() => c.spawnSubPane({ label: 'x', command: ['pi'], cwd: '/' }), /herdr-managed pane/);
-  await assert.rejects(() => c.splitPane({}), /herdr-managed pane/);
-  await assert.rejects(() => c.createTab({ workspaceId: 'w' }), /herdr-managed pane/);
+  assert.equal(await c.tabGet(), null);
+  assert.equal(await c.waitAgent(), null);
+  assert.deepEqual(await c.readPane(), { text: '', revision: 0, truncated: false });
+  await assert.rejects(() => c.spawnSubPane(), /herdr-managed pane/);
+  await assert.rejects(() => c.splitPane(), /herdr-managed pane/);
+  await assert.rejects(() => c.createTab(), /herdr-managed pane/);
 });
 
 test('herdrSocketTarget: Unix passthrough; Windows named-pipe prefix', () => {

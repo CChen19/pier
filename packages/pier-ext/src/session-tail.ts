@@ -143,6 +143,33 @@ export function hasPendingToolCall(entries: readonly SessionEntryLike[], sinceTs
 
 
 
+/** Derived settlement state of one child session, from the inject point onward. */
+export interface SubSessionState {
+  text: string | null;
+  pendingTool: boolean;
+  activity: boolean;
+  turnEnded: boolean;
+}
+
+/**
+ * Derive the settlement state from already-parsed entries.
+ *
+ * Closing text is by construction terminal (lastAssistantText requires stopReason 'stop').
+ * A16: an assistant message alone is not a settlement; the turn must have ENDED.
+ */
+export function deriveSubSessionState(
+  entries: readonly SessionEntryLike[],
+  sinceTs: number,
+): SubSessionState {
+  const r = lastAssistantText(entries, { sinceTs });
+  if (r?.text) return { text: r.text, pendingTool: false, activity: true, turnEnded: true };
+  if (hasPendingToolCall(entries, sinceTs)) return { text: null, pendingTool: true, activity: true, turnEnded: false };
+  if (hasAssistantAfter(entries, sinceTs)) {
+    return { text: null, pendingTool: false, activity: true, turnEnded: lastAssistantTurnEnded(entries, sinceTs) };
+  }
+  return { text: null, pendingTool: false, activity: false, turnEnded: false };
+}
+
 /** Newest `limit` session files under cwd's session dir (pi core's name first, then pier's old encodings). */
 export function listSessionFiles(cwd: string, agentDir: string, limit = 4): string[] {
   const files: Array<{ file: string; mtime: number }> = [];

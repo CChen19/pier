@@ -534,6 +534,7 @@ test('index: turn_start resets lastStopReason (A11) so a stale abort cannot swal
       id: 'r-a11',
       paneId: 'p_child',
       text: 'child finished',
+      sessionFile: null,
     });
     assert.equal(res.type, 'ok');
     assert.equal(pi.sentUserMessages.length, 0, 'a notice arriving mid-settle is buffered, not injected');

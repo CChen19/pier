@@ -17,21 +17,19 @@ function fakePort(over: Partial<SubagentPort> = {}): SubagentPort {
 }
 
 test('handlePipeRequest: ping / prompt / steer follow_up / interrupt', async () => {
-  const port = emptySubagentPortBox();
-  port.current = fakePort();
-  let pending: MachineRequest | null = null;
-  let aborted = 0;
   const inMsgs: string[] = [];
   const asMsgs: Array<{ text: string; mode: string }> = [];
+  let aborted = 0;
+  const state: { pending: MachineRequest | null } = { pending: null };
   const session = {
     paneId: 'p0',
-    port,
+    port: emptySubagentPortBox(),
     claimSettleNotice: () => true,
     deliverNotice: async () => {},
-    sendUserMessageIn: async (c: string) => { inMsgs.push(c); },
-    sendUserMessageAs: async (c: string, mode: 'steer' | 'followUp') => { asMsgs.push({ text: c, mode }); },
-    abort: () => { aborted += 1; },
-    setPendingMachineRequest: (req: MachineRequest | null) => { pending = req; },
+    sendUserMessageIn: async (content: string) => { inMsgs.push(content); },
+    sendUserMessageAs: async (content: string, mode: 'steer' | 'followUp') => { asMsgs.push({ text: content, mode }); },
+    abort: () => { aborted++; },
+    setPendingMachineRequest: (req: MachineRequest | null) => { state.pending = req; },
   };
 
   assert.deepEqual(await handlePipeRequest({ type: 'ping', id: '1' }, session), {
@@ -39,7 +37,7 @@ test('handlePipeRequest: ping / prompt / steer follow_up / interrupt', async () 
   });
 
   await handlePipeRequest({ type: 'prompt', id: '2', text: 'go', from: 'src', push: true }, session);
-  assert.equal(pending?.id, '2');
+  assert.ok(state.pending !== null && state.pending.id === '2');
   assert.deepEqual(inMsgs, ['go']);
 
   await handlePipeRequest({ type: 'follow_up', id: '3', text: 'more', steer: true }, session);
@@ -47,7 +45,7 @@ test('handlePipeRequest: ping / prompt / steer follow_up / interrupt', async () 
 
   await handlePipeRequest({ type: 'interrupt', id: '4' }, session);
   assert.equal(aborted, 1);
-  assert.equal(pending, null);
+  assert.equal(state.pending, null);
 });
 
 test('handlePipeRequest: reply binds port, claims once, delivers notice', async () => {
@@ -103,7 +101,7 @@ test('handlePipeRequest reply (B8): claim key 与 poll-loop 同源（子进程�
   // 唯一例外是 restore 时的 `probe-<paneId>` 兜底 id，它不会收到 push 回包（父进程内存态已丢），
   // 因此不会与 reply 路径撞车。任何一侧改了 id 生成/回显方式，这个测试会先报警。
   const claims: string[] = [];
-  let pending: MachineRequest | null = null;
+  const state: { pending: MachineRequest | null } = { pending: null };
   const port = emptySubagentPortBox();
   port.current = fakePort();
   const session = {
@@ -114,18 +112,18 @@ test('handlePipeRequest reply (B8): claim key 与 poll-loop 同源（子进程�
     sendUserMessageIn: async () => {},
     sendUserMessageAs: async () => {},
     abort: () => {},
-    setPendingMachineRequest: (req: MachineRequest | null) => { pending = req; },
+    setPendingMachineRequest: (req: MachineRequest | null) => { state.pending = req; },
   };
 
   // 父进程（poll-loop 侧）发送的 id：`prompt-<taskId>`（core/subagent.ts:976）
   const sentId = 'prompt-3f1a-任务';
   await handlePipeRequest({ type: 'prompt', id: sentId, text: 'go', from: 'src', push: true }, session);
-  assert.equal(pending?.id, sentId, '父进程发出的 id 正是 pending 里的 id');
+  assert.equal(state.pending?.id, sentId, '父进程发出的 id 正是 pending 里的 id');
   const requestIdForPoller = sentId; // core/subagent.ts 把同一个值传给 startPoller
 
   // 子进程结算时按 index.ts 的形状回推（id 回显）
   await handlePipeRequest(
-    { type: 'reply', id: pending!.id, paneId: 'p2', text: 'done', sessionFile: null },
+    { type: 'reply', id: state.pending!.id, paneId: 'p2', text: 'done', sessionFile: null },
     session,
   );
 
