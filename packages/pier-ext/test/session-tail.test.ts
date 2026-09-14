@@ -97,3 +97,24 @@ test('listSessionFiles/sessionFileById: 候选定位（v1.3 M7 结算串线修�
   assert.equal(sessionFileById('Z:\\nowhere', tmp, 'bbbb'), null);
   fs.rmSync(tmp, { recursive: true, force: true });
 });
+
+test('listSessionFiles/sessionFileById (A8): pi core 的 POSIX 目录名必须能定位到会话', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-sess-a8-'));
+  const cwd = '/Users/yehaoyu/Documents/pier';
+  const dir = path.join(tmp, '--Users-yehaoyu-Documents-pier--'); // pi core 的真实命名
+  fs.mkdirSync(dir, { recursive: true });
+  const f = path.join(dir, '2026-01-01T00-00-00_dead.jsonl');
+  fs.writeFileSync(f, '{}');
+  // 旧实现用 `--%2FUsers…--` / `---Users…--` 找，返回空而不报错（静默失效）
+  assert.deepEqual(listSessionFiles(cwd, tmp, 4), [f]);
+  assert.equal(sessionFileById(cwd, tmp, 'dead'), f);
+  assert.equal(sessionFileById(cwd, tmp, 'beef'), null);
+  // 双读不回归：pier 旧编码目录仍可读
+  const legacy = path.join(tmp, '---Users-yehaoyu-Documents-pier--');
+  fs.mkdirSync(legacy, { recursive: true });
+  const g = path.join(legacy, '2026-01-01T00-00-01_beef.jsonl');
+  fs.writeFileSync(g, '{}');
+  assert.equal(sessionFileById(cwd, tmp, 'beef'), g);
+  assert.equal(listSessionFiles(cwd, tmp, 4).length, 2);
+  fs.rmSync(tmp, { recursive: true, force: true });
+});

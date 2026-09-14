@@ -9,7 +9,7 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { sessionDirCandidates, sessionDirName } from './storage-layout.ts';
+import { piSessionDirCandidates, sessionDirName } from './storage-layout.ts';
 
 export { sessionDirName };
 
@@ -115,10 +115,10 @@ export function hasPendingToolCall(entries: readonly SessionEntryLike[], sinceTs
 
 
 
-/** Newest `limit` session files under cwd's session dir (new encoding, then legacy). */
+/** Newest `limit` session files under cwd's session dir (pi core's name first, then pier's old encodings). */
 export function listSessionFiles(cwd: string, agentDir: string, limit = 4): string[] {
   const files: Array<{ file: string; mtime: number }> = [];
-  for (const name of sessionDirCandidates(cwd)) {
+  for (const name of piSessionDirCandidates(cwd)) {
     const dir = path.join(agentDir, name);
     let names: string[];
     try {
@@ -142,11 +142,11 @@ export function listSessionFiles(cwd: string, agentDir: string, limit = 4): stri
 
 /**
  * Locate a session file by id (`<ts>_<id>.jsonl`).
- * Searches the new encoding dir first, then the legacy flattened dir.
+ * Searches pi core's own directory name first, then pier's legacy flattened dirs.
  */
 export function sessionFileById(cwd: string, agentDir: string, id: string): string | null {
   const suffix = `_${id}.jsonl`;
-  for (const name of sessionDirCandidates(cwd)) {
+  for (const name of piSessionDirCandidates(cwd)) {
     const dir = path.join(agentDir, name);
     let names: string[];
     try {

@@ -44,6 +44,29 @@ export function sessionDirCandidates(cwd: string): readonly string[] {
 }
 
 /**
+ * pi core's own session-directory encoding, byte-for-byte.
+ *
+ * Why: `<agentDir>/sessions/` is owned by pi core, which names it
+ * `--${cwd.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--` (strip ONE leading separator,
+ * then flatten `/` `\` `:` — note it does NOT escape `%` like `sessionDirName` does).
+ * Verified on this machine: `/Users/yehaoyu/Documents/pier` →
+ * `--Users-yehaoyu-Documents-pier--` (pier's own encodings produce `---Users-…--` and
+ * `--%2FUsers…--`, neither of which exists on disk).
+ */
+export function piCoreSessionDirName(cwd: string): string {
+  return `--${cwd.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`;
+}
+
+/**
+ * Candidates for reading pi core's session dirs: pi core's exact name first, then pier's
+ * own historical encodings (they may hold stray dirs from earlier versions).
+ * Read-only on purpose: writes to `<agentDir>/sessions/` are pi core's business.
+ */
+export function piSessionDirCandidates(cwd: string): readonly string[] {
+  return [...new Set([piCoreSessionDirName(cwd), ...sessionDirCandidates(cwd)])];
+}
+
+/**
  * Directory to read/write under `parent`.
  * Existing legacy dirs win over a missing new dir so history is not split.
  */
