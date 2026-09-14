@@ -23,6 +23,7 @@ import {
   foldTerminalsRegistry,
   makeTerminalsRegistry,
   planIdleTerminalReminder,
+  planShellInit,
   promptStrategyFor,
   registerTerminal,
   stripAnsi,
@@ -234,8 +235,11 @@ export default function terminalPlugin(ctx: Context): void {
   async function probeReadiness(paneId: string): Promise<'prompt' | 'silent' | 'busy'> {
     const prompt = promptStrategyFor();
     try {
-      const matched = await client.waitForOutput(paneId, { type: 'regex', value: prompt.waitPattern }, READINESS_TIMEOUT_MS);
-      if (matched) return 'prompt';
+      const waitRes = await client.waitForOutput(paneId, { type: 'regex', value: prompt.waitPattern }, READINESS_TIMEOUT_MS);
+      const isMatched = waitRes && typeof waitRes === 'object' && 'matched' in waitRes
+        ? (waitRes as { matched: boolean }).matched
+        : Boolean(waitRes);
+      if (isMatched) return 'prompt';
       const read = await client.readPane(paneId, { stripAnsi: false });
       return classifyReadiness(stripAnsi(read.text), { silentMs: 0, prompt });
     } catch {
@@ -265,6 +269,17 @@ export default function terminalPlugin(ctx: Context): void {
     terminals = r.entries;
     persistTerminals();
     const readiness = await probeReadiness(paneId);
+    const prompt = promptStrategyFor();
+    const init = planShellInit({ strategy: prompt, readiness });
+    if (init.shouldInit && init.command) {
+      try {
+        await client.sendPaneText(paneId, init.command);
+        r.entry.initialized = true;
+        persistTerminals();
+      } catch {
+        /* Shell init is best-effort: failure to set +H does not block terminal usage */
+      }
+    }
     const text = [
       `terminal ${r.entry.terminalId} open (pane ${paneId})`,
       `cwd: ${cwd}`,
@@ -278,6 +293,19 @@ export default function terminalPlugin(ctx: Context): void {
     if (!entry) return errText(`unknown or closed terminal "${String(params?.terminal_id)}" (see action list)`);
     const v = validateSendText(typeof params?.text === 'string' ? params.text : '');
     if (!v.ok) return errText(v.error);
+    if (!entry.initialized) {
+      const prompt = promptStrategyFor();
+      const init = planShellInit({ strategy: prompt });
+      if (init.shouldInit && init.command) {
+        try {
+          await client.sendPaneText(entry.paneId, init.command);
+        } catch {
+          /* Shell init is best-effort */
+        }
+      }
+      entry.initialized = true;
+      persistTerminals();
+    }
     if (params?.wait_prompt === true) {
       // Orchestration convention: read before writing. Text typed while a previous command still
       // owns the foreground gets queued and fires later, which reads as "the shell ignored me".
@@ -315,13 +343,22 @@ export default function terminalPlugin(ctx: Context): void {
     const requested = typeof params?.timeout_ms === 'number' && params.timeout_ms > 0 ? params.timeout_ms : WAIT_DEFAULT_MS;
     const timeoutMs = Math.min(Math.max(requested, 1000), WAIT_MAX_MS);
     const matcher = useRegex ? { type: 'regex' as const, value: raw } : { type: 'substring' as const, value: raw };
-    let matched: boolean | null;
+    let waitResult: { matched: boolean; reason?: 'timeout' | 'unavailable' };
     try {
-      matched = await client.waitForOutput(entry.paneId, matcher, timeoutMs);
+      const res = await client.waitForOutput(entry.paneId, matcher, timeoutMs);
+      if (typeof res === 'object' && res !== null && 'matched' in res) {
+        waitResult = res as { matched: boolean; reason?: 'timeout' | 'unavailable' };
+      } else if (res === true) {
+        waitResult = { matched: true };
+      } else if (res === false) {
+        waitResult = { matched: false, reason: 'timeout' };
+      } else {
+        waitResult = { matched: false, reason: 'unavailable' };
+      }
     } catch (e) {
       return errText(`wait failed (pane may be closed): ${(e as Error).message}`);
     }
-    if (matched !== true) {
+    if (!waitResult.matched) {
       // wait-for-text convention: on timeout, hand back the recent tail so the model can decide
       // the next move instead of re-polling blind.
       let tail = '';
@@ -331,10 +368,10 @@ export default function terminalPlugin(ctx: Context): void {
       } catch {
         /* The pane is gone; the timeout text alone still tells the model it is stuck. */
       }
-      const reason = matched === false ? 'no match' : 'wait unavailable';
+      const reason = waitResult.reason === 'timeout' ? 'timeout' : 'wait unavailable';
       return {
         content: [{ type: 'text', text: `no match within ${timeoutMs}ms (${reason}).${tail ? `\nrecent output tail:\n${tail}` : ''}` }],
-        details: { terminal_id: entry.terminalId, matched: false, pattern: raw },
+        details: { terminal_id: entry.terminalId, matched: false, pattern: raw, reason },
       };
     }
     return {

@@ -12,6 +12,7 @@
  * performs pi injection in the server callback.
  */
 import * as net from 'node:net';
+import * as fs from 'node:fs';
 import { sessionDirCandidates, sessionDirName } from './storage-layout.ts';
 
 function encodePaneId(paneId: string): string {
@@ -123,6 +124,13 @@ export function pipeRequest(
         reject(err);
       }
     });
+    sock.on('close', () => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        reject(new Error(`pipe ${pipeName}: connection closed`));
+      }
+    });
   });
 }
 
@@ -178,7 +186,21 @@ export type PipeMessageHandler = (req: PipeRequest) => Promise<PipeResponse>;
 export function startPipeServer(
   pipeName: string,
   handler: PipeMessageHandler,
+  onError?: (err: Error) => void,
 ): net.Server {
+  const socketPath = pipePathFor(pipeName);
+  // Why: On POSIX, a crash or ungraceful shutdown leaves the UNIX domain socket file behind.
+  // Subsequent listen calls fail with EADDRINUSE unless the stale socket is unlinked before bind.
+  // Windows named pipes live in kernel namespace (\\.\pipe\...) and require no unlinking.
+  // Best-effort on purpose: if the path cannot be removed (EACCES/EISDIR/ENAMETOOLONG) the
+  // subsequent listen reports the real failure through onError instead of a synchronous throw here.
+  if (process.platform !== 'win32') {
+    try {
+      fs.unlinkSync(socketPath);
+    } catch {
+      /* see above: listen surfaces the actionable error */
+    }
+  }
   const server = net.createServer((sock) => {
     sock.setEncoding('utf8');
     let buf = '';
@@ -209,9 +231,23 @@ export function startPipeServer(
       /* client disconnect: silent */
     });
   });
-  server.on('error', () => {
-    /* address in use: caller observes listen errors */
-  });
-  server.listen(pipePathFor(pipeName));
+  if (onError) {
+    server.on('error', onError);
+  } else {
+    // Always attach a listener: an EventEmitter 'error' event with no listener throws and would
+    // take the whole extension host down on a transient listen failure (EADDRINUSE/ENOTDIR).
+    // Callers that care pass onError to make the failure observable (F04).
+    server.on('error', () => { /* swallowed by design; pass onError to observe */ });
+  }
+  if (process.platform !== 'win32') {
+    server.on('close', () => {
+      try {
+        fs.unlinkSync(socketPath);
+      } catch {
+        /* best effort */
+      }
+    });
+  }
+  server.listen(socketPath);
   return server;
 }

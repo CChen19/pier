@@ -9,6 +9,8 @@ import {
   POSIX_PROMPT,
   POWERSHELL_PROMPT,
   PROMPT_TAIL_RE,
+  PWSH_PROMPT,
+  ZSH_PROMPT,
   SIGNAL_KEYS,
   TERMINALS_CUSTOM_TYPE,
   classifyReadiness,
@@ -18,8 +20,10 @@ import {
   foldTerminalsRegistry,
   makeTerminalsRegistry,
   nextTerminalId,
+  planShellInit,
   promptStrategyFor,
   registerTerminal,
+  shellInitCommandFor,
   stripAnsi,
   summarizeSessions,
   validateSendText,
@@ -211,4 +215,80 @@ test('makeTerminalsRegistry / foldTerminalsRegistry：往返 + last-wins', () =>
   assert.equal(single.length, 1);
   assert.equal(single[0].terminalId, 'term-1');
   assert.equal(single[0].cwd, 'F:/work');
+});
+
+/* ──────────── A5-a / A5-b / A5-c / A10：本轮修复的回归缝 ──────────── */
+
+test('PROMPT_TAIL_RE / POSIX_PROMPT: 认得 macOS zsh 的 `%` 提示符（同时不误伤普通输出）', () => {
+  assert.ok(PROMPT_TAIL_RE.test('user@host ~ % '));
+  assert.ok(new RegExp(POSIX_PROMPT.waitPattern).test('yehaoyu@Mac pier % '));
+  assert.ok(PROMPT_TAIL_RE.test('root@host:/# '));
+  assert.ok(PROMPT_TAIL_RE.test('❯ '));
+  // 行尾锚定：正文里的百分数不应被当成提示符
+  assert.equal(PROMPT_TAIL_RE.test('downloaded 50% of 1.2GB'), false);
+});
+
+test('promptStrategyFor: bash/zsh/powershell/pwsh（env 优先，其次 $SHELL）', () => {
+  assert.equal(promptStrategyFor({ PIER_TERMINAL_PROMPT: 'powershell' }), POWERSHELL_PROMPT);
+  assert.equal(promptStrategyFor({ PIER_TERMINAL_PROMPT: 'pwsh' }), POWERSHELL_PROMPT);
+  assert.equal(promptStrategyFor({ PIER_TERMINAL_PROMPT: ' zsh ' }), POSIX_PROMPT);
+  assert.equal(promptStrategyFor({ PIER_TERMINAL_PROMPT: 'bash' }), POSIX_PROMPT);
+  assert.equal(promptStrategyFor({ SHELL: '/bin/zsh' }), POSIX_PROMPT);
+  assert.equal(promptStrategyFor({ SHELL: '/bin/bash' }), POSIX_PROMPT);
+  assert.equal(promptStrategyFor({ SHELL: '/usr/bin/pwsh' }), POWERSHELL_PROMPT);
+  assert.equal(promptStrategyFor({ SHELL: 'C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe' }), POWERSHELL_PROMPT);
+  // 未配置 → POSIX（不翻转既有 pane）
+  assert.equal(promptStrategyFor({}), POSIX_PROMPT);
+  // 显式配置压过 $SHELL
+  assert.equal(promptStrategyFor({ PIER_TERMINAL_PROMPT: 'powershell', SHELL: '/bin/zsh' }), POWERSHELL_PROMPT);
+});
+
+test('planShellInit: 只在未初始化且已到提示符时注入 `set +H`（PowerShell 不注入）', () => {
+  assert.deepEqual(planShellInit({}), { shouldInit: true, command: 'set +H' });
+  assert.deepEqual(planShellInit({ readiness: 'prompt' }), { shouldInit: true, command: 'set +H' });
+  assert.deepEqual(planShellInit({ readiness: 'silent' }), { shouldInit: false, command: null });
+  assert.deepEqual(planShellInit({ readiness: 'busy' }), { shouldInit: false, command: null });
+  assert.deepEqual(planShellInit({ initialized: true }), { shouldInit: false, command: null });
+  // PowerShell/bash 走别名对象，identity 判定必须仍然成立
+  assert.deepEqual(planShellInit({ strategy: POWERSHELL_PROMPT }), { shouldInit: false, command: null });
+  assert.deepEqual(planShellInit({ strategy: PWSH_PROMPT }), { shouldInit: false, command: null });
+  assert.deepEqual(planShellInit({ strategy: ZSH_PROMPT, readiness: 'prompt' }), { shouldInit: true, command: 'set +H' });
+  assert.equal(shellInitCommandFor(POWERSHELL_PROMPT), null);
+  assert.equal(shellInitCommandFor(POSIX_PROMPT), 'set +H');
+});
+
+test('foldTerminalsRegistry (A10): 恢复 readTail/readEoTail，紧接 computeIncrement 不再抛错', () => {
+  // 先用真实的 computeIncrement 生成一份自洽的游标，再让它穿过 JSONL 折叠（旧实现丢 tail → prev.tail.length TypeError）。
+  const first = computeIncrement(null, { text: 'hello\n', revision: 7 }, 1000);
+  const entry = mkEntry({
+    readRevision: 7,
+    readLen: first.cursor.len,
+    readTail: first.cursor.tail,
+    readEoTail: first.cursor.eoTail,
+  });
+  const folded = foldTerminalsRegistry([
+    { type: 'custom', customType: TERMINALS_CUSTOM_TYPE, data: { version: 1, terminals: [entry] } },
+  ]);
+  assert.equal(folded.length, 1);
+  const t = folded[0]!;
+  assert.equal(t.readTail, first.cursor.tail);
+  assert.equal(t.readEoTail, first.cursor.eoTail);
+  assert.equal(t.readRevision, 7);
+  const inc = computeIncrement(
+    { revision: t.readRevision ?? 0, len: t.readLen ?? 0, tail: t.readTail ?? '', eoTail: t.readEoTail ?? '' },
+    { text: 'hello\nworld\n', revision: 8 },
+    1000,
+  );
+  assert.equal(inc.mode, 'append');
+  assert.equal(inc.text, 'world\n');
+});
+
+test('foldTerminalsRegistry (A10): 缺失 tail 字段时回落空串（旧 JSONL 仍可读）', () => {
+  const legacy = mkEntry();
+  const folded = foldTerminalsRegistry([
+    { type: 'custom', customType: TERMINALS_CUSTOM_TYPE, data: { version: 1, terminals: [legacy] } },
+  ]);
+  assert.equal(folded[0]!.readTail, '');
+  assert.equal(folded[0]!.readEoTail, '');
+  assert.equal(folded[0]!.initialized, false);
 });

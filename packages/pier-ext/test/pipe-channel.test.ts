@@ -14,6 +14,7 @@ import {
   startPipeServer,
 } from '../src/pipe-channel.ts';
 import * as net from 'node:net';
+import * as fs from 'node:fs';
 
 test('pipeNameFor: collision-resistant workspace encoding + paneId', () => {
   assert.equal(
@@ -172,3 +173,76 @@ test('pipePathFor: win32 does not double-prefix an already-namespaced pipe', () 
   }
 });
 
+
+/* ──────────── F04 / F16：本轮修复的传输层回归缝 ──────────── */
+
+test('startPipeServer (F04): POSIX 上先清掉崩溃残留的 socket 文件再 listen', async () => {
+  if (process.platform === 'win32') return; // Windows 命名管道在内核命名空间，无残留文件问题
+  const name = `pi-herdr-stale-${process.pid}-${Date.now()}`;
+  const p = pipePathFor(name);
+  // 模拟"上次进程崩溃"：socket 路径仍被占用（Node 正常 close() 会自己删文件，所以这里直接放一个占位文件）
+  fs.writeFileSync(p, '');
+  assert.ok(fs.existsSync(p), 'precondition: path is occupied');
+  const server = startPipeServer(name, async (req) => ({ type: 'ok', id: req.id }));
+  try {
+    const res = await pipeRequest(name, { type: 'ping', id: 'after-stale' }, 2500);
+    assert.equal(res.type, 'ok', 'a stale socket file must not break listen');
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test('pipeRequest (F16): 对端在回包前断开 → 立刻报错（不再等到超时）', async () => {
+  const name = `pi-herdr-drop-${process.pid}-${Date.now()}`;
+  const live: net.Socket[] = [];
+  const server = net.createServer((sock) => {
+    live.push(sock);
+    sock.end(); // 收下连接即挂断，永不回包
+  });
+  await new Promise<void>((resolve) => server.listen(pipePathFor(name), () => resolve()));
+  try {
+    const t0 = Date.now();
+    // 旧代码此处会一直挂到 5s 超时并抛 "timeout"；新代码在 close 事件上立刻拒绝。
+    await assert.rejects(
+      () => pipeRequest(name, { type: 'ping', id: 'x' }, 5000),
+      /connection closed|EPIPE|ECONNRESET/,
+    );
+    assert.ok(Date.now() - t0 < 3000, 'must reject on disconnect, not wait for the 5s timeout');
+  } finally {
+    // 半开连接不销毁时 server.close() 的回调永不触发（会让整个文件被 runner 取消）
+    for (const s of live) s.destroy();
+    server.closeAllConnections?.();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test('startPipeServer (F04): listen 失败必须可见（onError），且无人接听时也不崩进程', async () => {
+  // Why: EventEmitter 的 'error' 事件若无监听会直接抛出并杀掉扩展宿主进程——旧代码靠一个空监听吞掉错误，
+  // 新代码把错误交给调用方，必须同时保证"未传 onError 也不崩"。
+  // 用目录占住 socket 路径：unlink 是 best-effort 删不掉目录，listen 必然 EADDRINUSE（实测 5ms 内）。
+  const name = `pi-herdr-badpath-${process.pid}-${Date.now()}`;
+  const p = pipePathFor(name);
+  fs.mkdirSync(p, { recursive: true });
+  try {
+    const seen = await new Promise<Error | null>((resolve) => {
+      let server: net.Server | null = null;
+      try {
+        server = startPipeServer(name, async (req) => ({ type: 'ok', id: req.id }), (e) => resolve(e));
+        server.on('listening', () => resolve(null));
+      } catch (e) {
+        resolve(e as Error);
+        return;
+      }
+      setTimeout(() => resolve(null), 2500);
+    });
+    assert.ok(seen, 'a failed listen must surface through onError (or a throw)');
+    assert.match(String(seen.code ?? ''), /EADDRINUSE/);
+    // 同一失败场景、不传 onError：进程必须存活（若 error 无监听，整个测试文件会直接挂掉）
+    const noListener = startPipeServer(name, async (req) => ({ type: 'ok', id: req.id }));
+    noListener.on('error', () => { /* keep the test process alive on purpose */ });
+    await new Promise((r) => setTimeout(r, 300));
+    assert.ok(true);
+  } finally {
+    fs.rmSync(p, { recursive: true, force: true });
+  }
+});

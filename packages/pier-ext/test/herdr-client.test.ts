@@ -386,11 +386,12 @@ test('HerdrClient: reportLockTokens batches at LOCK_BATCH_LIMIT', withCleanup(as
   }
 }));
 
-test('HerdrClient: readPane unwraps read envelope; waitForOutput timeout → null', withCleanup(async (cleanup) => {
+test('HerdrClient: readPane unwraps read envelope; waitForOutput timeout → discriminated result', withCleanup(async (cleanup) => {
   const dir = cleanup.tempDir('herdr');
   const server = new FakeHerdrServer(join(dir.path, `s-${randomUUID().slice(0, 8)}.sock`));
   server.handler = (method) => {
     if (method === 'pane.read') return { read: { text: 'hi', revision: 3, truncated: true } };
+    if (method === 'pane.wait_for_output') return { matched: true };
     return {};
   };
   await server.listen();
@@ -398,6 +399,8 @@ test('HerdrClient: readPane unwraps read envelope; waitForOutput timeout → nul
     const read = await clientFor(server).readPane('p2', { source: 'recent', lines: 20 });
     assert.deepEqual(read, { text: 'hi', revision: 3, truncated: true });
     assert.equal(server.received[0]?.params.strip_ansi, false);
+    const ok = await clientFor(server).waitForOutput('p2', { type: 'substring', value: 'x' }, 50);
+    assert.deepEqual(ok, { matched: true });
   } finally {
     await server.close();
   }
@@ -405,7 +408,7 @@ test('HerdrClient: readPane unwraps read envelope; waitForOutput timeout → nul
   hang.error = { code: 'timeout', message: 'wait timeout' };
   await hang.listen();
   try {
-    assert.equal(await clientFor(hang).waitForOutput('p2', { type: 'substring', value: 'x' }, 50), null);
+    assert.deepEqual(await clientFor(hang).waitForOutput('p2', { type: 'substring', value: 'x' }, 50), { matched: false, reason: 'timeout' });
   } finally {
     await hang.close();
   }

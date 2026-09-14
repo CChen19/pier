@@ -229,9 +229,17 @@ test('core/terminal：wait 命中 → matched；超时 → 带尾部输出的 no
     action: 'wait', terminal_id: 'term-1', pattern: 'never-appears', regex: true, timeout_ms: 5000,
   }) as { content: Array<{ text: string }>; details: { matched: boolean } };
   assert.equal(miss.details.matched, false);
-  assert.match(miss.content[0].text, /no match within 5000ms/);
+  assert.match(miss.content[0].text, /no match within 5000ms \(timeout\)/);
   assert.match(miss.content[0].text, /recent output tail/, '超时回带最近输出，免去盲目轮询');
   assert.equal(calls.waitForOutput[2]?.match.type, 'regex');
+
+  // 模拟 RPC 不可用
+  client.waitForOutput = async () => ({ matched: false, reason: 'unavailable' });
+  const unavail = await pi.tools.get(TOOL_NAME)?.execute?.(null, {
+    action: 'wait', terminal_id: 'term-1', pattern: 'never-appears', timeout_ms: 3000,
+  }) as { content: Array<{ text: string }>; details: { matched: boolean } };
+  assert.equal(unavail.details.matched, false);
+  assert.match(unavail.content[0].text, /no match within 3000ms \(wait unavailable\)/);
 
   const bad = await pi.tools.get(TOOL_NAME)?.execute?.(null, {
     action: 'wait', terminal_id: 'term-1', pattern: '(', regex: true,
@@ -244,6 +252,9 @@ test('core/terminal：send(wait_prompt) 就绪才发；busy 拒发不排队', as
   const { client, calls } = fakeClient();
   const { pi, ctx } = await mountTerminal(client);
   await pi.tools.get(TOOL_NAME)?.execute?.(null, { action: 'open' }, undefined, undefined, { cwd: 'F:/w' });
+
+  assert.deepEqual(calls.sendPaneText, ['set +H'], 'open 应向 POSIX shell 发送 set +H 禁用历史展开');
+  calls.sendPaneText.length = 0;
 
   // waitForOutput=false 且 readPane 非 prompt → busy 拒发
   const busy = client as unknown as {
