@@ -1,0 +1,244 @@
+{
+ "_source": "herdr 0.9.0, protocol 22 — extracted from `herdr api schema` (see cmd: herdr api schema --json)",
+ "_generated": "2026-09-14",
+ "methods": {
+  "agent.list": {
+   "def": "EmptyParams",
+   "required": [],
+   "allowed": []
+  },
+  "agent.read": {
+   "def": "AgentReadParams",
+   "required": [
+    "target",
+    "source"
+   ],
+   "allowed": [
+    "format",
+    "lines",
+    "source",
+    "strip_ansi",
+    "target"
+   ]
+  },
+  "agent.wait": {
+   "def": "AgentWaitParams",
+   "required": [
+    "target"
+   ],
+   "allowed": [
+    "target",
+    "timeout_ms",
+    "until"
+   ]
+  },
+  "layout.apply": {
+   "def": "LayoutApplyParams",
+   "required": [
+    "root"
+   ],
+   "allowed": [
+    "focus",
+    "root",
+    "tab_id",
+    "tab_label",
+    "workspace_id"
+   ]
+  },
+  "layout.export": {
+   "def": "LayoutExportParams",
+   "required": [],
+   "allowed": [
+    "pane_id",
+    "tab_id"
+   ]
+  },
+  "pane.close": {
+   "def": "PaneTarget",
+   "required": [
+    "pane_id"
+   ],
+   "allowed": [
+    "pane_id"
+   ]
+  },
+  "pane.focus": {
+   "def": "PaneTarget",
+   "required": [
+    "pane_id"
+   ],
+   "allowed": [
+    "pane_id"
+   ]
+  },
+  "pane.list": {
+   "def": "PaneListParams",
+   "required": [],
+   "allowed": [
+    "workspace_id"
+   ]
+  },
+  "pane.read": {
+   "def": "PaneReadParams",
+   "required": [
+    "pane_id",
+    "source"
+   ],
+   "allowed": [
+    "format",
+    "lines",
+    "pane_id",
+    "source",
+    "strip_ansi"
+   ]
+  },
+  "pane.report_agent": {
+   "def": "PaneReportAgentParams",
+   "required": [
+    "pane_id",
+    "source",
+    "agent",
+    "state"
+   ],
+   "allowed": [
+    "agent",
+    "agent_session_id",
+    "agent_session_path",
+    "message",
+    "pane_id",
+    "seq",
+    "source",
+    "state"
+   ]
+  },
+  "pane.report_agent_session": {
+   "def": "PaneReportAgentSessionParams",
+   "required": [
+    "pane_id",
+    "source",
+    "agent"
+   ],
+   "allowed": [
+    "agent",
+    "agent_session_id",
+    "agent_session_path",
+    "pane_id",
+    "seq",
+    "session_start_source",
+    "source"
+   ]
+  },
+  "pane.report_metadata": {
+   "def": "PaneReportMetadataParams",
+   "required": [
+    "pane_id",
+    "source"
+   ],
+   "allowed": [
+    "agent",
+    "applies_to_source",
+    "clear_display_agent",
+    "clear_state_labels",
+    "clear_title",
+    "display_agent",
+    "pane_id",
+    "seq",
+    "source",
+    "state_labels",
+    "title",
+    "tokens",
+    "ttl_ms"
+   ]
+  },
+  "pane.send_keys": {
+   "def": "PaneSendKeysParams",
+   "required": [
+    "pane_id",
+    "keys"
+   ],
+   "allowed": [
+    "keys",
+    "pane_id"
+   ]
+  },
+  "pane.send_text": {
+   "def": "PaneSendTextParams",
+   "required": [
+    "pane_id",
+    "text"
+   ],
+   "allowed": [
+    "pane_id",
+    "text"
+   ]
+  },
+  "pane.split": {
+   "def": "PaneSplitParams",
+   "required": [
+    "direction"
+   ],
+   "allowed": [
+    "cwd",
+    "direction",
+    "env",
+    "focus",
+    "ratio",
+    "right_click",
+    "target_pane_id",
+    "workspace_id"
+   ]
+  },
+  "pane.wait_for_output": {
+   "def": "PaneWaitForOutputParams",
+   "required": [
+    "pane_id",
+    "source",
+    "match"
+   ],
+   "allowed": [
+    "lines",
+    "match",
+    "pane_id",
+    "source",
+    "strip_ansi",
+    "timeout_ms"
+   ]
+  },
+  "tab.close": {
+   "def": "TabTarget",
+   "required": [
+    "tab_id"
+   ],
+   "allowed": [
+    "tab_id"
+   ]
+  },
+  "tab.create": {
+   "def": "TabCreateParams",
+   "required": [],
+   "allowed": [
+    "cwd",
+    "env",
+    "focus",
+    "label",
+    "workspace_id"
+   ]
+  },
+  "tab.get": {
+   "def": "TabTarget",
+   "required": [
+    "tab_id"
+   ],
+   "allowed": [
+    "tab_id"
+   ]
+  },
+  "tab.list": {
+   "def": "TabListParams",
+   "required": [],
+   "allowed": [
+    "workspace_id"
+   ]
+  }
+ }
+}

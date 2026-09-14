@@ -25,6 +25,7 @@ import {
 } from './config-guide.ts';
 import { formatOptionRows } from './pier-options.ts';
 import { formatSwallowedErrors } from './swallow.ts';
+import { HERDR_PROTOCOL_EXPECTED } from './herdr-client.ts';
 
 export const CONFIG_COMMAND_NAME = 'pier-config';
 export const CONFIG_GUIDE_CUSTOM_TYPE = 'pi-herdr.config-guide';
@@ -142,7 +143,9 @@ export function installConfigCommand(deps: ConfigCommandDeps): void {
           [
             'pier doctor',
             '',
-            `options (canonical PIER_*, legacy PI_HDR_* alias accepted):`,
+            `wire: herdr protocol ${HERDR_PROTOCOL_EXPECTED} (pinned by test/fixtures/herdr-contract.json)`,
+            '',
+            `options (canonical PIER_*, legacy PI_HERDR_* alias accepted):`,
             ...formatOptionRows(),
             '',
             formatSwallowedErrors(),

@@ -1,14 +1,17 @@
 /**
  * Minimal herdr socket API client used inside the pi extension.
  *
- * Validated against herdr 0.8.0-preview (protocol 19, Windows named pipe; see WIRE.md):
+ * Validated against herdr 0.9.0 (protocol 22, Windows named pipe; see WIRE.md). The request shapes
+ * pier builds are pinned to herdr's own `api schema` by test/herdr-contract.test.ts — regenerate
+ * test/fixtures/herdr-contract.json and bump HERDR_PROTOCOL_EXPECTED when the server moves on:
  *  - Transport is NDJSON: request {id, method, params} → response {id, result} | {id, error:{code,message}};
  *  - **Control requests use one connection per request**; the server closes it after replying;
  *  - Windows targets are named pipes whose name is the complete socket_path with a \\.\pipe\ prefix;
  *  - pane.report_agent reports {pane_id, source, agent, state, message?, agent_session_id?, agent_session_path?}
  *    where state ∈ idle|working|blocked|unknown ('done' is server-derived and is not reported by the client);
- *  - pane.report_metadata reports {pane_id, source, title?, state_labels?, clear_title?, clear_state_labels?}
- *    M22 reports only the title projection; the first upgrade also clears legacy pi-herdr chunk tokens to null;
+ *  - pane.report_metadata reports {pane_id, source, title?, state_labels?, clear_title?, clear_state_labels?,
+ *    tokens?, ttl_ms?} (ttl_ms is capped at 24 h by the server); the first report of a session also clears
+ *    legacy pi-herdr chunk tokens to null;
  *  - agent.list {} → {type:'agent_list', agents: AgentInfo[]};
  *  - agent.wait {target, until[], timeout_ms?} → the matching agent, or an error on timeout;
  *  - agent.send_keys {target, keys[]} / pane.send_text {pane_id, text}.
@@ -92,6 +95,9 @@ export function herdrUnavailableHint(err: unknown): string | null {
   return `herdr unreachable (${msg}) — check that the herdr server is running and HERDR_SOCKET_PATH matches its socket`;
 }
 
+
+/** Wire protocol this client is written against (herdr 0.9.0). See test/fixtures/herdr-contract.json. */
+export const HERDR_PROTOCOL_EXPECTED = 22;
 
 export type WaitForOutputResult =
   | { matched: true }
