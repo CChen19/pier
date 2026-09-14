@@ -97,7 +97,6 @@ const SUBAGENT_DESCRIPTION = [
 /** Subagent concurrency limit (max parallel delegations) */
 const SUBAGENT_CONCURRENCY = 4;
 const SUBAGENT_TIMEOUT_MS = runtimePolicy.subagentTimeoutMs;
-const SUB_READY_TIMEOUT_MS = runtimePolicy.readinessTimeoutMs;
 
 function defaultAgentSessionsDir(): string {
   const base = process.env.PI_CODING_AGENT_DIR || platformPaths.agentDataDir;
@@ -413,7 +412,7 @@ export default function subagentPlugin(ctx: Context): void {
       launchLine(resumeFile, null, approve),
     );
     const ready = await waitSubReady(entry.cwd, spawned.paneId);
-    if (!ready) throw new Error(`revived pane ${spawned.paneId} pipe not ready`);
+    if (!ready.ok) throw new Error(ready.message);
     entry.paneId = spawned.paneId;
     entry.tabId = spawned.tabId;
     entry.tabName = spawned.tabName;
@@ -651,7 +650,7 @@ export default function subagentPlugin(ctx: Context): void {
         // M11 (D46): follow_up uses the extension pipe. B3 adds steering so supplemental instructions reach a long-running worker
         // within seconds during a tool-call gap; the old followUp queue waited for the entire run and caused 20-minute rework (01a03c0d).
         const ready = await waitSubReady(entry.cwd, entry.paneId);
-        if (!ready) throw new Error(`subagent pane ${entry.paneId} pipe not ready`);
+        if (!ready.ok) throw new Error(ready.message);
         const fuId = `fu-${Date.now()}`;
         const res = await pipeRequestTo(entry.cwd, entry.paneId, {
           type: 'follow_up',
@@ -938,7 +937,7 @@ export default function subagentPlugin(ctx: Context): void {
           ...(isolateMeta ? { isolate: isolateMeta } : {}),
         };
         const ready = await waitSubReady(cwd, paneId);
-        if (!ready) throw new Error(`subagent pane ${paneId} pipe not ready within ${SUB_READY_TIMEOUT_MS}ms`);
+        if (!ready.ok) throw new Error(ready.message);
         entry.sessionFile = await resolveSessionFile(paneId, cwd);
         subs.set(paneId, entry);
         persistSubs();

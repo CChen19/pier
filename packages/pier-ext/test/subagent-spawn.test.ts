@@ -376,3 +376,27 @@ test('subagent action send & resume（B1）：短 taskId 唯一前缀 (>=4)、�
 });
 
 
+
+test('waitSubReady (A14): 子 pane 已消失 → 立刻失败并附上它的最后输出（不再空等 90s）', async () => {
+  const { createSpawner } = await import('../src/subagent-spawn.ts');
+  const spawner = createSpawner({
+    client: {
+      listAgents: async () => [], // pane 不在 → 视为子进程已退出
+      readPane: async () => ({ text: 'TypeError: boom at footer.render', revision: 1, truncated: false }),
+    } as unknown as Parameters<typeof createSpawner>[0]['client'],
+    env: { paneId: 'p0', tabId: 't0', workspaceId: 'w1' },
+    runtime: { nodePath: '/usr/bin/node', cliPath: '/cli.js', extPath: '/ext.ts' },
+    git: { listWorktrees: async () => [] },
+  } as unknown as Parameters<typeof createSpawner>[0]);
+
+  const started = Date.now();
+  const out = await spawner.waitSubReady('/tmp/pier-a14-nonexistent', 'wA14:p404');
+  const elapsed = Date.now() - started;
+
+  assert.equal(out.ok, false);
+  if (out.ok) return;
+  assert.equal(out.failure.reason, 'pane-gone');
+  assert.match(out.message, /exited before its pipe became ready/);
+  assert.match(out.message, /TypeError: boom at footer\.render/);
+  assert.ok(elapsed < 10_000, `pane-gone 必须快速失败，实际用了 ${elapsed}ms`);
+});

@@ -15,7 +15,8 @@ test('createRuntimePolicy: overrides beat env', () => {
 test('createRuntimePolicy: observationWindowMs and readinessTimeoutMs defaults', () => {
   const p = createRuntimePolicy();
   assert.equal(p.observationWindowMs, 30_000);
-  assert.equal(p.readinessTimeoutMs, 30_000);
+  // A14: concurrent isolated workers routinely take longer than 30s to boot.
+  assert.equal(p.readinessTimeoutMs, 90_000);
 });
 
 test('createRuntimePolicy: PIER_GIT_TIMEOUT_MS and PIER_SUBAGENT_TIMEOUT_MS', withCleanup(async (cleanup) => {

@@ -464,6 +464,10 @@ export class HerdrClient implements HerdrClientLike {
     } catch (err) {
       const msg = String((err as Error)?.message ?? err);
       if (/timeout/i.test(msg)) return null;
+      // A14: herdr reports agent_not_found while a freshly spawned pane's agent is still registering;
+      // callers poll `waitAgent`, so map it to the same "nothing yet" result as a timeout instead of
+      // failing the whole spawn with a raw server error.
+      if (/agent_not_found|agent target .* not found/i.test(msg)) return null;
       throw err;
     }
   }

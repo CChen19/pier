@@ -5,8 +5,15 @@
  * races (D26 mutex) and D86 worktree grouping belong in one adapter.
  */
 import type { HerdrClientLike } from './herdr-client.ts';
-import { pingUntilReady, pipeNameCandidates } from './pipe-channel.ts';
+import { pipeNameCandidates, pipeRequest } from './pipe-channel.ts';
 import { runtimePolicy } from './runtime-policy.ts';
+import {
+  READY_LIVENESS_SAMPLE_MS,
+  READY_TAIL_CHARS,
+  planReadyAttempt,
+  readyFailureText,
+  type ReadyFailure,
+} from './subagent-ready.ts';
 import {
   Semaphore,
   buildLaunchLine,
@@ -39,6 +46,11 @@ export interface SpawnerHost {
   git: GitIo;
 }
 
+/** A14: readiness outcome — failures explain themselves instead of collapsing into `false`. */
+export type ReadyOutcome =
+  | { ok: true }
+  | { ok: false; failure: ReadyFailure; message: string };
+
 export interface Spawner {
   spawnPaneInTaskTab(
     placement: { desiredTab?: string | null; description: string; zone?: WorktreeZone },
@@ -48,7 +60,7 @@ export interface Spawner {
   ): Promise<{ tabId: string; paneId: string; tabName: string }>;
   launchLine(resumeFile?: string | null, roleModel?: string | null, approve?: boolean): string;
   approveFor(cwd: string, masterCwd: string): Promise<boolean>;
-  waitSubReady(cwd: string, paneId: string): Promise<boolean>;
+  waitSubReady(cwd: string, paneId: string): Promise<ReadyOutcome>;
   liveTabs(): Promise<Array<{ tabName: string; tabId: string }>>;
   findExistingPane(sessionFile: string | null): Promise<{ paneId: string; tabId: string } | null>;
 }
@@ -78,8 +90,88 @@ export function createSpawner(h: SpawnerHost): Spawner {
     return zone.zone === 'worktree';
   }
 
-  async function waitSubReady(cwd: string, paneId: string): Promise<boolean> {
-    return pingUntilReady(pipeNameCandidates(cwd, paneId), readyTimeoutMs);
+  /**
+   * A14: wait for the child's pipe with backoff, and give up early when the pane itself is gone
+   * (a crashed child never opens a pipe). Failures carry the pane tail so the reason is visible.
+   */
+  async function waitSubReady(cwd: string, paneId: string): Promise<ReadyOutcome> {
+    const names = pipeNameCandidates(cwd, paneId);
+    const startedAt = Date.now();
+    let attempt = 0;
+    let lastProbeAt = 0;
+    let alive: boolean | null = null;
+    let lastStatus: string | null = null;
+    let tail: string | null = null;
+
+    while (true) {
+      const now = Date.now();
+      const elapsedMs = now - startedAt;
+      // Liveness/agent sampling is much more expensive than a ping, so it runs on its own cadence.
+      if (now - lastProbeAt >= READY_LIVENESS_SAMPLE_MS || attempt === 0) {
+        lastProbeAt = now;
+        const probe = await probeChildPane(paneId);
+        alive = probe.alive;
+        lastStatus = probe.status;
+        if (probe.tail) tail = probe.tail;
+      }
+      const pinged = await pingAnyName(names);
+      const plan = planReadyAttempt({ elapsedMs, attempt, timeoutMs: readyTimeoutMs, alive, ready: pinged });
+      if (plan.kind === 'ready') return { ok: true };
+      if (plan.kind === 'give-up') {
+        const failure: ReadyFailure = {
+          paneId,
+          reason: plan.reason,
+          elapsedMs: Math.max(elapsedMs, 1),
+          timeoutMs: readyTimeoutMs,
+          lastStatus,
+          tail,
+          hint: plan.reason === 'timeout' && lastStatus === 'working'
+            ? 'Tip: pass run_in_background to avoid blocking the master turn while the worker boots.'
+            : null,
+        };
+        return { ok: false, failure, message: readyFailureText(failure) };
+      }
+      attempt += 1;
+      await new Promise((r) => setTimeout(r, plan.delayMs));
+    }
+  }
+
+  /** One ping round over every candidate pipe name (mixed-version peers register different names). */
+  async function pingAnyName(names: readonly string[]): Promise<boolean> {
+    for (const name of names) {
+      try {
+        const res = await pipeRequest(name, { type: 'ping', id: `ping-${Date.now()}` }, 3000);
+        if (res.type === 'ok') return true;
+      } catch {
+        /* not ready on this name */
+      }
+    }
+    return false;
+  }
+
+  /** Pane liveness + last visible output; all failures degrade to "unknown" rather than "dead". */
+  async function probeChildPane(paneId: string): Promise<{ alive: boolean | null; status: string | null; tail: string | null }> {
+    let alive: boolean | null = null;
+    let status: string | null = null;
+    try {
+      const agents = await h.client.listAgents();
+      const agent = agents.find((a) => a.paneId === paneId);
+      alive = agent != null;
+      status = agent?.status ?? null;
+    } catch {
+      /* keep null: an unreachable socket must not be read as a dead child */
+    }
+    let tail: string | null = null;
+    if (alive === false) {
+      // Only worth reading when we are about to report a crash: capture what the child printed.
+      try {
+        const read = await h.client.readPane(paneId, { stripAnsi: true });
+        tail = read.text ? read.text.slice(-READY_TAIL_CHARS) : null;
+      } catch {
+        /* the pane may already be recycled */
+      }
+    }
+    return { alive, status, tail };
   }
 
   async function spawnPaneInTaskTab(

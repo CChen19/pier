@@ -49,7 +49,8 @@ export function createRuntimePolicy(overrides?: Partial<RuntimePolicy>): Runtime
     foregroundPatienceMs: overrides?.foregroundPatienceMs ?? parseEnvInt('PIER_FOREGROUND_PATIENCE_MS', 300_000, 0),
     sessionTtlSeconds: overrides?.sessionTtlSeconds ?? parseEnvInt('PIER_SESSION_TTL_SECONDS', 600, 0),
     gitTimeoutMs: overrides?.gitTimeoutMs ?? parseEnvInt('PIER_GIT_TIMEOUT_MS', 10_000, 1),
-    readinessTimeoutMs: overrides?.readinessTimeoutMs ?? parseEnvInt('PIER_READY_TIMEOUT_MS', 30_000, 1000),
+    // A14: concurrent heavy workers can take far longer than 30s to boot; PIER_READY_TIMEOUT_MS overrides.
+    readinessTimeoutMs: overrides?.readinessTimeoutMs ?? parseEnvInt('PIER_READY_TIMEOUT_MS', 90_000, 1000),
   }
 }
 
