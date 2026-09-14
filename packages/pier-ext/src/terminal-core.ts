@@ -10,8 +10,13 @@ export const READ_MAX_CHARS = 8000;
 export const READ_HARD_CAP_CHARS = 200;
 export const READINESS_TIMEOUT_MS = 30_000;
 export const SILENCE_IDLE_MS = 2000;
-/** POSIX / PowerShell / Nushell prompt tail. Why: herdr waitForOutput and local classify must share one pattern. */
-export const PROMPT_TAIL_RE = /[$>#❯]\s*$/;
+/** POSIX / PowerShell / Nushell / Zsh prompt tail.
+ * Why: macOS default zsh prompt ends with `%` (e.g. `user@host ~ % `), while sh/bash use `$`
+ * (or `#` for root) and nushell/starship use `❯`. Anchoring to line tail (\s*$) prevents false
+ * matches on percentage values in ordinary command output (e.g. `downloaded 50%`), as interactive
+ * prompts terminate at the prompt symbol without trailing text.
+ */
+export const PROMPT_TAIL_RE = /[$>#❯%]\s*$/;
 
 export interface PromptStrategy {
   /** herdr waitForOutput regex source. */
@@ -20,9 +25,12 @@ export interface PromptStrategy {
 }
 
 export const POSIX_PROMPT: PromptStrategy = {
-  waitPattern: '[$>#❯]\\s*$',
+  waitPattern: '[$>#❯%]\\s*$',
   tailRe: PROMPT_TAIL_RE,
 };
+
+export const BASH_PROMPT: PromptStrategy = POSIX_PROMPT;
+export const ZSH_PROMPT: PromptStrategy = POSIX_PROMPT;
 
 /** cmd.exe / PowerShell: `>` still matches POSIX; this also accepts `PS C:\\>` without a trailing `$`. */
 export const POWERSHELL_PROMPT: PromptStrategy = {
@@ -30,9 +38,27 @@ export const POWERSHELL_PROMPT: PromptStrategy = {
   tailRe: /(PS [^\n>]+|>)\s*$/,
 };
 
-/** `PIER_TERMINAL_PROMPT=powershell` selects the Windows strategy; default stays POSIX so existing panes do not flip. */
+export const PWSH_PROMPT: PromptStrategy = POWERSHELL_PROMPT; // same object: identity checks stay valid
+
+/**
+ * Strategy selection covering bash, zsh, powershell/pwsh.
+ * Explicit `PIER_TERMINAL_PROMPT` env var takes precedence; otherwise `SHELL` is inspected.
+ * Default remains POSIX so existing Windows/Linux panes without explicit configuration do not flip.
+ */
 export function promptStrategyFor(env: NodeJS.ProcessEnv = process.env): PromptStrategy {
-  return env.PIER_TERMINAL_PROMPT === 'powershell' ? POWERSHELL_PROMPT : POSIX_PROMPT;
+  const prompt = env.PIER_TERMINAL_PROMPT?.trim().toLowerCase();
+  if (prompt === 'powershell' || prompt === 'pwsh') return POWERSHELL_PROMPT;
+  if (prompt === 'bash') return BASH_PROMPT;
+  if (prompt === 'zsh') return ZSH_PROMPT;
+  if (!prompt && env.SHELL) {
+    const sh = basename(env.SHELL.replace(/\\/g, '/')).toLowerCase();
+    if (sh === 'pwsh' || sh === 'powershell' || sh === 'powershell.exe' || sh === 'pwsh.exe') {
+      return POWERSHELL_PROMPT;
+    }
+    if (sh === 'bash') return BASH_PROMPT;
+    if (sh === 'zsh') return ZSH_PROMPT;
+  }
+  return POSIX_PROMPT;
 }
 /** Why: Preserve the established compatibility and safety behavior (T6). */
 export const SIGNAL_KEYS = ['ctrl+c', 'ctrl+d', 'ctrl+z', 'esc', 'enter'] as const;
@@ -61,6 +87,11 @@ export interface TerminalEntry {
   nudgedAt: number | null;
   status: 'open' | 'closed';
   closedAt: number | null;
+  readRevision?: number | null;
+  readLen?: number;
+  readTail?: string;
+  readEoTail?: string;
+  initialized?: boolean;
 }
 
 export interface TerminalsRegistry {
@@ -300,6 +331,43 @@ export function makeTerminalsRegistry(terminals: TerminalEntry[] = []): Terminal
   return { version: 1, terminals };
 }
 
+/**
+ * Why: In interactive bash and zsh, history expansion (`!`) is active by default. Commands
+ * containing `!` (such as `!|` or `if [ ! -f ... ]` or `!$`) trigger history expansion
+ * (e.g. `zsh: event not found: \|`), wedging the managed shell and leaving the controller
+ * waiting indefinitely (observed in session 01a08f37).
+ * We disable history expansion for managed shells right after creation via `set +H` (supported
+ * by both bash and zsh; equivalent to `unsetopt BANG_HIST` in zsh).
+ * On Windows / PowerShell, `set +H` is unrecognized syntax and PowerShell does not use `!`
+ * for history expansion, so init is skipped.
+ *
+ * Limits: `set +H` only affects the top-level persistent shell process. If a command spawns
+ * a nested interactive subshell (e.g. `bash -i`), that subshell would re-enable its default options.
+ */
+export function shellInitCommandFor(strategy: PromptStrategy = POSIX_PROMPT): string | null {
+  return strategy === POWERSHELL_PROMPT ? null : 'set +H';
+}
+
+export interface ShellInitPlan {
+  readonly shouldInit: boolean;
+  readonly command: string | null;
+}
+
+export function planShellInit(opts: {
+  strategy?: PromptStrategy;
+  readiness?: ReadinessTier;
+  initialized?: boolean;
+}): ShellInitPlan {
+  if (opts.initialized) return { shouldInit: false, command: null };
+  const strategy = opts.strategy ?? POSIX_PROMPT;
+  const cmd = shellInitCommandFor(strategy);
+  if (!cmd) return { shouldInit: false, command: null };
+  if (opts.readiness !== undefined && opts.readiness !== 'prompt') {
+    return { shouldInit: false, command: null };
+  }
+  return { shouldInit: true, command: cmd };
+}
+
 export function foldTerminalsRegistry(entries: readonly BranchEntryLike3[]): TerminalEntry[] {
   let found: TerminalEntry[] = [];
   for (const entry of entries) {
@@ -316,13 +384,14 @@ export function foldTerminalsRegistry(entries: readonly BranchEntryLike3[]): Ter
         label: typeof t.label === 'string' ? t.label : null,
         createdAt: typeof t.createdAt === 'number' ? t.createdAt : 0,
         lastActivityAt: typeof t.lastActivityAt === 'number' ? t.lastActivityAt : 0,
+        nudgedAt: typeof t.nudgedAt === 'number' ? t.nudgedAt : null,
         status: t.status === 'closed' ? ('closed' as const) : ('open' as const),
         closedAt: typeof t.closedAt === 'number' ? t.closedAt : null,
         readRevision: typeof t.readRevision === 'number' ? t.readRevision : null,
         readLen: typeof t.readLen === 'number' ? t.readLen : 0,
-        lastActivityAt: typeof t.lastActivityAt === 'number' ? t.lastActivityAt : 0,
-        nudgedAt: typeof t.nudgedAt === 'number' ? t.nudgedAt : null,
-        status: t.status === 'closed' ? ('closed' as const) : ('open' as const),
+        readTail: typeof t.readTail === 'string' ? t.readTail : '',
+        readEoTail: typeof t.readEoTail === 'string' ? t.readEoTail : '',
+        initialized: t.initialized === true,
       }));
   }
   return found;

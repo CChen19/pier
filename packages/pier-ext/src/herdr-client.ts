@@ -80,6 +80,10 @@ export function herdrSocketTarget(socketPath: string, platform: NodeJS.Platform 
 }
 
 
+export type WaitForOutputResult =
+  | { matched: true }
+  | { matched: false; reason: 'timeout' | 'unavailable' };
+
 export interface HerdrClientLike {
   readonly available: boolean;
   reportAgent(state: PaneAgentState, message: string | null): Promise<void>;
@@ -138,8 +142,8 @@ export interface HerdrClientLike {
     lines?: number;
     stripAnsi?: boolean;
   }): Promise<{ text: string; revision: number; truncated: boolean }>;
-  /** M14: Wait for output to match a substring or regex; return null on timeout and throw on error. */
-  waitForOutput(paneId: string, match: { type: 'substring' | 'regex'; value: string }, timeoutMs: number): Promise<boolean | null>;
+  /** M14: Wait for output to match a substring or regex; return discriminated result on match/timeout/unavailable. */
+  waitForOutput(paneId: string, match: { type: 'substring' | 'regex'; value: string }, timeoutMs: number): Promise<WaitForOutputResult>;
   close(): void;
 }
 
@@ -208,8 +212,8 @@ export class NoopHerdrClient implements HerdrClientLike {
   async readAgent(): Promise<{ text: string; revision: number; truncated: boolean }> {
     return { text: '', revision: 0, truncated: false };
   }
-  async waitForOutput(): Promise<boolean | null> {
-    return null;
+  async waitForOutput(): Promise<WaitForOutputResult> {
+    return { matched: false, reason: 'unavailable' };
   }
   close(): void {}
 }
@@ -589,7 +593,7 @@ export class HerdrClient implements HerdrClientLike {
     };
   }
 
-  async waitForOutput(paneId: string, match: { type: 'substring' | 'regex'; value: string }, timeoutMs: number): Promise<boolean | null> {
+  async waitForOutput(paneId: string, match: { type: 'substring' | 'regex'; value: string }, timeoutMs: number): Promise<WaitForOutputResult> {
     try {
       await this.request('pane.wait_for_output', {
         pane_id: paneId,
@@ -597,10 +601,13 @@ export class HerdrClient implements HerdrClientLike {
         match,
         timeout_ms: timeoutMs,
       }, timeoutMs + 5000);
-      return true;
+      return { matched: true };
     } catch (err) {
       const msg = String((err as Error)?.message ?? err);
-      if (/timeout/i.test(msg)) return null;
+      if (/timeout/i.test(msg)) return { matched: false, reason: 'timeout' };
+      if (/not supported|not implemented|unknown method|unavailable|method not found/i.test(msg)) {
+        return { matched: false, reason: 'unavailable' };
+      }
       throw err;
     }
   }
