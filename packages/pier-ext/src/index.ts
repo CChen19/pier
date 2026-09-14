@@ -400,6 +400,9 @@ export default async function (pi: ExtensionAPI) {
   let lastStopReason: string | null = null;
   pi.on('turn_start', async () => {
     agentActive = true;
+    // Why (A11): Reset lastStopReason on turn_start so a previous turn's abort
+    // does not taint subsequent turns or suppress settlement wake / notice flush.
+    lastStopReason = null;
     // Safety fallback: if previous compaction finished without clean callback settlement,
     // ensure flags are reset. Pi core prohibits prompts while compaction is active, so this is safe.
     coordinator.compactionInFlight = false;

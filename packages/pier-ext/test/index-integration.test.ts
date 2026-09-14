@@ -24,7 +24,8 @@ interface FakePi {
   on(event: string, handler: (...a: unknown[]) => unknown): void;
   appendEntry(customType: string, data: unknown): void;
   sendMessage(message: unknown, options?: unknown): void;
-  sendUserMessage(): Promise<void>;
+  sentUserMessages: Array<{ content: string; opts?: unknown }>;
+  sendUserMessage(content?: string, opts?: unknown): Promise<void>;
   getActiveTools(): string[];
   setActiveTools(names: string[]): void;
 }
@@ -66,7 +67,9 @@ function fakePi(): FakePi {
     sendMessage(message, options) {
       this.sent.push({ message, options });
     },
-    sendUserMessage() {
+    sentUserMessages: [],
+    sendUserMessage(content, opts) {
+      this.sentUserMessages.push({ content: String(content ?? ''), opts });
       return Promise.resolve();
     },
     getActiveTools() {
@@ -495,4 +498,51 @@ test('index: /pier-config reports configuration and hands a guided change to the
   assert.equal(injected.display, false);
   assert.match(String(injected.content), /^\[PIER-CONFIG\]/);
   assert.deepEqual(pi.sent[0]!.options, { triggerTurn: true });
+}));
+
+test('index: turn_start resets lastStopReason (A11) so a stale abort cannot swallow the next settlement', withCleanup(async (cleanup) => {
+  const env = cleanup.env();
+  env.delete('PI_HERDR_SUBAGENT');
+  env.set('HERDR_ENV', '1');
+  env.set('HERDR_SOCKET_PATH', '/tmp/pier-test-sock-a11');
+  const paneId = 'p_a11_test';
+  env.set('HERDR_PANE_ID', paneId);
+  env.delete('PI_HERDR_ROLE_MANIFEST');
+
+  const cwd = cleanup.tempDir('pier-a11-ws').path;
+  const pi = fakePi();
+  await pier(pi as never);
+  const ctx = { cwd, sessionManager: { getBranch: () => [] } };
+  const { pipeRequestTo } = await import('../src/pipe-channel.ts');
+
+  try {
+    await fire(pi, 'session_start', { reason: 'new' }, ctx);
+
+    // Turn 1 aborted by the user (ESC): the abort latch is set on purpose, so a child settling
+    // right after the abort must NOT wake the agent (D92).
+    await fire(pi, 'turn_start');
+    await fire(pi, 'turn_end', { message: { role: 'assistant', stopReason: 'aborted' } }, ctx);
+    await fire(pi, 'agent_settled', {}, ctx);
+
+    // Turn 2 runs to its end without carrying a stopReason (the narrow window A11 is about):
+    // pre-fix the stale "aborted" survives, and the notice that arrives in the settle gap is
+    // buffered forever instead of being delivered.
+    await fire(pi, 'turn_start');
+    await fire(pi, 'turn_end', {}, ctx);
+    const res = await pipeRequestTo(cwd, paneId, {
+      type: 'reply',
+      id: 'r-a11',
+      paneId: 'p_child',
+      text: 'child finished',
+    });
+    assert.equal(res.type, 'ok');
+    assert.equal(pi.sentUserMessages.length, 0, 'a notice arriving mid-settle is buffered, not injected');
+
+    await fire(pi, 'agent_settled', {}, ctx);
+    assert.equal(pi.sentUserMessages.length, 1, 'the buffered notice must reach the user when the turn settles');
+    assert.match(pi.sentUserMessages[0]!.content, /child finished/);
+    assert.deepEqual(pi.sentUserMessages[0]!.opts, { deliverAs: 'followUp', triggerTurn: true });
+  } finally {
+    await fire(pi, 'session_shutdown'); // close the pipe server even when an assertion fails
+  }
 }));
