@@ -21,6 +21,7 @@ import {
   DEFAULT_MIN_BYTES,
   DEFAULT_TIMEOUT_MS,
   formatReceiptText,
+  fullOutputPathFromNotice,
   isDiagnosticCommand,
   mergeUsage,
   reducerInputPrompt,
@@ -92,7 +93,12 @@ export async function handleReducerToolResult(
 
   // 4. Retrieve complete untruncated source if available
   const maxChars = config.maxChars ?? DEFAULT_MAX_CHARS;
-  const fullOutputPath = typeof event.details?.fullOutputPath === 'string' ? event.details.fullOutputPath : undefined;
+  const detailPath = typeof event.details?.fullOutputPath === 'string' ? event.details.fullOutputPath : undefined;
+  // Pi repeats the path inside the truncation notice that ships with the result text; a replayed
+  // or re-shaped event can keep only that text, and reducing the preview would lose the evidence.
+  const noticePath = fullOutputPathFromNotice(logBlock.text);
+  const fullOutputPath = detailPath ?? noticePath;
+  const fullOutputSource = detailPath ? 'details' : noticePath ? 'notice' : 'none';
   const isTruncated =
     (event.details?.truncation as { truncated?: boolean } | undefined)?.truncated === true;
 
@@ -109,6 +115,7 @@ export async function handleReducerToolResult(
         verificationOk: false,
         reason: 'truncated-source',
         action: 'fallback_full_text',
+        fullOutputSource,
       });
     }
     return undefined;
@@ -125,6 +132,7 @@ export async function handleReducerToolResult(
           verificationOk: false,
           reason: 'truncated-source',
           action: 'fallback_full_text',
+          fullOutputSource,
         });
       }
       // Log was truncated but full file could not be read safely -> fallback to avoid hallucinated receipts
@@ -244,6 +252,7 @@ export async function handleReducerToolResult(
   }
 
   const modelName = targetModel.id ?? config.model ?? 'default';
+  const providerName = typeof targetModel.provider === 'string' ? targetModel.provider : undefined;
   const receipt = formatReceiptText({
     command,
     sourceHash,
@@ -252,6 +261,7 @@ export async function handleReducerToolResult(
     sourceArtifactPath: archivePath,
     validated: validated.value,
     model: modelName,
+    provider: providerName,
     totalTokens: modelResult?.usage?.totalTokens,
   });
 
@@ -282,6 +292,7 @@ export async function handleReducerToolResult(
       model: modelName,
       verificationOk: true,
       action: 'applied',
+      fullOutputSource,
       durationMs: Date.now() - startMs,
     });
   }

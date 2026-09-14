@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {
   containsLikelySecret,
   formatReceiptText,
+  fullOutputPathFromNotice,
   isDiagnosticCommand,
   mergeUsage,
   REDUCER_RECEIPT_PREFIX,
@@ -218,6 +219,57 @@ test('formatReceiptText: generates receipt banner with source artifact path and 
   assert.ok(receipt.includes('source_artifact=/tmp/session/objects/abcdef1234567890.txt'));
   assert.ok(receipt.includes('readback=use bash with explicit range'));
   assert.ok(receipt.includes('reducer_model=cliproxy/gemini-3.8-flash-high'));
+  // The receipt is evidence, not a verdict: the model must keep adjudicating (see authority=).
+  assert.ok(receipt.includes('authority=this receipt is verified evidence only'));
+  assert.ok(receipt.includes('pass/fail adjudication'));
+  // provider is optional: omitted when the model registry did not supply it.
+  assert.equal(receipt.includes('reducer_provider='), false);
+  assert.ok(
+    formatReceiptText({
+      command: 'npm test',
+      sourceHash: 'abcdef1234567890',
+      sourceBytes: 15000,
+      sourceLines: 200,
+      sourceArtifactPath: '/tmp/session/objects/abcdef1234567890.txt',
+      model: 'gemini-3.8-flash-high',
+      provider: 'cliproxy',
+      validated: { status: 'success', uncertain: false, evidence: [] },
+    }).includes('reducer_provider=cliproxy'),
+    'a known provider must be recorded for cost attribution',
+  );
+});
+
+test('fullOutputPathFromNotice: recovers the path from every Pi truncation notice shape', () => {
+  // Pi appends one of these to a large bash result (core/tools/bash.ts, core/messages.ts).
+  assert.equal(
+    fullOutputPathFromNotice('[Showing lines 1-2000 of 5000. Full output: /tmp/pi-bash-a1.log]'),
+    '/tmp/pi-bash-a1.log',
+  );
+  assert.equal(
+    fullOutputPathFromNotice('[Showing lines 1-2000 of 5000 (50KB limit). Full output: /tmp/pi-bash-b2.log]'),
+    '/tmp/pi-bash-b2.log',
+  );
+  assert.equal(
+    fullOutputPathFromNotice('[Showing last 50KB of line 12 (line is 80KB). Full output: /tmp/pi-bash-c3.log]'),
+    '/tmp/pi-bash-c3.log',
+  );
+  assert.equal(
+    fullOutputPathFromNotice('Command exited with code 1\n\n[Output truncated. Full output: /tmp/pi-bash-d4.log]'),
+    '/tmp/pi-bash-d4.log',
+  );
+  // The notice is the only source consulted; anything else must yield nothing.
+  assert.equal(fullOutputPathFromNotice('plain log without a truncation footer'), undefined);
+  assert.equal(fullOutputPathFromNotice('[Showing lines 1-5 of 10]'), undefined);
+  assert.equal(fullOutputPathFromNotice('Full output:   '), undefined);
+  // A log that merely prints the phrase must not redirect the archive...
+  assert.equal(fullOutputPathFromNotice('Full output: /tmp/pi-bash-decoy.log\nstill running'), undefined);
+  // ...and when several bracketed notices appear, the trailing one (Pi's own) wins.
+  assert.equal(
+    fullOutputPathFromNotice(
+      '[Showing lines 1-2 of 9. Full output: /tmp/pi-bash-early.log]\nmore log\n[Showing lines 1-2 of 90. Full output: /tmp/pi-bash-late.log]',
+    ),
+    '/tmp/pi-bash-late.log',
+  );
 });
 
 test('mergeUsage: always returns a COMPLETE pi Usage (footer reads cost.total unguarded)', () => {

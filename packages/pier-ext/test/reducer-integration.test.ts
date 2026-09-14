@@ -371,6 +371,77 @@ test('EPR: skips truncated logs when fullOutputPath is missing (P1-1)', async ()
   }
 });
 
+test('EPR: recovers the exact log from the inline notice when details omit the path', async () => {
+  // Pi repeats the full-output path inside the truncation notice appended to the result text.
+  // A replayed or re-shaped event can keep only that text; reducing the preview instead would
+  // archive a truncated log and call it evidence.
+  const tempDir = await mkdtemp(join(tmpdir(), 'pier-epr-notice-test-'));
+  const logPath = join(tmpdir(), `pi-bash-notice-${process.pid}-${Date.now()}.log`);
+  try {
+    const uniqueTail = 'E   assert 1 == 2  (notice-only evidence line)';
+    const fullLog = 'Running pytest\ncollected 3 items\n'.repeat(60) + `${uniqueTail}\n`;
+    await writeFile(logPath, fullLog, 'utf8');
+
+    const preview =
+      'Running pytest\ncollected 3 items\n'.repeat(3) +
+      `\n[Showing lines 1-6 of 121. Full output: ${logPath}]`;
+
+    const modelResponse = {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            schema: REDUCER_RECEIPT_SCHEMA,
+            source_sha256: sha256Hex(fullLog),
+            status: 'failure',
+            uncertain: false,
+            evidence: [{ kind: 'failure', quote: uniqueTail }],
+          }),
+        },
+      ],
+      usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+    };
+
+    const { ctx, completeCalls } = createMockContext({
+      sessionDir: tempDir,
+      sessionId: 'sess_notice',
+      completeResponse: modelResponse,
+    });
+
+    const res = await handleReducerToolResult(
+      {
+        toolName: 'bash',
+        toolCallId: 'tc_notice',
+        input: { command: 'pytest' },
+        content: [{ type: 'text', text: preview }],
+        details: { truncation: { truncated: true } }, // path only in the text notice
+        isError: true,
+      },
+      ctx,
+      { ...DEFAULT_EFFICIENCY_CONFIG.evidencePreservingReducer, enabled: true, logEnabled: true, minBytes: 512 },
+    );
+
+    assert.ok(res, 'the notice path must let the full log through instead of failing open');
+    const receipt = res!.content![0]!.text;
+    assert.ok(receipt.includes(REDUCER_RECEIPT_PREFIX));
+    assert.ok(receipt.includes(`source_bytes=${Buffer.byteLength(fullLog, 'utf8')}`), 'receipt sizes the full log, not the preview');
+    assert.ok(receipt.includes(uniqueTail), 'evidence must come from the archived full log');
+
+    // The reducer model must have been asked about the full log, not the preview.
+    const asked = String(completeCalls[0]!.context.messages[0]!.content[0]!.text);
+    assert.ok(asked.includes(uniqueTail));
+
+    // Telemetry names which source supplied the path, so the salvage path is observable.
+    const logPathFile = join(tempDir, 'herdr-pi', 'sess_notice', 'efficiency-logs', 'reducer.jsonl');
+    const logData = await readFile(logPathFile, 'utf8');
+    assert.ok(logData.includes('"action":"applied"'));
+    assert.ok(logData.includes('"fullOutputSource":"notice"'));
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+    await rm(logPath, { force: true });
+  }
+});
+
 test('EPR: skips and logs fallback when likely-secret is detected', async () => {
   const tempDir = await mkdtemp(join(tmpdir(), 'pier-epr-secret-test-'));
   try {

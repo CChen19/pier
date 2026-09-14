@@ -62,6 +62,32 @@ export function isDiagnosticCommand(command: string): boolean {
   return DIAGNOSTIC_COMMAND.test(command);
 }
 
+/**
+ * Recover the untruncated-log path from Pi's inline truncation notice.
+ *
+ * Pi appends one of these to a large bash tool result:
+ *   `[Output truncated. Full output: /tmp/pi-bash-abc.log]`
+ *   `[Showing lines 1-2000 of 5000. Full output: /tmp/pi-bash-abc.log]`
+ *   `[Showing last 50KB of line 12 (line is 80KB). Full output: /tmp/pi-bash-abc.log]`
+ *
+ * `details.fullOutputPath` carries the same value, but a replayed or re-shaped event can keep
+ * only the text. Recovering the path there lets the receipt be verified against the exact bytes
+ * the command produced instead of a truncated preview.
+ *
+ * The returned path is NOT trusted: callers must still gate it (see `readBashFullOutput`, which
+ * requires a `pi-bash-*.log` basename resolving to a regular non-symlink file inside tmpdir).
+ */
+export function fullOutputPathFromNotice(text: string): string | undefined {
+  // Only a bracketed notice counts, and Pi appends it at the very end — so take the LAST match.
+  // A log that merely prints the phrase itself (a nested run of pi, an echo of this format) must
+  // not redirect the archive to an unrelated file.
+  const matches = text.match(/\[[^\]\r\n]*Full output:\s*([^\]\r\n]+)\]/g);
+  const last = matches?.at(-1);
+  if (!last) return undefined;
+  const captured = /Full output:\s*([^\]\r\n]+)/.exec(last)?.[1]?.trim();
+  return captured ? captured : undefined;
+}
+
 export function containsLikelySecret(text: string): boolean {
   return LIKELY_SECRET.test(text);
 }
@@ -210,6 +236,7 @@ export function formatReceiptText(opts: {
   sourceArtifactPath: string;
   validated: ValidatedReceipt;
   model: string;
+  provider?: string;
   totalTokens?: number;
 }): string {
   const lines = [
@@ -221,10 +248,10 @@ export function formatReceiptText(opts: {
     `source_bytes=${opts.sourceBytes}`,
     `source_lines=${opts.sourceLines}`,
     `source_artifact=${opts.sourceArtifactPath}`,
-    `reducer_model=${opts.model}`,
-    `reducer_total_tokens=${opts.totalTokens ?? 0}`,
-    'verified_evidence:',
   ];
+
+  if (opts.provider) lines.push(`reducer_provider=${opts.provider}`);
+  lines.push(`reducer_model=${opts.model}`, `reducer_total_tokens=${opts.totalTokens ?? 0}`, 'verified_evidence:');
 
   for (const item of opts.validated.evidence) {
     lines.push(
@@ -232,7 +259,14 @@ export function formatReceiptText(opts: {
     );
   }
 
-  lines.push(`readback=use bash with explicit range on ${opts.sourceArtifactPath} to inspect raw log`);
+  if (opts.validated.evidence.length === 0) lines.push('- none');
+
+  // The receipt is verified evidence, not adjudication: the frontier agent still owns the
+  // diagnosis/repair decision. Without this line a model can read `status=` as a verdict.
+  lines.push(
+    'authority=this receipt is verified evidence only; you retain diagnosis, repair, rerun, and pass/fail adjudication',
+    `readback=use bash with explicit range on ${opts.sourceArtifactPath} to inspect raw log`,
+  );
   return lines.join('\n');
 }
 
