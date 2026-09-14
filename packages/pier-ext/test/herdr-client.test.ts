@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:net';
-import { unlinkSync } from 'node:fs';
+import { readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import {
@@ -354,22 +354,19 @@ test('HerdrClient: connection refused rejects control RPCs; report* swallows', a
   });
   await assert.rejects(() => c.focusPane('p'));
   await c.reportAgent('idle', null);
-  await c.reportAgentSession('/sess.jsonl');
   await c.reportDisplayAgent('worker');
   await c.reportAskFlag('waiting');
 });
 
-test('HerdrClient: reportAgentSession no-ops on null (no RPC)', withCleanup(async (cleanup) => {
-  const dir = cleanup.tempDir('herdr');
-  const server = new FakeHerdrServer(join(dir.path, `s-${randomUUID().slice(0, 8)}.sock`));
-  await server.listen();
-  try {
-    await clientFor(server).reportAgentSession(null);
-    assert.equal(server.received.length, 0);
-  } finally {
-    await server.close();
-  }
-}));
+test('D-2 丙：pier 不再上报 session 路径（原生 herdr:pi 独占该字段）', () => {
+  // 契约：客户端不存在 reportAgentSession，源码里也没有 pane.report_agent_session 调用点。
+  // 若将来有人重新加上"顺手报个 session"，这条测试会失败——那时必须先证明原生集成不再上报。
+  const client = readFileSync(join(import.meta.dirname, '../src/herdr-client.ts'), 'utf8');
+  assert.equal(typeof (HerdrClient.prototype as unknown as Record<string, unknown>).reportAgentSession, 'undefined');
+  assert.ok(!client.includes("'pane.report_agent_session'"), 'herdr-client 不应再发送 pane.report_agent_session');
+  const index = readFileSync(join(import.meta.dirname, '../src/index.ts'), 'utf8');
+  assert.ok(!/reportSession\(|reportAgentSession\(/.test(index), 'index.ts 不应再有 session 上报路径');
+});
 
 test('HerdrClient: reportLockTokens batches at LOCK_BATCH_LIMIT', withCleanup(async (cleanup) => {
   const dir = cleanup.tempDir('herdr');

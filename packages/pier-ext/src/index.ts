@@ -171,11 +171,6 @@ export default async function (pi: ExtensionAPI) {
     client.reportAgent(state, message).catch(() => {});
   }
 
-  function reportSession(path: string): void {
-    if (!client.available) return;
-    client.reportAgentSession(path).catch(() => {});
-  }
-
   /** Session identity: sessionManager is authoritative (env may be unset in print/RPC mode), with env as fallback. */
   function resolveSessionId(ctx: unknown): string {
     try {
@@ -325,7 +320,9 @@ export default async function (pi: ExtensionAPI) {
     // and the heatmap amplification provides the exit path. Re-register on resume because session switching resets the overlay.
     if (env) registerSlimFrame(ctx);
     mirrorTodos();
-    reportSession(sessionId);
+    // D-2: the session path is NOT reported here. herdr's own pi integration publishes it
+    // (agent.list/agent.pane show `session_source: "herdr:pi"` on every pi pane, incl. pier subagents),
+    // so pier's pane.report_agent_session was a pure duplicate write of the same field by a second source.
     // D93: sidebar identity is the role name (display_agent takes precedence over detected agent, actions.rs:563 in 0.8.2).
     // master → 'master'; worker → manifest.role (prettify worker-default as worker).
     // A bare pi without a manifest does not report, so ordinary pi sessions remain undisturbed.

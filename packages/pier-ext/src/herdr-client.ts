@@ -106,7 +106,6 @@ export type WaitForOutputResult =
 export interface HerdrClientLike {
   readonly available: boolean;
   reportAgent(state: PaneAgentState, message: string | null): Promise<void>;
-  reportAgentSession(sessionPath: string | null): Promise<void>;
   reportMetadata(meta: { session: string; items: readonly TodoItem[]; progressSuffix?: string | null; lastWriteAt?: number | null }): Promise<void>;
   /** M18: report write-lock tokens (lock-<hash> → paneId|path); null releases, and batches stay within 16 keys. */
   reportLockTokens(tokens: Record<string, string | null>): Promise<void>;
@@ -185,7 +184,6 @@ function findIdIn(obj: unknown, key: string, depth = 0): string | null {
 export class NoopHerdrClient implements HerdrClientLike {
   readonly available = false;
   async reportAgent(): Promise<void> {}
-  async reportAgentSession(): Promise<void> {}
   async reportMetadata(): Promise<void> {}
   async reportLockTokens(): Promise<void> {}
   async reportDisplayAgent(): Promise<void> {}
@@ -328,19 +326,9 @@ export class HerdrClient implements HerdrClientLike {
     }
   }
 
-  async reportAgentSession(sessionPath: string | null): Promise<void> {
-    if (!sessionPath) return;
-    try {
-      await this.request('pane.report_agent_session', {
-        pane_id: this.env.paneId,
-        source: REPORT_AGENT_SOURCE,
-        agent: 'pi',
-        agent_session_path: sessionPath,
-      });
-    } catch {
-      /* Silent best effort. */
-    }
-  }
+  // D-2: no reportAgentSession(). herdr's native pi integration owns the session path; pier stopped
+  // sending pane.report_agent_session so the field has a single writer. `report_agent` keeps carrying the
+  // activity badge, because `state` is a required field there and pier's todo/role text is pier-only data.
 
   async reportMetadata(meta: { session: string; items: readonly TodoItem[]; progressSuffix?: string | null; lastWriteAt?: number | null }): Promise<void> {
     try {
