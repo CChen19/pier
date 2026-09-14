@@ -23,6 +23,7 @@
     "src/config-catalog-core.ts",
     "src/config-guide.ts",
     "src/config-command.ts",
-    "src/lock-core.ts"
+    "src/lock-core.ts",
+    "src/focus-poller.ts"
   ]
 }

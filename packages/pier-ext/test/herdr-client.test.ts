@@ -286,7 +286,8 @@ test('HerdrClient: exportLayout reads nested layout envelope; failure → null',
   await server.listen();
   try {
     const layout = await clientFor(server).exportLayout({ paneId: 'p1' });
-    assert.deepEqual(layout, { tabId: 't1', zoomed: true, root: { type: 'pane' } });
+    // D-4: focusedPaneId rides along (null when the server omits it).
+    assert.deepEqual(layout, { tabId: 't1', zoomed: true, root: { type: 'pane' }, focusedPaneId: null });
   } finally {
     await server.close();
   }

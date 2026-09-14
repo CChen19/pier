@@ -73,6 +73,24 @@ import {
   resolveEfficiencyConfig,
   type EfficiencyConfig,
 } from './efficiency-config-core.ts';
+import {
+  FOCUS_POLL_DEFAULT_MS,
+  parseFocusSample,
+  spawnReflow,
+  startFocusPoller,
+  type FocusPoller,
+} from './focus-poller.ts';
+
+/**
+ * D-4: focus sampling cadence. `PIER_FOCUS_POLL_MS=0` disables the poller (heat layout then only
+ * reacts to herdr events, i.e. today's degraded behaviour); invalid values fall back to the default.
+ */
+function focusPollIntervalMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.PIER_FOCUS_POLL_MS;
+  if (raw === undefined || raw.trim() === '') return FOCUS_POLL_DEFAULT_MS;
+  const ms = Number(raw);
+  return Number.isFinite(ms) && ms >= 0 ? ms : FOCUS_POLL_DEFAULT_MS;
+}
 
 /**
  * WS-D7: apply the master-pane manifest to itself through the same mandatory chain as subagents
@@ -646,6 +664,8 @@ export default async function (pi: ExtensionAPI) {
     return true;
   }
   const pipeServerBox: { current: ReturnType<typeof startPipeServer> | null } = { current: null };
+  /** D-4: focus sampler for this pane (started on session_start, stopped on session_shutdown). */
+  const sessionFocusPoller: { current: FocusPoller | null } = { current: null };
   let pendingMachineRequest: { id: string; from: string | null; push: boolean; sinceTs: number } | null = null;
   let latestCtx: { abort?: () => void } | null = null;
 
@@ -674,6 +694,27 @@ export default async function (pi: ExtensionAPI) {
     latestCtx = ctx as { abort?: () => void } | null;
     const cwd = (ctx as { cwd?: string }).cwd ?? process.cwd();
     const paneId = env?.paneId ?? '';
+    // D-4: herdr 0.9 never delivers pane.focused to plugins, so the workbench heat layout is
+    // driven by our own focus sampling (see focus-poller.ts). One poller per pane, self-scoped.
+    if (sessionFocusPoller.current) {
+      sessionFocusPoller.current.stop();
+      sessionFocusPoller.current = null;
+    }
+    const pollMs = focusPollIntervalMs();
+    if (paneId && client.available && pollMs > 0) {
+      sessionFocusPoller.current = startFocusPoller({
+        myPaneId: paneId,
+        intervalMs: pollMs,
+        sample: async () => {
+          // layout.export reports the focused pane of our own tab. Without that field (older herdr)
+          // the tick stays silent instead of guessing focus from the tree.
+          const layout = await client.exportLayout({ paneId });
+          const sample = parseFocusSample(layout);
+          return sample && sample.focusedPaneId !== null ? sample : null;
+        },
+        fire: (focusedPaneId, cause) => spawnReflow({ paneId: focusedPaneId, cause }),
+      });
+    }
     if (!paneId) return;
     const name = pipeNameFor(cwd, paneId);
     if (pipeServerBox.current) {
@@ -696,6 +737,8 @@ export default async function (pi: ExtensionAPI) {
     }
   });
   pi.on('session_shutdown', () => {
+    sessionFocusPoller.current?.stop();
+    sessionFocusPoller.current = null;
     if (pipeServerBox.current) {
       try { pipeServerBox.current.close(); } catch { /* Already closed. */ }
       pipeServerBox.current = null;

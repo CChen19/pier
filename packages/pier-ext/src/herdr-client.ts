@@ -121,7 +121,7 @@ export interface HerdrClientLike {
   /** v1.2: List all panes with tab ownership for group-tab additions. */
   listPanes(): Promise<Array<{ paneId: string; tabId: string; workspaceId: string; agentStatus: string }>>;
   /** D91: Export the tab layout tree, locating it by paneId or tabId; best effort returns null on failure. */
-  exportLayout(opts: { paneId?: string; tabId?: string }): Promise<{ tabId: string | null; zoomed: boolean; root: unknown } | null>;
+  exportLayout(opts?: { paneId?: string; tabId?: string }): Promise<{ tabId: string | null; zoomed: boolean; root: unknown; focusedPaneId: string | null } | null>;
   /** v1.3: List tabs (tab.list); fields follow the observed schema. */
   tabList(): Promise<TabInfo[]>;
   /** v1.3: Get tab details (tab.get); return null when absent. */
@@ -504,7 +504,7 @@ export class HerdrClient implements HerdrClientLike {
     }));
   }
 
-  async exportLayout(opts: { paneId?: string; tabId?: string }): Promise<{ tabId: string | null; zoomed: boolean; root: unknown } | null> {
+  async exportLayout(opts: { paneId?: string; tabId?: string } = {}): Promise<{ tabId: string | null; zoomed: boolean; root: unknown; focusedPaneId: string | null } | null> {
     try {
       const result = (await this.request('layout.export', {
         ...(opts.paneId ? { pane_id: opts.paneId } : {}),
@@ -517,6 +517,8 @@ export class HerdrClient implements HerdrClientLike {
         tabId: typeof layout.tab_id === 'string' ? layout.tab_id : null,
         zoomed: Boolean(layout.zoomed),
         root: layout.root ?? null,
+        // D-4: focus heat needs to know which pane the human is on; layout.export reports it.
+        focusedPaneId: typeof layout.focused_pane_id === 'string' ? layout.focused_pane_id : null,
       };
     } catch {
       return null;
