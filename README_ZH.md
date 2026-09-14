@@ -173,10 +173,24 @@ npm test          # node --test，588 项单测（规划器 / todo 重放 / 反�
 | `PIER_FOREGROUND_PATIENCE_MS` | `300000` | ms | 前台等待耐心阈值（超时自动切入后台） |
 | `PIER_GC_TICK_MS` | `30000` | ms | 子代理垃圾回收轮询间隔 |
 | `PIER_POLL_INTERVAL_MS` | `30000` | ms | 子代理状态观测轮询间隔 |
-| `PIER_READY_TIMEOUT_MS` | `30000` | ms | 子代理 pane 管道就绪等待超时 |
+| `PIER_READY_TIMEOUT_MS` | `90000` | ms | 子代理 pane 管道就绪等待（指数退避；pane 已退出则立刻失败并附上它的最后输出） |
 | `PIER_SESSION_TTL_SECONDS` | `600` | 秒 | 子代理进程退出后会话保留 TTL（超时清理） |
 | `PIER_GIT_TIMEOUT_MS` | `10000` | ms | Git 命令超时（worktree 创建、diff 汇总、清理） |
-| `PI_HERDR_TERM_READ_MAX` | `4096` | 字符 | 终端单次读取缓冲区字符上限 |
+| `PIER_FOCUS_POLL_MS` | `1500` | ms | 焦点采样间隔（驱动 workbench 热力布局；`0` 关闭，见下） |
+| `PIER_TERM_READ_MAX` | `8000` | 字符 | 终端单次读取缓冲区字符上限 |
+| `PIER_TERM_IDLE_MS` | `1800000` | ms | 终端闲置多久后提醒一次 |
+| `PIER_TODO_GRACE_MS` | `30000` | ms | 未完成 todo 提醒前的静默宽限 |
+| `PIER_TRACE` | – | 开关 | 把诊断信息（工具渲染器、被吞掉的异常）写到 stderr |
+
+**命名**：`PIER_*` 是 pier 选项的规范前缀；历史写法 `PI_HERDR_*` 仍作为别名被读取（空值视为未设置）。
+交给子进程的**契约**名保持不变（`PI_HERDR_SUBAGENT`、`PI_HERDR_ROLE_MANIFEST`、`PI_HERDR_TUI`、
+`PI_HERDR_META_KEY`）——改名会让正在运行的 worker 与父进程对不上。
+`/pier-config doctor` 会列出每个选项的生效值与来源，以及本会话被有意吞掉的异常。
+
+**焦点热力（herdr 0.9）**：herdr 把鼠标焦点放在自己的客户端里解析，插件再也收不到 `pane.focused`，
+因此热力布局改为由每个 pane 采样自己 tab 的 `layout.export → focused_pane_id`，再重放 workbench
+已经认识的那个事件。改动之后**启动的** pi 进程生效（子代理 pane 天然都是新的）。
+`PIER_FOCUS_POLL_MS=0` 关闭，`PIER_WORKBENCH_ROOT` 指向迁移后的插件目录。
 
 ## 设计原则
 

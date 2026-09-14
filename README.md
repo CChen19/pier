@@ -176,10 +176,27 @@ Runtime policies and operational limits are centralized in `runtime-policy.ts` (
 | `PIER_FOREGROUND_PATIENCE_MS` | `300000` | ms | Foreground execution patience before auto-demoting a subagent to background |
 | `PIER_GC_TICK_MS` | `30000` | ms | Subagent garbage collection ticker interval |
 | `PIER_POLL_INTERVAL_MS` | `30000` | ms | State observation polling interval for subagent state transitions |
-| `PIER_READY_TIMEOUT_MS` | `30000` | ms | Subagent pane pipe readiness wait timeout |
+| `PIER_READY_TIMEOUT_MS` | `90000` | ms | Subagent pane pipe readiness wait (exponential backoff; a pane that exited fails immediately with its last output attached) |
 | `PIER_SESSION_TTL_SECONDS` | `600` | s | Session retention TTL after subagent exit before GC cleanup |
 | `PIER_GIT_TIMEOUT_MS` | `10000` | ms | Execution timeout for git operations (worktree creation, diff summary, cleanup) |
-| `PI_HERDR_TERM_READ_MAX` | `8000` | chars | Maximum terminal buffer characters read per operation (`/pier-config show env` reports the effective value) |
+| `PIER_FOCUS_POLL_MS` | `1500` | ms | Pane-focus sampling cadence that drives the workbench heat layout (`0` disables; see below) |
+| `PIER_TERM_READ_MAX` | `8000` | chars | Maximum terminal buffer characters read per operation |
+| `PIER_TERM_IDLE_MS` | `1800000` | ms | Idle time before pier nudges about an open terminal |
+| `PIER_TODO_GRACE_MS` | `30000` | ms | Settle grace before the unfinished-todo reminder |
+| `PIER_TRACE` | – | flag | Write diagnostics (tool renderers, swallowed errors) to stderr |
+
+**Naming:** `PIER_*` is the canonical namespace for pier options; the historical `PI_HERDR_*` spelling
+of the same knob is still read as an alias (an empty value counts as unset). Names handed to child
+processes stay as they are (`PI_HERDR_SUBAGENT`, `PI_HERDR_ROLE_MANIFEST`, `PI_HERDR_TUI`,
+`PI_HERDR_META_KEY`), because renaming them would split a running worker from its parent.
+`/pier-config doctor` lists every option with its effective value and where it came from, plus the
+errors pier deliberately swallowed this session.
+
+**Focus heat (herdr 0.9):** herdr resolves mouse focus inside its own client and no longer delivers
+`pane.focused` to plugins, so the workbench heat layout is driven by each pane sampling its own tab
+(`layout.export` → `focused_pane_id`) and replaying the event the workbench already understands. It
+takes effect for pi processes started after the change; every spawned subagent pane has it. Set
+`PIER_FOCUS_POLL_MS=0` to turn it off, `PIER_WORKBENCH_ROOT` to point at a relocated plugin checkout.
 
 ### Efficiency mechanisms (D100–D103, opt-in)
 
