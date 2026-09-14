@@ -71,3 +71,41 @@ test('B10 收口：terminal/todo/slim-frame/HMR 的读取点都走 catalog（leg
     else process.env.PI_HERDR_TERM_IDLE_MS = prev;
   }
 });
+
+test('B10 护栏：PIER_* 注册表与 /pier-config 目录不得再漂移（数字默认值必须等于运行时值）', async () => {
+  const { CONFIG_KNOBS } = await import('../src/config-catalog-core.ts');
+  const { createRuntimePolicy } = await import('../src/runtime-policy.ts');
+  const env = CONFIG_KNOBS.filter((k) => k.plane === 'env');
+  const catalogNames = new Set(env.flatMap((k) => [k.key, ...(k.aliases ?? [])]));
+  const registryNames = new Set(PIER_OPTIONS.flatMap((o) => [o.name, ...(o.legacy ? [o.legacy] : [])]));
+
+  // 1. 两个注册表说的是同一批名字（canonical + legacy 别名并集）
+  assert.deepEqual([...registryNames].filter((n) => !catalogNames.has(n)), [], 'registry 里有目录未登记的名字');
+  assert.deepEqual([...catalogNames].filter((n) => !registryNames.has(n)), [], '目录里有 registry 未登记的名字');
+
+  // 2. 数字默认值三方一致：目录条目 = registry fallback = 运行时值。
+  //    这三处曾经各不相同（GIT_TIMEOUT 120000/10000、SUBAGENT_TIMEOUT 300000/600000、
+  //    POLL_INTERVAL 5000/30000），而 /pier-config doctor 显示的是 registry 那个数。
+  // 构造实例而不是读单例：单例在 import 期就固化了 process.env（测试进程里可能被别处改过）。
+  const runtime = createRuntimePolicy() as unknown as Record<string, number>;
+  const runtimeByKnob: Record<string, number> = {
+    PIER_SUBAGENT_TIMEOUT_MS: runtime.subagentTimeoutMs,
+    PIER_GC_TICK_MS: runtime.gcTickMs,
+    PIER_POLL_INTERVAL_MS: runtime.pollIntervalMs,
+    PIER_SETTLEMENT_WINDOW_MS: runtime.settlementWindowMs,
+    PIER_OBSERVATION_WINDOW_MS: runtime.observationWindowMs,
+    PIER_FOREGROUND_PATIENCE_MS: runtime.foregroundPatienceMs,
+    PIER_SESSION_TTL_SECONDS: runtime.sessionTtlSeconds,
+    PIER_GIT_TIMEOUT_MS: runtime.gitTimeoutMs,
+    PIER_READY_TIMEOUT_MS: runtime.readinessTimeoutMs,
+  };
+  for (const [name, value] of Object.entries(runtimeByKnob)) {
+    assert.equal(env.find((k) => k.key === name)?.defaultValue, value, `${name}：目录默认值应等于运行时值`);
+    assert.equal(PIER_OPTIONS.find((o) => o.name === name)?.fallback, String(value), `${name}：registry fallback 应等于运行时值`);
+  }
+  // 3. 目录里每个 canonical 名都必须是 PIER_*（canonical 前缀规则，legacy 只能出现在 aliases）
+  for (const knob of env) {
+    assert.match(knob.key, /^PIER_/, `${knob.key} 应是 canonical 名`);
+    for (const alias of knob.aliases ?? []) assert.match(alias, /^PI_HERDR_/, `${alias} 应是 legacy 名`);
+  }
+});

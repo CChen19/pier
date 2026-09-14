@@ -25,6 +25,8 @@ export interface ConfigKnob {
   readonly envVar?: string;
   /** Lower bound for numeric knobs (mirrors the runtime validator). */
   readonly min?: number;
+  /** Historical spellings still accepted for an env knob (B10: canonical `PIER_*` first). */
+  readonly aliases?: readonly string[];
   /** One-line effect/impact, shown by `show`. */
   readonly impact: string;
   /** Where to read more (docs/schema anchor). */
@@ -138,23 +140,26 @@ const BOOT_KNOBS: readonly ConfigKnob[] = [
  * the readers in terminal-core.ts / todo-reminder-core.ts / pi-surface bootstrap.
  */
 const ENV_KNOBS: readonly ConfigKnob[] = [
-  { plane: 'env', key: 'PIER_SUBAGENT_TIMEOUT_MS', kind: 'number', defaultValue: 600000, min: 1000, impact: 'Subagent inactivity budget before forced termination' },
-  { plane: 'env', key: 'PIER_GC_TICK_MS', kind: 'number', defaultValue: 30000, min: 1000, impact: 'Subagent GC ticker interval' },
-  { plane: 'env', key: 'PIER_POLL_INTERVAL_MS', kind: 'number', defaultValue: 30000, min: 1000, impact: 'Subagent state observation poll interval' },
-  { plane: 'env', key: 'PIER_SETTLEMENT_WINDOW_MS', kind: 'number', defaultValue: 60000, min: 0, impact: 'Settlement notice window / machine-inject grace / takeover idle' },
-  { plane: 'env', key: 'PIER_OBSERVATION_WINDOW_MS', kind: 'number', defaultValue: 30000, min: 0, impact: 'Post-settle observation window before auto-consume' },
-  { plane: 'env', key: 'PIER_FOREGROUND_PATIENCE_MS', kind: 'number', defaultValue: 300000, min: 0, impact: 'Foreground patience before demoting a subagent to background' },
-  { plane: 'env', key: 'PIER_SESSION_TTL_SECONDS', kind: 'number', defaultValue: 600, min: 0, impact: 'Session retention after subagent exit before GC' },
-  { plane: 'env', key: 'PIER_GIT_TIMEOUT_MS', kind: 'number', defaultValue: 10000, min: 1, impact: 'git worktree/diff/cleanup execution timeout' },
-  { plane: 'env', key: 'PIER_READY_TIMEOUT_MS', kind: 'number', defaultValue: 30000, min: 1000, impact: 'Subagent pane pipe readiness wait' },
-  { plane: 'env', key: 'PIER_ISOLATE_SWEEP_ORPHANS', kind: 'string', impact: 'Opt-in sweeping of orphaned isolate worktrees' },
-  { plane: 'env', key: 'PI_HERDR_TODO_GRACE_MS', kind: 'number', defaultValue: 30000, min: 1, impact: 'Delay before the unfinished-todo reminder fires (0/NaN falls back to the default)' },
-  { plane: 'env', key: 'PI_HERDR_TERM_IDLE_MS', kind: 'number', defaultValue: 1800000, min: 1, impact: 'Terminal idle threshold before a nudge is due (0/NaN falls back to the default)' },
-  { plane: 'env', key: 'PI_HERDR_TERM_GRACE_MS', kind: 'number', defaultValue: 30000, min: 1, impact: 'Extra grace after terminal idle before reading (0/NaN falls back to the default)' },
-  { plane: 'env', key: 'PI_HERDR_TERM_READ_MAX', kind: 'number', defaultValue: 8000, min: 1, impact: 'Maximum terminal characters read per operation (0/NaN falls back to the default)' },
-  { plane: 'env', key: 'PI_HERDR_TRACE', kind: 'string', impact: 'Append pier diagnostics to this file' },
-  { plane: 'env', key: 'PI_HERDR_SLIM_FRAME', kind: 'string', impact: 'Force the slim transcript frame on/off' },
-  { plane: 'env', key: 'PI_HERDR_HMR', kind: 'string', impact: 'Force hot-reload wiring on/off' },
+  { plane: 'env', key: 'PIER_SUBAGENT_TIMEOUT_MS', aliases: ['PI_HERDR_SUBAGENT_TIMEOUT_MS'], kind: 'number', defaultValue: 600000, min: 1000, impact: 'Subagent inactivity budget before forced termination' },
+  { plane: 'env', key: 'PIER_GC_TICK_MS', aliases: ['PI_HERDR_GC_TICK_MS'], kind: 'number', defaultValue: 30000, min: 1000, impact: 'Subagent GC ticker interval' },
+  { plane: 'env', key: 'PIER_POLL_INTERVAL_MS', aliases: ['PI_HERDR_POLL_INTERVAL_MS'], kind: 'number', defaultValue: 30000, min: 1000, impact: 'Subagent state observation poll interval' },
+  { plane: 'env', key: 'PIER_SETTLEMENT_WINDOW_MS', aliases: ['PI_HERDR_SETTLEMENT_WINDOW_MS'], kind: 'number', defaultValue: 60000, min: 0, impact: 'Settlement notice window / machine-inject grace / takeover idle' },
+  { plane: 'env', key: 'PIER_OBSERVATION_WINDOW_MS', aliases: ['PI_HERDR_OBSERVATION_WINDOW_MS'], kind: 'number', defaultValue: 30000, min: 0, impact: 'Post-settle observation window before auto-consume' },
+  { plane: 'env', key: 'PIER_FOREGROUND_PATIENCE_MS', aliases: ['PI_HERDR_FOREGROUND_PATIENCE_MS'], kind: 'number', defaultValue: 300000, min: 0, impact: 'Foreground patience before demoting a subagent to background' },
+  { plane: 'env', key: 'PIER_SESSION_TTL_SECONDS', aliases: ['PI_HERDR_SESSION_TTL_SECONDS'], kind: 'number', defaultValue: 600, min: 0, impact: 'Session retention after subagent exit before GC' },
+  { plane: 'env', key: 'PIER_GIT_TIMEOUT_MS', aliases: ['PI_HERDR_GIT_TIMEOUT_MS'], kind: 'number', defaultValue: 10000, min: 1, impact: 'git worktree/diff/cleanup execution timeout' },
+  { plane: 'env', key: 'PIER_READY_TIMEOUT_MS', aliases: ['PI_HERDR_READY_TIMEOUT_MS'], kind: 'number', defaultValue: 90000, min: 1000, impact: 'Subagent pane pipe readiness wait (backoff; a dead pane fails fast)' },
+  { plane: 'env', key: 'PIER_ISOLATE_SWEEP_ORPHANS', aliases: ['PI_HERDR_ISOLATE_SWEEP_ORPHANS'], kind: 'string', impact: 'Opt-in sweeping of orphaned isolate worktrees' },
+  { plane: 'env', key: 'PIER_FOCUS_POLL_MS', kind: 'number', defaultValue: 1500, min: 0, impact: 'Pane-focus sampling cadence for the workbench heat layout (0 disables)' },
+  { plane: 'env', key: 'PIER_TERMINAL_PROMPT', aliases: ['PI_HERDR_TERMINAL_PROMPT'], kind: 'string', impact: 'Terminal readiness prompt strategy: bash|zsh|powershell|pwsh (default: $SHELL)' },
+  // B10: canonical names are `PIER_*`; the `PI_HERDR_*` spelling stays accepted (aliases).
+  { plane: 'env', key: 'PIER_TODO_GRACE_MS', aliases: ['PI_HERDR_TODO_GRACE_MS'], kind: 'number', defaultValue: 30000, min: 1, impact: 'Delay before the unfinished-todo reminder fires (0/NaN falls back to the default)' },
+  { plane: 'env', key: 'PIER_TERM_IDLE_MS', aliases: ['PI_HERDR_TERM_IDLE_MS'], kind: 'number', defaultValue: 1800000, min: 1, impact: 'Terminal idle threshold before a nudge is due (0/NaN falls back to the default)' },
+  { plane: 'env', key: 'PIER_TERM_GRACE_MS', aliases: ['PI_HERDR_TERM_GRACE_MS'], kind: 'number', defaultValue: 30000, min: 1, impact: 'Extra grace after terminal idle before reading (0/NaN falls back to the default)' },
+  { plane: 'env', key: 'PIER_TERM_READ_MAX', aliases: ['PI_HERDR_TERM_READ_MAX'], kind: 'number', defaultValue: 8000, min: 1, impact: 'Maximum terminal characters read per operation (0/NaN falls back to the default)' },
+  { plane: 'env', key: 'PIER_TRACE', aliases: ['PI_HERDR_TRACE'], kind: 'string', impact: 'Write pier diagnostics to stderr (or to this file when it is a path)' },
+  { plane: 'env', key: 'PIER_SLIM_FRAME', aliases: ['PI_HERDR_SLIM_FRAME'], kind: 'string', impact: 'Force the slim transcript frame on/off' },
+  { plane: 'env', key: 'PIER_HMR', aliases: ['PI_HERDR_HMR'], kind: 'string', impact: 'Force hot-reload wiring on/off' },
 ];
 
 export const CONFIG_KNOBS: readonly ConfigKnob[] = Object.freeze([
@@ -215,6 +220,8 @@ export interface ResolvedKnob {
   readonly knob: ConfigKnob;
   readonly value: string;
   readonly source: ConfigSource;
+  /** Env var that actually supplied the value when it is an alias of `knob.key`. */
+  readonly via?: string;
   /** Set when a workspace layer exists but was ignored (untrusted project). */
   readonly note?: string;
 }
@@ -282,11 +289,18 @@ export function resolveConfigKnobs(layers: RawConfigLayers): ResolvedKnob[] {
 /** Resolves the env plane: only catalog keys are ever read. */
 export function resolveEnvKnobs(env: Record<string, string | undefined> = {}): ResolvedKnob[] {
   return ENV_KNOBS.map((knob) => {
-    const raw = env[knob.key];
-    if (raw === undefined || raw === '') {
-      return { knob, value: redactValue(knob.key, knob.defaultValue), source: 'default' as const };
+    // Same precedence as pierOption(): canonical first, then the historical spelling, empty = unset.
+    for (const name of [knob.key, ...(knob.aliases ?? [])]) {
+      const raw = env[name];
+      if (raw === undefined || raw === '') continue;
+      return {
+        knob,
+        value: redactValue(knob.key, raw),
+        source: 'env' as const,
+        ...(name === knob.key ? {} : { via: name }),
+      };
     }
-    return { knob, value: redactValue(knob.key, raw), source: 'env' as const };
+    return { knob, value: redactValue(knob.key, knob.defaultValue), source: 'default' as const };
   });
 }
 
@@ -302,13 +316,15 @@ export interface CheckReport {
 export function checkEnvKnobs(env: Record<string, string | undefined> = {}): string[] {
   const issues: string[] = [];
   for (const knob of ENV_KNOBS) {
-    const raw = env[knob.key];
-    if (raw === undefined || raw === '') continue;
-    if (knob.kind !== 'number') continue;
-    const parsed = Number.parseInt(raw, 10);
-    const min = knob.min ?? 0;
-    if (!Number.isFinite(parsed) || parsed < min) {
-      issues.push(`${knob.key}="${raw}" is not a valid integer >= ${min} (runtime falls back to ${formatValue(knob.defaultValue)})`);
+    for (const name of [knob.key, ...(knob.aliases ?? [])]) {
+      const raw = env[name];
+      if (raw === undefined || raw === '') continue;
+      if (knob.kind !== 'number') continue;
+      const parsed = Number.parseInt(raw, 10);
+      const min = knob.min ?? 0;
+      if (!Number.isFinite(parsed) || parsed < min) {
+        issues.push(`${name}="${raw}" is not a valid integer >= ${min} (runtime falls back to ${formatValue(knob.defaultValue)})`);
+      }
     }
   }
   return issues;
@@ -325,7 +341,8 @@ const SOURCE_TAG: Record<ConfigSource, string> = {
 };
 
 function sourceLabel(entry: ResolvedKnob): string {
-  return entry.note ? `${SOURCE_TAG[entry.source]} (${entry.note})` : SOURCE_TAG[entry.source];
+  const base = entry.via ? `${SOURCE_TAG[entry.source]} via ${entry.via}` : SOURCE_TAG[entry.source];
+  return entry.note ? `${base} (${entry.note})` : base;
 }
 
 /** Short non-default summary of one plane: "3 changed (env 1 / workspace 1 / user 1)". */

@@ -171,6 +171,14 @@ test('resolveEnvKnobs and checkEnvKnobs only touch catalog keys', () => {
   const env = { PIER_GC_TICK_MS: '5000', PI_HERDR_TERM_IDLE_MS: '0', PIER_SESSION_TTL_SECONDS: 'nope', SECRET_TOKEN: 'x' };
   const resolved = resolveEnvKnobs(env);
   assert.equal(resolved.length, catalogKeysForPlane('env').length);
+  // B10: legacy spelling supplies the value and the row says so; canonical wins when both are set.
+  const idleViaAlias = resolved.find((r) => r.knob.key === 'PIER_TERM_IDLE_MS')!;
+  assert.equal(idleViaAlias.value, '0');
+  assert.equal(idleViaAlias.via, 'PI_HERDR_TERM_IDLE_MS');
+  const canonicalWins = resolveEnvKnobs({ PIER_TERM_IDLE_MS: '5', PI_HERDR_TERM_IDLE_MS: '9' })
+    .find((r) => r.knob.key === 'PIER_TERM_IDLE_MS')!;
+  assert.equal(canonicalWins.value, '5');
+  assert.equal(canonicalWins.via, undefined);
   assert.equal(resolved.find((r) => r.knob.key === 'PIER_GC_TICK_MS')!.source, 'env');
   assert.equal(resolved.find((r) => r.knob.key === 'PIER_GC_TICK_MS')!.value, '5000');
   assert.equal(resolved.some((r) => r.knob.key === 'SECRET_TOKEN'), false, 'unknown env keys are never reported');

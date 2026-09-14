@@ -24,11 +24,13 @@ export interface OptionSpec {
 
 /** Every pier option, with its alias and default. Keep in sync with `runtimePolicy`/config readers. */
 export const PIER_OPTIONS: readonly OptionSpec[] = [
-  { name: 'PIER_GIT_TIMEOUT_MS', legacy: 'PI_HERDR_GIT_TIMEOUT_MS', fallback: '120000', description: 'git command timeout (worktree/status batches)' },
-  { name: 'PIER_SUBAGENT_TIMEOUT_MS', legacy: 'PI_HERDR_SUBAGENT_TIMEOUT_MS', fallback: '300000', description: 'foreground patience budget per subagent' },
+  // Numeric fallbacks MUST equal runtime-policy.ts (guarded by test/pier-options.test.ts): the table is
+  // what `/pier-config doctor` shows, so a hand-typed number here is a documented lie.
+  { name: 'PIER_GIT_TIMEOUT_MS', legacy: 'PI_HERDR_GIT_TIMEOUT_MS', fallback: '10000', description: 'git command timeout (worktree/status batches)' },
+  { name: 'PIER_SUBAGENT_TIMEOUT_MS', legacy: 'PI_HERDR_SUBAGENT_TIMEOUT_MS', fallback: '600000', description: 'subagent inactivity budget before forced termination' },
   { name: 'PIER_READY_TIMEOUT_MS', legacy: 'PI_HERDR_READY_TIMEOUT_MS', fallback: '90000', description: 'how long to wait for a spawned pane to open its pipe' },
   { name: 'PIER_OBSERVATION_WINDOW_MS', legacy: 'PI_HERDR_OBSERVATION_WINDOW_MS', fallback: '30000', description: 'observation window before a subagent is called settled' },
-  { name: 'PIER_POLL_INTERVAL_MS', legacy: 'PI_HERDR_POLL_INTERVAL_MS', fallback: '5000', description: 'subagent poll cadence' },
+  { name: 'PIER_POLL_INTERVAL_MS', legacy: 'PI_HERDR_POLL_INTERVAL_MS', fallback: '30000', description: 'subagent poll cadence' },
   { name: 'PIER_GC_TICK_MS', legacy: 'PI_HERDR_GC_TICK_MS', fallback: '30000', description: 'idle GC sweep cadence (panes/worktrees)' },
   { name: 'PIER_FOCUS_POLL_MS', fallback: '1500', description: 'pane-focus sampling cadence for the heat layout (0 disables)' },
   { name: 'PIER_TERMINAL_PROMPT', legacy: 'PI_HERDR_TERMINAL_PROMPT', fallback: '(auto from $SHELL)', description: 'prompt strategy for terminal readiness: bash|zsh|powershell|pwsh' },
@@ -39,6 +41,10 @@ export const PIER_OPTIONS: readonly OptionSpec[] = [
   { name: 'PIER_TERM_READ_MAX', legacy: 'PI_HERDR_TERM_READ_MAX', fallback: '8000', description: 'characters returned per terminal read' },
   { name: 'PIER_TODO_GRACE_MS', legacy: 'PI_HERDR_TODO_GRACE_MS', fallback: '30000', description: 'settle grace before the unfinished-todo reminder' },
   { name: 'PIER_HMR', legacy: 'PI_HERDR_HMR', fallback: '', description: 'dev: enable the cordis HMR boundary (requires --expose-internals)' },
+  { name: 'PIER_SETTLEMENT_WINDOW_MS', legacy: 'PI_HERDR_SETTLEMENT_WINDOW_MS', fallback: '60000', description: 'settlement notice window / machine-inject grace / takeover idle' },
+  { name: 'PIER_FOREGROUND_PATIENCE_MS', legacy: 'PI_HERDR_FOREGROUND_PATIENCE_MS', fallback: '300000', description: 'foreground patience before demoting a subagent to background' },
+  { name: 'PIER_SESSION_TTL_SECONDS', legacy: 'PI_HERDR_SESSION_TTL_SECONDS', fallback: '600', description: 'session retention after a subagent exits, before GC' },
+  { name: 'PIER_ISOLATE_SWEEP_ORPHANS', legacy: 'PI_HERDR_ISOLATE_SWEEP_ORPHANS', fallback: '', description: 'opt-in sweeping of isolate worktrees this session never registered' },
 ];
 
 /**
