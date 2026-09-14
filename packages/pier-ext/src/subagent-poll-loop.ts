@@ -204,6 +204,9 @@ export function createPoller(h: PollerHost): Poller {
             }
             entry.status = 'consumed';
             entry.consumedAt = now();
+            // A3: this path consumed the sub too - persist, or the session snapshot keeps it
+            // "running" and a restart replays a ghost subagent into list/settle-wake/zombie sweep.
+            h.persistSubs();
             h.writeHistory(entry, { outcome: closing }, 'poll-settle');
             const notes = h.reconcileOnSettlement(description, 'settled');
             const statLine = await h.git.worktreeStatLine(entry);

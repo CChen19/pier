@@ -275,3 +275,45 @@ test('runAsk：第二题 Esc 整次拒绝，第一题留在 details', async () =
   assert.equal(result.details.answers.length, 1);
   assert.equal(result.details.answers[0]?.answer, 'Redis');
 });
+
+test('parseOptions (B3): 剥掉模型重复写的 "(Recommended)" 标记', () => {
+  const spec = prepareAsk({
+    question: 'Which store?',
+    required: true,
+    options: [
+      { label: 'Redis (Recommended)', description: 'In-memory' },
+      { label: 'Postgres' },
+    ],
+    recommended: 0,
+  });
+  assert.equal(spec.ok, true);
+  if (!spec.ok || spec.spec.mode !== 'questionnaire') return;
+  assert.equal(spec.spec.questions[0]!.options[0]!.label, 'Redis');
+  // 渲染时标记只出现一次
+  const lines = optionLines(spec.spec.questions[0]!);
+  assert.equal(lines[0], `1. Redis${RECOMMENDED_SUFFIX} — In-memory`);
+  // 方括号 / 大小写变体同样处理
+  const bracket = prepareAsk({
+    question: 'q',
+    options: [{ label: 'Pick me [recommended]' }, { label: 'Or me' }],
+  });
+  assert.equal(bracket.ok, true);
+  if (!bracket.ok || bracket.spec.mode !== 'questionnaire') return;
+  assert.equal(bracket.spec.questions[0]!.options[0]!.label, 'Pick me');
+});
+
+test('parseOptions (B3): 只在结尾剥离，正常提到 recommended 的标签不动；纯标记标签报错', () => {
+  const keep = prepareAsk({
+    question: 'q',
+    options: [{ label: 'Recommended approach' }, { label: 'not recommended at all' }],
+  });
+  assert.equal(keep.ok, true);
+  if (!keep.ok || keep.spec.mode !== 'questionnaire') return;
+  assert.deepEqual(keep.spec.questions[0]!.options.map((o) => o.label), ['Recommended approach', 'not recommended at all']);
+
+  const only = prepareAsk({ question: 'q', options: [{ label: ' (Recommended) ' }, { label: 'B' }] });
+  assert.equal(only.ok, false);
+  if (only.ok) return;
+  assert.equal(only.result.details?.error, 'empty_options');
+  assert.match(String(only.result.content?.[0]?.text ?? ''), /marker the UI appends/);
+});

@@ -53,6 +53,11 @@ export async function handlePipeRequest(
       return { type: 'ok', id: req.id };
     case 'reply': {
       s.port.current?.applyReplySession(req.paneId, req.sessionFile);
+      // B8: the claim key is `${paneId}:${requestId}` and the poll loop claims exactly the same shape
+      // (subagent-poll-loop.ts settle path). The two agree because a child echoes the id of the pipe
+      // request it answered (`id: req.id` in index.ts's settle push), and the parent hands that same
+      // id to startPoller (`prompt-<taskId>` / `fu-<ts>` in core/subagent.ts). Keep both sides in step:
+      // a mismatch here surfaces as two "finished" notices for one settlement.
       if (s.claimSettleNotice(`${req.paneId}:${req.id}`)) {
         const notes = s.port.current?.reconcileOnReply(req.paneId) ?? [];
         const statLine = await s.port.current?.settleStatLine(req.paneId) ?? null;

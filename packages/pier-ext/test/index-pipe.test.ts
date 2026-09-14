@@ -96,3 +96,40 @@ test('handlePipeRequest: reply binds port, claims once, delivers notice', async 
   assert.equal(notices.length, 1, 'duplicate claim must not re-deliver');
   assert.deepEqual(claimed, ['p2:r1', 'p2:r1']);
 });
+
+test('handlePipeRequest reply (B8): claim key 与 poll-loop 同源（子进程回包回显请求 id）', async () => {
+  // 契约：父进程发 `prompt-<taskId>` → 子进程 pendingMachineRequest.id 就是它 → 结算时
+  // index.ts 用 `id: req.id` 推 reply → 两条路径的 `${paneId}:${id}` 必然相等。
+  // 唯一例外是 restore 时的 `probe-<paneId>` 兜底 id，它不会收到 push 回包（父进程内存态已丢），
+  // 因此不会与 reply 路径撞车。任何一侧改了 id 生成/回显方式，这个测试会先报警。
+  const claims: string[] = [];
+  let pending: MachineRequest | null = null;
+  const port = emptySubagentPortBox();
+  port.current = fakePort();
+  const session = {
+    paneId: 'p0',
+    port,
+    claimSettleNotice: (key: string) => { claims.push(key); return true; },
+    deliverNotice: async () => {},
+    sendUserMessageIn: async () => {},
+    sendUserMessageAs: async () => {},
+    abort: () => {},
+    setPendingMachineRequest: (req: MachineRequest | null) => { pending = req; },
+  };
+
+  // 父进程（poll-loop 侧）发送的 id：`prompt-<taskId>`（core/subagent.ts:976）
+  const sentId = 'prompt-3f1a-任务';
+  await handlePipeRequest({ type: 'prompt', id: sentId, text: 'go', from: 'src', push: true }, session);
+  assert.equal(pending?.id, sentId, '父进程发出的 id 正是 pending 里的 id');
+  const requestIdForPoller = sentId; // core/subagent.ts 把同一个值传给 startPoller
+
+  // 子进程结算时按 index.ts 的形状回推（id 回显）
+  await handlePipeRequest(
+    { type: 'reply', id: pending!.id, paneId: 'p2', text: 'done', sessionFile: null },
+    session,
+  );
+
+  assert.deepEqual(claims, [`p2:${sentId}`]);
+  // poll-loop 侧的 key 形状：`${paneId}:${requestId}`（subagent-poll-loop.ts:217）
+  assert.equal(`${'p2'}:${requestIdForPoller}`, claims[0]);
+});

@@ -13,6 +13,7 @@ import {
   createHerdrClient,
   detectHerdrEnv,
   herdrSocketTarget,
+  herdrUnavailableHint,
 } from '../src/herdr-client.ts';
 import { LOCK_BATCH_LIMIT } from '../src/lock-core.ts';
 import { withCleanup } from './test-utils.ts';
@@ -414,3 +415,12 @@ test('HerdrClient: readPane unwraps read envelope; waitForOutput timeout → dis
     await hang.close();
   }
 }));
+
+test('herdrUnavailableHint (B5): 传输层失败给出可动作的一句话，其它错误返回 null', () => {
+  assert.match(String(herdrUnavailableHint(new Error('connect ENOENT /tmp/herdr.sock'))), /herdr unreachable/);
+  assert.match(String(herdrUnavailableHint(new Error('connect ECONNREFUSED 127.0.0.1:1'))), /HERDR_SOCKET_PATH/);
+  assert.match(String(herdrUnavailableHint(new Error('socket hang up'))), /herdr unreachable/);
+  // 业务错误不该被包装成"herdr 不可达"
+  assert.equal(herdrUnavailableHint(new Error('pane_not_found: wX:p9')), null);
+  assert.equal(herdrUnavailableHint(new Error('invalid regex')), null);
+});

@@ -79,6 +79,19 @@ export function herdrSocketTarget(socketPath: string, platform: NodeJS.Platform 
   return socketPath.startsWith('\\\\.\\pipe\\') ? socketPath : `\\\\.\\pipe\\${socketPath}`;
 }
 
+/**
+ * B5: herdr can be configured but unreachable (server stopped, stale/typo'd HERDR_SOCKET_PATH).
+ * A raw errno ("connect ENOENT /Users/…/herdr.sock") tells the model nothing to act on, so tool
+ * layers append this one sentence. Returns null when the failure is not a transport failure.
+ */
+export function herdrUnavailableHint(err: unknown): string | null {
+  const msg = String((err as { message?: unknown })?.message ?? err);
+  if (!/ENOENT|ECONNREFUSED|ECONNRESET|EPIPE|ENOTCONN|not connected|socket|connect |timeout/i.test(msg)) {
+    return null;
+  }
+  return `herdr unreachable (${msg}) — check that the herdr server is running and HERDR_SOCKET_PATH matches its socket`;
+}
+
 
 export type WaitForOutputResult =
   | { matched: true }

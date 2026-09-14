@@ -48,10 +48,13 @@ export const TODO_TOOL_NAME = 'todo_write';
 /** Snapshot key in tool-result details (persisted in session JSONL). */
 export const TODO_DETAILS_KEY = 'pi-herdr.todo';
 
-/** Confirmation copy (byte-aligned with DSH so model vocab transfers). */
+/** Confirmation copy (byte-aligned with DSH so model vocab transfers; blocked is appended only when present). */
 export function formatTodoConfirmation(items: readonly TodoItem[]): string {
   const c = countTodos(items);
-  return `Updated todo list: ${c.pending} pending, ${c.inProgress} in progress, ${c.completed} completed.`;
+  const base = `Updated todo list: ${c.pending} pending, ${c.inProgress} in progress, ${c.completed} completed.`;
+  // A4: blocked items used to be invisible here (the model read "nothing pending" while items sat
+  // blocked waiting on a human). Appending only when non-zero keeps the DSH-aligned wording intact.
+  return c.blocked > 0 ? `${base.slice(0, -1)}, ${c.blocked} blocked.` : base;
 }
 
 export function countTodos(items: readonly TodoItem[]): TodoCounts {

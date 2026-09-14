@@ -69,7 +69,7 @@ export const ASK_TOOL_DESCRIPTION = [
   'While waiting, the pane shows as blocked in herdr (the human sees it and can step in).',
   'Prefer 2-5 options with short labels; put tradeoffs in description.',
   'Do NOT include an "Other" option — the UI appends "Other (type your own)" automatically.',
-  'Use recommended (0-based) to mark the default; "(Recommended)" is added automatically.',
+  'Use recommended (0-based) to mark the default; "(Recommended)" is added automatically — do NOT write it in the label.',
   'Use multi: true when several options can apply — the TUI opens an interactive toggle list (space toggles a row, a toggles all, enter confirms, esc declines) instead of making the human type numbers.',
   'Set allowOther: false when the authored choices are exhaustive and a free-text answer would be misleading.',
   'The answer comes back as the tool result; then continue your work.',
@@ -178,8 +178,19 @@ function parseOptions(raw: unknown): { ok: true; options: AskOption[] } | { ok: 
   const seen = new Set<string>();
   for (const item of raw) {
     const rec = asRecord(item);
-    const label = typeof rec?.label === 'string' ? rec.label.trim() : '';
-    if (!label) return fail('Error: each option needs a non-empty label', 'empty_options');
+    const rawLabel = typeof rec?.label === 'string' ? rec.label.trim() : '';
+    // B3: models often repeat the UI's own marker (`label: 'Redis (Recommended)'`), which rendered
+    // as "Redis (Recommended) (Recommended)". Only a trailing bracketed marker is stripped, so a
+    // label that merely mentions the word ("Recommended approach") survives untouched.
+    const label = rawLabel.replace(/\s*[([]\s*recommended\s*[)\]]\s*$/i, '').trim();
+    if (!label) {
+      return fail(
+        rawLabel
+          ? `Error: option label "${rawLabel}" is only the marker the UI appends — give the choice a real name and pass "recommended" instead`
+          : 'Error: each option needs a non-empty label',
+        'empty_options',
+      );
+    }
     if (label.length > MAX_LABEL_CHARS) {
       return fail(`Error: option label exceeds ${MAX_LABEL_CHARS} characters`, 'label_too_long');
     }

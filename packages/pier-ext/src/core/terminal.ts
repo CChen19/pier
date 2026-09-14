@@ -10,6 +10,7 @@ import { Context } from '@deepseek-ai/cordis';
 import { Type } from 'typebox';
 import type { PiSurface } from '../pi-surface.ts';
 import type { HerdrClientLike } from '../herdr-client.ts';
+import { herdrUnavailableHint } from '../herdr-client.ts';
 import {
   READINESS_TIMEOUT_MS,
   READ_MAX_CHARS,
@@ -263,7 +264,8 @@ export default function terminalPlugin(ctx: Context): void {
     try {
       paneId = await client.splitPane({ direction: 'right', cwd, focus: false, targetPaneId: env.paneId });
     } catch (e) {
-      return errText(`failed to split terminal pane: ${(e as Error).message}`);
+      const hint = herdrUnavailableHint(e);
+      return errText(hint ?? `failed to split terminal pane: ${(e as Error).message}`);
     }
     r.entry.paneId = paneId;
     terminals = r.entries;
@@ -321,7 +323,9 @@ export default function terminalPlugin(ctx: Context): void {
     try {
       await client.sendPaneText(entry.paneId, v.text);
     } catch (e) {
-      return errText(`send failed (pane may be closed): ${(e as Error).message}`);
+      // B5: a dead herdr socket would otherwise read as "pane may be closed", which sends the
+      // model hunting for a pane that is fine. Prefer the actionable transport sentence.
+      return errText(herdrUnavailableHint(e) ?? `send failed (pane may be closed): ${(e as Error).message}`);
     }
     touchTerminal(entry);
     return { content: [{ type: 'text', text: `sent to ${entry.terminalId} (${v.text.length} chars)` }], details: { terminal_id: entry.terminalId } };
@@ -356,7 +360,7 @@ export default function terminalPlugin(ctx: Context): void {
         waitResult = { matched: false, reason: 'unavailable' };
       }
     } catch (e) {
-      return errText(`wait failed (pane may be closed): ${(e as Error).message}`);
+      return errText(herdrUnavailableHint(e) ?? `wait failed (pane may be closed): ${(e as Error).message}`);
     }
     if (!waitResult.matched) {
       // wait-for-text convention: on timeout, hand back the recent tail so the model can decide
@@ -399,7 +403,7 @@ export default function terminalPlugin(ctx: Context): void {
         }
         paneId = params.pane_id;
       } catch (e) {
-        return errText(`pane lookup failed: ${(e as Error).message}`);
+        return errText(herdrUnavailableHint(e) ?? `pane lookup failed: ${(e as Error).message}`);
       }
     } else {
       return errText('provide terminal_id (or pane_id for a direct own-tab read)');
@@ -410,7 +414,7 @@ export default function terminalPlugin(ctx: Context): void {
     try {
       read = await client.readPane(paneId, { stripAnsi: false });
     } catch (e) {
-      return errText(`read failed (pane may be closed): ${(e as Error).message}`);
+      return errText(herdrUnavailableHint(e) ?? `read failed (pane may be closed): ${(e as Error).message}`);
     }
     // T6 inspects raw output because ANSI stripping would erase alternate-screen evidence.
     const tui = detectFullscreenTUI(read.text);
@@ -457,7 +461,7 @@ export default function terminalPlugin(ctx: Context): void {
     try {
       await client.sendPaneKeys(entry.paneId, [v.key]);
     } catch (e) {
-      return errText(`signal failed (pane may be closed): ${(e as Error).message}`);
+      return errText(herdrUnavailableHint(e) ?? `signal failed (pane may be closed): ${(e as Error).message}`);
     }
     touchTerminal(entry);
     return { content: [{ type: 'text', text: `signal ${v.key} sent to ${entry.terminalId}` }], details: { terminal_id: entry.terminalId, key: v.key } };
