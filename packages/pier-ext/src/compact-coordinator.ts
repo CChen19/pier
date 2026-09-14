@@ -280,10 +280,7 @@ export class CompactCoordinator {
             this.state.cacheDebtRepaymentTokens = Math.max(0, decision.archiveTokens - decision.memoTokens);
             this.state.epoch++;
 
-            (opts.pi as { appendEntry?: (type: string, data: unknown) => void }).appendEntry?.(
-              COMPACT_STATE_CUSTOM_TYPE,
-              this.state,
-            );
+            opts.pi.appendEntry(COMPACT_STATE_CUSTOM_TYPE, this.state);
 
             if (opts.config.logEnabled) {
               const sessionDir = opts.ctx.sessionManager?.getSessionDir?.();
@@ -312,7 +309,7 @@ export class CompactCoordinator {
             }
 
             try {
-              (opts.pi as unknown as { sendMessage?: (msg: unknown, o: unknown) => void }).sendMessage?.(
+              opts.pi.sendMessage(
                 {
                   customType: COMPACTION_CONTINUE_TYPE,
                   content: 'Online context compaction finished. Active tasks preserved. Continue working on remaining tasks.',
@@ -329,9 +326,59 @@ export class CompactCoordinator {
             finish();
           }
         },
-        onError: () => {
+        onError: (error) => {
           this.compactionInFlight = false;
           this.intentionalAbort = false;
+
+          // `Compaction cancelled` / AbortError mean the user (or pi) cancelled on purpose.
+          // Telemetry must keep those apart from real failures, and a cancelled compaction
+          // must NOT be answered with a turn-triggering continuation.
+          const cancelled =
+            error instanceof Error &&
+            (error.name === 'AbortError' || error.message === 'Compaction cancelled');
+
+          if (opts.config.logEnabled) {
+            const sessionDir = opts.ctx.sessionManager?.getSessionDir?.();
+            const sessionId = opts.ctx.sessionManager?.getSessionId?.();
+            const root = resolveSessionRoot(sessionDir, sessionId);
+            if (root) {
+              const logPath = efficiencyLogPath(root, 'compact');
+              void appendEfficiencyLog(logPath, {
+                schema: 'pier-efficiency/1',
+                mechanism: 'onlineContextCompact',
+                event: 'compaction-failed',
+                ts: new Date().toISOString(),
+                sessionId: sessionId ?? 'unknown',
+                epoch: this.state.epoch,
+                decision: decision.reason,
+                cancelled,
+                error: error instanceof Error ? error.message : String(error),
+                durationMs: Date.now() - startMs,
+              }).catch(() => {});
+            }
+          }
+
+          if (cancelled) {
+            finish();
+            return;
+          }
+
+          // Resume the task: OCC aborted the turn on purpose, so a failed compaction would
+          // otherwise leave the session parked on an aborted assistant message. Pi's own
+          // threshold compaction stays available as the safety net.
+          try {
+            opts.pi.sendMessage(
+              {
+                customType: COMPACTION_CONTINUE_TYPE,
+                content: 'Context compaction failed. Continuing with the current context.',
+                display: false,
+              },
+              { triggerTurn: true },
+            );
+          } catch {
+            /* ignore continuation failure */
+          }
+
           finish();
         },
       });

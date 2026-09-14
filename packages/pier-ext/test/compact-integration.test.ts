@@ -10,15 +10,23 @@ import {
   restoreCoordinatorState,
 } from '../src/compact-coordinator.ts';
 import type { TodoItem } from '../src/todo-core.ts';
-import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
+import { decideCompaction } from '../src/compact-economics-core.ts';
+import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
+
+/** The subset of pi's `ctx.compact()` options the coordinator passes. */
+interface CompactCall {
+  customInstructions: string;
+  onComplete: (compaction: { summary?: string } | undefined) => void;
+  onError: (error: Error) => void;
+}
 
 function createMockContext(opts: {
   tokens?: number;
   hasPending?: boolean;
   branch?: any[];
-}): { ctx: ExtensionContext; abortCalls: number; compactCalls: any[] } {
+}): { ctx: ExtensionContext; abortCalls: () => number; compactCalls: CompactCall[] } {
   let abortCalls = 0;
-  const compactCalls: any[] = [];
+  const compactCalls: CompactCall[] = [];
 
   const ctx: any = {
     getContextUsage: () => ({
@@ -36,7 +44,7 @@ function createMockContext(opts: {
     abort() {
       abortCalls++;
     },
-    compact(options: any) {
+    compact(options: CompactCall) {
       compactCalls.push(options);
     },
   };
@@ -310,6 +318,78 @@ test('CompactCoordinator: onError safely resets inFlight and intentional flags (
   assert.equal(coordinator.intentionalAbort, false);
 });
 
+test('CompactCoordinator: a cancelled compaction stays cancelled, a failed one resumes the task', async () => {
+  const decision = decideCompaction({
+    writeTokens: 60000,
+    archiveTokens: 40000,
+    memoTokens: 1000,
+    contextTokens: 60000,
+    completedBoundaryRequestCounts: [10],
+    remainingBoundaries: 1,
+    averageContextTokenIncrement: null,
+    contextWindowTokens: 128000,
+    priorCompactionCount: 1,
+    carriedDebtTokens: 0,
+    cacheDebtRepaymentTokens: 0,
+    cacheWriteReadRatio: 2.0,
+  });
+
+  const setup = () => {
+    const coordinator = new CompactCoordinator();
+    coordinator.selectedCompaction = decision;
+    coordinator.intentionalAbort = true;
+
+    const mock = createMockContext({});
+    const sent: Array<{ msg: { content?: unknown }; opts: { triggerTurn?: boolean } }> = [];
+    // Test double: the coordinator's only touchpoints on `pi` are appendEntry and sendMessage.
+    const piStub = {
+      appendEntry: () => {},
+      sendMessage: (msg: { content?: unknown }, opts: { triggerTurn?: boolean }) => {
+        sent.push({ msg, opts });
+      },
+    } as unknown as ExtensionAPI;
+
+    const settle = coordinator.onAgentSettled({
+      ctx: mock.ctx,
+      todos: [],
+      pi: piStub,
+      config: {
+        enabled: true,
+        logEnabled: false,
+        cacheWriteReadRatio: 2.0,
+        firstCompactionRequestScale: 2.0,
+        subsequentCompactionMargin: 1.5,
+      },
+    });
+    return { coordinator, mock, sent, settle };
+  };
+
+  // 1. User cancel (pi throws exactly this) must NOT resurrect the turn the user just stopped.
+  const cancelled = setup();
+  cancelled.mock.compactCalls[0]!.onError(new Error('Compaction cancelled'));
+  await cancelled.settle;
+  assert.equal(cancelled.sent.length, 0, 'cancelling must not trigger a continuation turn');
+  assert.equal(cancelled.coordinator.compactionInFlight, false);
+
+  // 2. A real failure left the session parked on the aborted turn, so it must resume.
+  const failed = setup();
+  failed.mock.compactCalls[0]!.onError(new Error('Summarization failed: generation hit the token cap'));
+  await failed.settle;
+  assert.equal(failed.sent.length, 1, 'a failed compaction must resume the task');
+  assert.equal(failed.sent[0]!.opts.triggerTurn, true);
+  assert.match(String(failed.sent[0]!.msg.content), /compaction failed/i);
+  assert.equal(failed.coordinator.compactionInFlight, false);
+  assert.equal(failed.coordinator.intentionalAbort, false);
+
+  // 3. AbortError (ESC during compaction) is a cancel, not a failure.
+  const aborted = setup();
+  const abortError = new Error('aborted');
+  abortError.name = 'AbortError';
+  aborted.mock.compactCalls[0]!.onError(abortError);
+  await aborted.settle;
+  assert.equal(aborted.sent.length, 0);
+});
+
 test('CompactCoordinator: turn_end falls back when usage.tokens is null or 0 (P2-11)', () => {
   const coordinator = new CompactCoordinator();
   coordinator.state.lastContextTokens = 35000;
@@ -317,7 +397,7 @@ test('CompactCoordinator: turn_end falls back when usage.tokens is null or 0 (P2
 
   const mock = createMockContext({});
   // Mock usage with null tokens (as Pi returns right after compaction before next response)
-  mock.ctx.getContextUsage = () => ({ tokens: null as any, contextWindow: 128000 });
+  mock.ctx.getContextUsage = () => ({ tokens: null, contextWindow: 128000, percent: 0 });
 
   coordinator.onTurnEnd({
     ctx: mock.ctx,
