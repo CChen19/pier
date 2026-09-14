@@ -39,6 +39,7 @@ import {
   type ReadCursor,
   type TerminalEntry,
 } from '../terminal-core.ts';
+import { swallow } from '../swallow.ts';
 
 export interface TerminalStateSlot {
   /** Lets index GC preserve panes that host active terminals. */
@@ -69,7 +70,8 @@ export default function terminalPlugin(ctx: Context): void {
   function persistTerminals(): void {
     try {
       pi.appendEntry?.(TERMINALS_CUSTOM_TYPE, makeTerminalsRegistry(terminals));
-    } catch {
+    } catch (err) {
+      swallow('terminal.persist-registry', err);
       /* Persistence is best-effort because terminal operation must not depend on session logging. */
     }
   }
@@ -198,6 +200,14 @@ export default function terminalPlugin(ctx: Context): void {
       'Long job pattern: send "cmd; echo TERM_DONE_$?" then wait with pattern "TERM_DONE_" — the sentinel also carries the exit code; redirect verbose output to a log file and read the file, because output between two reads is lost.',
       'After send, use read to confirm the command actually started; multi-line text executes line-by-line. send(wait_prompt: true) refuses to queue text while a previous command is still running.',
     ].join(' '),
+    promptSnippet: 'terminal: a persistent shell in its own pane — use for dev servers, REPLs, and multi-step shell work that must keep state between calls.',
+    promptGuidelines: [
+      'Prefer bash for one-shot commands: it is cheaper and returns output directly. Use terminal only when state must persist (server, REPL, watch loop, interactive prompt) or when you need to wait for output that appears later.',
+      'Open once, then send/read/wait against the same terminal_id; do not open a new terminal per command.',
+      'After send, read to confirm the command actually started. Multi-line text is executed line by line.',
+      'wait is for output you expect (a sentinel, a startup line); it returns the recent tail on timeout so you can decide instead of re-polling.',
+      'Close the terminal as soon as the work is done — a finished terminal keeps occupying a pane and is never auto-reclaimed.',
+    ],
     parameters: Type.Object({
       action: Type.Union([
         Type.Literal('open'),

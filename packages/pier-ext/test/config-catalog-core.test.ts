@@ -29,6 +29,7 @@ import {
   resolveEnvKnobs,
   summarizePlane,
 } from '../src/config-catalog-core.ts';
+import { PIER_OPTIONS } from '../src/pier-options.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..', '..');
@@ -95,10 +96,12 @@ test('catalog covers the env keys the runtime reads (drift guard)', () => {
   ]);
   const catalog = new Set(catalogKeysForPlane('env'));
   const efficiencyKnobEnv = new Set(CONFIG_KNOBS.filter((k) => k.plane === 'efficiency' && k.envVar).map((k) => k.envVar!));
+  // B10: pier-options is the registry for PIER_* knobs (plus the legacy PI_HERDR_* aliases they accept).
+  const optionEnv = new Set(PIER_OPTIONS.flatMap((o) => [o.name, ...(o.legacy ? [o.legacy] : [])]));
   for (const name of found) {
     if (allowlist.has(name)) continue;
     assert.equal(
-      catalog.has(name) || efficiencyKnobEnv.has(name),
+      catalog.has(name) || efficiencyKnobEnv.has(name) || optionEnv.has(name),
       true,
       `env var ${name} is read by the runtime but missing from the catalog`,
     );

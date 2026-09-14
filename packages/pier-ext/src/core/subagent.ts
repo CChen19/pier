@@ -46,6 +46,7 @@ import {
   type SubagentOutputCursor,
 } from '../subagent-output-core.ts';
 import type { HerdrAgentState } from '../herdr-client.ts';
+import { swallow } from '../swallow.ts';
 
 
 interface SubagentEnv {
@@ -208,8 +209,10 @@ export default function subagentPlugin(ctx: Context): void {
       if (snap === lastSubsSnapshot) return; // Avoid duplicate writes from the 1s/5s observation loops.
       lastSubsSnapshot = snap;
       pi.appendEntry?.(SUBS_CUSTOM_TYPE, reg);
-    } catch {
-      /* Persistence is best-effort so session logging cannot break delegation. */
+    } catch (err) {
+      // Best-effort (session logging must not break delegation) — but a ghost running subagent is the
+      // symptom when this silently fails, so keep the reason queryable (B9).
+      swallow('subagent.persist-subs', err);
     }
   }
   /** E2 deduplicates gate notices while blocked but permits a later, distinct human question. */
@@ -787,6 +790,17 @@ export default function subagentPlugin(ctx: Context): void {
   scoped.registerTool({
     name: 'subagent',
     label: 'Subagent',
+    // B4: the model picks tools from the system prompt's snippet/guideline surface; this tool is the
+    // one place where delegation decisions are made, so state them here rather than hoping for recall.
+    promptSnippet: 'subagent: delegate a self-contained task to a pi worker pane (spawn/isolate/background/send/output/interrupt/resume/list).',
+    promptGuidelines: [
+      'Use subagent when the work is self-contained and the result is what matters: pipelines that would flood this context, long builds/test runs, or independent parts of a bigger change that can proceed in parallel.',
+      'Prefer run_in_background: true for work that will not finish in a few tool calls, then collect with action: "output" — a foreground subagent blocks this turn.',
+      'Use isolate: true when the worker will write files for a task you (or another worker) are editing at the same time, or when you want its own reviewable branch; use cwd to send work into an existing worktree (create it with git worktree add first).',
+      'Keep the prompt complete and self-contained: the worker does not see this conversation, so include paths, acceptance criteria, the test command, and what to report back.',
+      'Do not poll with action: "output" in a tight loop: the pane pushes a settlement notice when it finishes. Check once, then continue other work.',
+      'Send follow-up instructions with action: "send" (delivered as a steer between tool calls) instead of spawning a second worker for the same task.',
+    ],
     description: SUBAGENT_DESCRIPTION,
     parameters: Type.Object({
       action: Type.Optional(Type.Union([
@@ -810,6 +824,13 @@ export default function subagentPlugin(ctx: Context): void {
       message: Type.Optional(Type.String({ description: '[send] The follow-up message' })),
       max_chars: Type.Optional(Type.Integer({ description: '[output] Maximum characters of output delta to return (default 6000, 100-16000)' })),
     }),
+    // B2: 23/38 real spawns omitted `action` even though it is optional; normalize so the schema the
+    // model is validated against and the code path never disagree, and so `spawn` is explicit in logs.
+    prepareArguments: (args: unknown) => {
+      const rec = (args && typeof args === 'object' ? args : {}) as Record<string, unknown>;
+      const hasAction = typeof rec.action === 'string' && rec.action.trim() !== '';
+      return hasAction ? rec : { ...rec, action: 'spawn' };
+    },
     async execute(toolCallId: string, params: ToolParams, signal: AbortSignal | undefined, onUpdate: ((update: unknown) => void) | undefined, toolCtx: unknown) {
       void toolCallId;
       void signal;

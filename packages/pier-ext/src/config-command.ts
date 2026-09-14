@@ -23,6 +23,8 @@ import {
   type ConfigGuideDeps,
   type ConfigGuideSnapshot,
 } from './config-guide.ts';
+import { formatOptionRows } from './pier-options.ts';
+import { formatSwallowedErrors } from './swallow.ts';
 
 export const CONFIG_COMMAND_NAME = 'pier-config';
 export const CONFIG_GUIDE_CUSTOM_TYPE = 'pi-herdr.config-guide';
@@ -30,7 +32,7 @@ export const CONFIG_REPORT_FILENAME = 'config-report.md';
 export const CONFIG_REPORT_DIR = '.pi-herdr';
 
 const PLANE_IDS: readonly ConfigPlaneId[] = CONFIG_PLANES.map((p) => p.id);
-const SUBCOMMANDS = ['show', 'check', 'doc'] as const;
+const SUBCOMMANDS = ['show', 'check', 'doc', 'doctor'] as const;
 
 export interface ConfigCommandDeps {
   pi: ExtensionAPI;
@@ -65,12 +67,12 @@ export function installConfigCommand(deps: ConfigCommandDeps): void {
 
   pi.registerCommand(CONFIG_COMMAND_NAME, {
     description:
-      'Show pier configuration (5 planes) with effective values and sources; `check` validates them; no argument hands a guided change to the agent',
+      'Show pier configuration (5 planes) with effective values and sources; `check` validates them; `doctor` lists option values and swallowed errors; no argument hands a guided change to the agent',
     getArgumentCompletions: (prefix: string) => {
       const tokens = (prefix ?? '').split(/\s+/);
       const head = tokens[0] ?? '';
       if (tokens.length <= 1) {
-        const candidates = ['show', 'check', 'doc', 'all', ...PLANE_IDS];
+        const candidates = ['show', 'check', 'doc', 'doctor', 'all', ...PLANE_IDS];
         return candidates
           .filter((c) => c.startsWith(head))
           .map((c) => ({ value: c, label: c, description: c === 'doc' ? 'write a config report file' : undefined }));
@@ -129,6 +131,23 @@ export function installConfigCommand(deps: ConfigCommandDeps): void {
         } catch (err) {
           emit(`pier-config: could not write report (${err instanceof Error ? err.message : String(err)})`, 'error');
         }
+        return;
+      }
+
+      if (sub === 'doctor') {
+        // B9/B10: one place to see every pier option (canonical name, effective value, source) and the
+        // errors that were deliberately swallowed this session. Without it, a silently failing
+        // best-effort path stays invisible until something else breaks.
+        emit(
+          [
+            'pier doctor',
+            '',
+            `options (canonical PIER_*, legacy PI_HDR_* alias accepted):`,
+            ...formatOptionRows(),
+            '',
+            formatSwallowedErrors(),
+          ].join('\n'),
+        );
         return;
       }
 

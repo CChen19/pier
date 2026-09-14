@@ -1,4 +1,5 @@
 /** Why: Preserve the established compatibility and safety behavior (D71, M14, T1–T6, T3, T6). */
+import { pierOption } from './pier-options.ts';
 import { basename } from 'node:path';
 
 /** Why: Preserve the established compatibility and safety behavior. */
@@ -46,7 +47,8 @@ export const PWSH_PROMPT: PromptStrategy = POWERSHELL_PROMPT; // same object: id
  * Default remains POSIX so existing Windows/Linux panes without explicit configuration do not flip.
  */
 export function promptStrategyFor(env: NodeJS.ProcessEnv = process.env): PromptStrategy {
-  const prompt = env.PIER_TERMINAL_PROMPT?.trim().toLowerCase();
+  // B10: canonical PIER_TERMINAL_PROMPT, legacy PI_HERDR_TERMINAL_PROMPT alias.
+  const prompt = pierOption('PIER_TERMINAL_PROMPT', env)?.trim().toLowerCase();
   if (prompt === 'powershell' || prompt === 'pwsh') return POWERSHELL_PROMPT;
   if (prompt === 'bash') return BASH_PROMPT;
   if (prompt === 'zsh') return ZSH_PROMPT;

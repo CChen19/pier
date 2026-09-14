@@ -31,6 +31,7 @@ import {
   validateTodos,
 } from '../todo-core.ts';
 import { anchorTodoRange, formatTodoSummary, renderTodoGroups } from '../todo-window.ts';
+import { swallow } from '../swallow.ts';
 
 export interface TodoUiSlot {
   /** Lets index lifecycle events render through the currently mounted plugin. */
@@ -196,8 +197,10 @@ export default function todoPlugin(ctx: Context): void {
       const edits = todos.items.map((it) => ({ op: 'rm' as const, content: it.content }));
       try {
         appendEntry(TODO_EDIT_CUSTOM_TYPE, { version: 1, edits, ts: Date.now() });
-      } catch {
-        /* Persistence is best-effort because the in-memory clear must still proceed. */
+      } catch (err) {
+        // Persistence is best-effort because the in-memory clear must still proceed, but a silent
+        // failure here is exactly how the archive/replay path broke unnoticed before (SA-13).
+        swallow('todo.persist-archive', err);
       }
       todos.replace([], { source: 'archive' });
     }

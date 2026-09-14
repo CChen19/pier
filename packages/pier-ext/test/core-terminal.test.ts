@@ -330,3 +330,16 @@ test('foldTerminalsRegistry：nudgedAt 往返持久化，缺省为 null', () => 
   assert.equal(folded[0]?.nudgedAt, 40, '已催时间戳往返保留');
   assert.equal(folded[1]?.nudgedAt, null, '未催过缺省 null');
 });
+
+test('B4：terminal 工具同样有 snippet/guidelines（何时用常驻终端 vs bash）', async () => {
+  const { client } = fakeClient({});
+  const { pi, ctx } = await mountTerminal(client);
+  const def = pi.tools.get(TOOL_NAME) as { promptSnippet?: string; promptGuidelines?: string[] };
+  assert.ok(def?.promptSnippet, 'terminal 有 snippet');
+  assert.match(String(def.promptSnippet), /persistent shell in its own pane/);
+  const g = (def.promptGuidelines ?? []).join(' ');
+  assert.match(g, /Prefer bash for one-shot commands/);
+  assert.match(g, /dev servers|server, REPL/);
+  assert.match(g, /Close the terminal/);
+  await ctx.fiber.dispose();
+});

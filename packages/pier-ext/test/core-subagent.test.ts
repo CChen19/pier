@@ -219,3 +219,28 @@ test('A1 连带修复：tool_result(isError) 钩子被真正触发（存活重�
   assert.equal(await hook!({ toolName: 'subagent', toolCallId: 'tc4', isError: true, content: [{ type: 'text', text: 'Error: unknown action' }] }), undefined);
   await root.fiber.dispose();
 });
+
+test('B2/B4：subagent 工具自带 prompt 面（snippet + guidelines），且缺省 action 被归一化为 spawn', async () => {
+  const pi = fakePi();
+  const { root } = await mount(pi);
+  const def = pi.tools.get('subagent') as {
+    promptSnippet?: string;
+    promptGuidelines?: string[];
+    prepareArguments?: (args: unknown) => Record<string, unknown>;
+  };
+  assert.ok(def, 'subagent 已注册');
+  // B4：工具选择发生在系统提示里，snippet/guidelines 是模型唯一能看到的使用说明
+  assert.match(String(def.promptSnippet ?? ''), /subagent/);
+  assert.ok((def.promptGuidelines?.length ?? 0) >= 4, 'guidelines 覆盖 spawn/isolate/background/send');
+  const g = (def.promptGuidelines ?? []).join(' ');
+  assert.match(g, /run_in_background/);
+  assert.match(g, /isolate/);
+  assert.match(g, /action: "send"/);
+
+  // B2：23/38 次真实 spawn 省略了 action —— 归一化后 spawn 必须显式出现
+  assert.deepEqual(def.prepareArguments?.({ description: 'x', prompt: 'y' }), { description: 'x', prompt: 'y', action: 'spawn' });
+  // 显式 action 不被覆盖，非对象入参不炸
+  assert.deepEqual(def.prepareArguments?.({ action: 'list' }), { action: 'list' });
+  assert.deepEqual(def.prepareArguments?.(undefined), { action: 'spawn' });
+  await root.fiber.dispose();
+});

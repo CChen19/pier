@@ -4,6 +4,7 @@
  * Why: Prevents drift between hardcoded literals and environment overrides;
  * makes timing behavior explicit and testable.
  */
+import { pierOption } from './pier-options.ts';
 
 export interface RuntimePolicy {
   /** Subagent overall timeout (ms) */
@@ -26,8 +27,9 @@ export interface RuntimePolicy {
   readonly readinessTimeoutMs: number
 }
 
+/** B10: read through the option catalog so the legacy `PI_HERDR_*` spelling keeps working. */
 function parseEnvInt(key: string, defaultValue: number, min: number = 0): number {
-  const raw = process.env[key]
+  const raw = pierOption(key)
   if (!raw) return defaultValue
   
   const parsed = Number.parseInt(raw, 10)
