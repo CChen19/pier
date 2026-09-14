@@ -368,7 +368,7 @@ export interface LaunchRuntime {
 export function buildLaunchParts(
   runtime: LaunchRuntime,
   opts: { resumeFile?: string | null; roleModel?: string | null; approve?: boolean } = {},
-  env: Pick<NodeJS.ProcessEnv, 'PI_HERDR_TUI'> = process.env,
+  env: { PI_HERDR_TUI?: string | undefined } = process.env,
 ): string[] {
   const parts = [runtime.nodePath, runtime.cliPath];
   if (opts.approve) parts.push('-a');

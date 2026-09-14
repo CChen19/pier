@@ -58,10 +58,6 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
-function isPosInt(v: unknown): boolean {
-  return typeof v === 'number' && Number.isInteger(v) && v > 0;
-}
-
 export function validateRoleManifest(input: unknown): ValidateResult {
   const issues: string[] = [];
   if (!isPlainObject(input)) {

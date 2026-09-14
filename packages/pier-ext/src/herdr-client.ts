@@ -101,7 +101,7 @@ export interface HerdrClientLike {
   readonly available: boolean;
   reportAgent(state: PaneAgentState, message: string | null): Promise<void>;
   reportAgentSession(sessionPath: string | null): Promise<void>;
-  reportMetadata(meta: { session: string; items: TodoItem[]; progressSuffix?: string | null; lastWriteAt?: number | null }): Promise<void>;
+  reportMetadata(meta: { session: string; items: readonly TodoItem[]; progressSuffix?: string | null; lastWriteAt?: number | null }): Promise<void>;
   /** M18: report write-lock tokens (lock-<hash> → paneId|path); null releases, and batches stay within 16 keys. */
   reportLockTokens(tokens: Record<string, string | null>): Promise<void>;
   /**
@@ -126,7 +126,7 @@ export interface HerdrClientLike {
   /** v1.2: Focus a pane before adding it to a group tab. */
   focusPane(paneId: string): Promise<void>;
   /** v1.2: Split a new shell pane in the current tab after focus, placing it in the group tab; return its pane ID. */
-  splitPane(opts: { direction?: 'left' | 'right' | 'up' | 'down'; cwd?: string; env?: Record<string, string>; targetPaneId?: string }): Promise<string>;
+  splitPane(opts: { direction?: 'left' | 'right' | 'up' | 'down'; cwd?: string; env?: Record<string, string>; targetPaneId?: string; focus?: boolean }): Promise<string>;
   /** v1.2: Close a pane; observed behavior kills its process tree and herdr closes an empty tab. */
   closePane(paneId: string): Promise<void>;
   /** v1.2: Create a tab with a root shell pane, returning tabId/paneId for group-tab infrastructure. */
@@ -336,7 +336,7 @@ export class HerdrClient implements HerdrClientLike {
     }
   }
 
-  async reportMetadata(meta: { session: string; items: TodoItem[]; progressSuffix?: string | null; lastWriteAt?: number | null }): Promise<void> {
+  async reportMetadata(meta: { session: string; items: readonly TodoItem[]; progressSuffix?: string | null; lastWriteAt?: number | null }): Promise<void> {
     try {
       void meta.session;
       const title = formatPaneTitle(meta.items, null, {
@@ -478,12 +478,14 @@ export class HerdrClient implements HerdrClientLike {
     await this.request('pane.focus', { pane_id: paneId });
   }
 
-  async splitPane(opts: { direction?: 'left' | 'right' | 'up' | 'down'; cwd?: string; env?: Record<string, string>; targetPaneId?: string } = {}): Promise<string> {
+  async splitPane(opts: { direction?: 'left' | 'right' | 'up' | 'down'; cwd?: string; env?: Record<string, string>; targetPaneId?: string; focus?: boolean } = {}): Promise<string> {
     const result = (await this.request('pane.split', {
       direction: opts.direction ?? 'right',
       ...(opts.targetPaneId ? { target_pane_id: opts.targetPaneId } : {}),
       ...(opts.cwd ? { cwd: opts.cwd } : {}),
       ...(opts.env ? { env: opts.env } : {}),
+      // pane.split defaults to focus=false; forward it so the intent is explicit and greppable.
+      ...(opts.focus !== undefined ? { focus: opts.focus } : {}),
     })) as Record<string, unknown>;
     const paneId = findIdIn(result, 'pane_id');
     if (!paneId) throw new Error('pane.split: no pane_id in response');

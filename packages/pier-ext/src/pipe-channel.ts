@@ -65,6 +65,14 @@ export type PipeResponse =
   | { type: 'ok'; id: string; detail?: string }
   | { type: 'error'; id: string; message: string };
 
+/**
+ * Response side of the protocol (`ok` / `error`). Requests never use these tags, so this is a sound
+ * discriminator for narrowing a parsed line at the answering end.
+ */
+export function isPipeResponse(value: PipeRequest | PipeResponse): value is PipeResponse {
+  return value.type === 'ok' || value.type === 'error';
+}
+
 /** Parse one JSON line, returning null for malformed input. */
 export function parsePipeLine(line: string): PipeRequest | PipeResponse | null {
   const t = (line ?? '').trim();
@@ -111,7 +119,7 @@ export function pipeRequest(
       settled = true;
       sock.destroy();
       const parsed = parsePipeLine(buf.slice(0, i));
-      if (!parsed) {
+      if (!parsed || !isPipeResponse(parsed)) {
         reject(new Error(`pipe ${pipeName}: bad response frame`));
         return;
       }
@@ -210,11 +218,12 @@ export function startPipeServer(
       if (i < 0) return;
       const line = buf.slice(0, i);
       buf = buf.slice(i + 1);
-      const req = parsePipeLine(line);
-      if (!req) {
+      const parsedLine = parsePipeLine(line);
+      if (!parsedLine || isPipeResponse(parsedLine)) {
         sock.end(JSON.stringify({ type: 'error', id: '', message: 'bad frame' }) + '\n');
         return;
       }
+      const req: PipeRequest = parsedLine;
       void handler(req)
         .then((res) => {
           sock.end(JSON.stringify(res) + '\n');

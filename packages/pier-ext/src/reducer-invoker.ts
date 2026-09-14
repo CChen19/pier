@@ -51,7 +51,8 @@ export interface ToolResultEventLike {
 }
 
 export interface ReducerInvocationResult {
-  content?: Array<{ type: string; text?: string; [k: string]: unknown }>;
+  /** pi's ToolResultEventResult.content uses TextContent, so the literal type must stay narrow. */
+  content?: Array<{ type: 'text'; text: string; [k: string]: unknown }>;
   /** Complete pi `Usage` (see mergeUsage): a partial object crashes pi's footer renderer. */
   usage?: UsageTotals;
 }
@@ -260,7 +261,8 @@ export async function handleReducerToolResult(
   }
 
   // 10. Block-level replacement: only replace the log text block, preserving warnings
-  const nextContent = event.content.map((b) => (b === logBlock ? { ...b, text: receipt } : b));
+  const nextContent = event.content.map((b): { type: 'text'; text: string } =>
+    (b === logBlock ? { ...b, text: receipt } : b) as { type: 'text'; text: string });
 
   // Backfill usage tokens: the nested reducer model call plus whatever the tool result already carried.
   // MUST stay a COMPLETE pi `Usage`: pi persists this onto the tool-result message and its footer

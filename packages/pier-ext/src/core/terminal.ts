@@ -11,7 +11,10 @@ import { Type } from 'typebox';
 import type { PiSurface } from '../pi-surface.ts';
 import type { HerdrClientLike } from '../herdr-client.ts';
 import { herdrUnavailableHint } from '../herdr-client.ts';
-import { toolError } from '../tool-error.ts';
+import { toolError } from '../tool-error.ts'
+
+/** Raw tool arguments: every field is validated inside the action handlers. */
+type ToolParams = Record<string, unknown> | undefined;;
 import {
   READINESS_TIMEOUT_MS,
   READ_MAX_CHARS,
@@ -216,7 +219,7 @@ export default function terminalPlugin(ctx: Context): void {
       max_chars: Type.Optional(Type.Number({ description: '[read] Output cap for this read (default 10000)' })),
       key: Type.Optional(Type.String({ description: '[signal] Control key: ctrl+c | ctrl+d | ctrl+z | esc | enter' })),
     }),
-    async execute(_tc, params, _sig, _upd, ctx) {
+    async execute(_tc: string, params: ToolParams, _sig: AbortSignal | undefined, _upd: unknown, ctx: unknown) {
       const action = typeof params?.action === 'string' ? params.action : '';
       switch (action) {
         case 'open': return executeTerminalOpen(params, ctx);
@@ -251,7 +254,7 @@ export default function terminalPlugin(ctx: Context): void {
     }
   }
 
-  async function executeTerminalOpen(params, ctx) {
+  async function executeTerminalOpen(params: ToolParams, ctx: unknown) {
     if (!client.available || !env) return fail('terminal tools require a herdr-managed pane');
     const cwd = typeof params?.cwd === 'string' && params.cwd ? params.cwd
       : (ctx as { cwd?: string }).cwd ?? process.cwd();
@@ -292,7 +295,7 @@ export default function terminalPlugin(ctx: Context): void {
     return { content: [{ type: 'text', text }], details: { terminal_id: r.entry.terminalId, pane_id: paneId, readiness } };
   }
 
-  async function executeTerminalSend(params) {
+  async function executeTerminalSend(params: ToolParams) {
     const entry = findOpenTerminal(params?.terminal_id);
     if (!entry) return fail(`unknown or closed terminal "${String(params?.terminal_id)}" (see action list)`);
     const v = validateSendText(typeof params?.text === 'string' ? params.text : '');
@@ -333,7 +336,7 @@ export default function terminalPlugin(ctx: Context): void {
     return { content: [{ type: 'text', text: `sent to ${entry.terminalId} (${v.text.length} chars)` }], details: { terminal_id: entry.terminalId } };
   }
 
-  async function executeTerminalWait(params) {
+  async function executeTerminalWait(params: ToolParams) {
     const entry = findOpenTerminal(params?.terminal_id);
     if (!entry) return fail(`unknown or closed terminal "${String(params?.terminal_id)}" (see action list)`);
     const raw = typeof params?.pattern === 'string' ? params.pattern : '';
@@ -386,7 +389,7 @@ export default function terminalPlugin(ctx: Context): void {
     };
   }
 
-  async function executeTerminalRead(params) {
+  async function executeTerminalRead(params: ToolParams) {
     let paneId: string | null = null;
     let entry: TerminalEntry | null = null;
     if (typeof params?.terminal_id === 'string') {
@@ -420,6 +423,7 @@ export default function terminalPlugin(ctx: Context): void {
     }
     const maxChars = typeof params?.max_chars === 'number' && params.max_chars > 0
       ? Math.min(params.max_chars, TERM_READ_MAX) : TERM_READ_MAX;
+    if (paneId === null) return fail('no readable pane resolved (pass terminal_id, or pane_id for an own-tab pane)');
     let read: { text: string; revision: number; truncated: boolean };
     try {
       read = await client.readPane(paneId, { stripAnsi: false });
@@ -441,7 +445,7 @@ export default function terminalPlugin(ctx: Context): void {
     }
     const prev: ReadCursor | null = entry
       ? (entry.readRevision != null
-        ? { revision: entry.readRevision, len: entry.readLen, tail: entry.readTail, eoTail: entry.readEoTail }
+        ? { revision: entry.readRevision, len: entry.readLen ?? 0, tail: entry.readTail ?? '', eoTail: entry.readEoTail ?? '' }
         : null)
       : null;
     const inc = computeIncrement(prev, { text: read.text, revision: read.revision }, maxChars);
@@ -463,7 +467,7 @@ export default function terminalPlugin(ctx: Context): void {
     };
   }
 
-  async function executeTerminalSignal(params) {
+  async function executeTerminalSignal(params: ToolParams) {
     const entry = findOpenTerminal(params?.terminal_id);
     if (!entry) return fail(`unknown or closed terminal "${String(params?.terminal_id)}" (see action list)`);
     const v = validateSignal(typeof params?.key === 'string' ? params.key : '');
@@ -477,7 +481,7 @@ export default function terminalPlugin(ctx: Context): void {
     return { content: [{ type: 'text', text: `signal ${v.key} sent to ${entry.terminalId}` }], details: { terminal_id: entry.terminalId, key: v.key } };
   }
 
-  async function executeTerminalClose(params) {
+  async function executeTerminalClose(params: ToolParams) {
     const id = params?.terminal_id;
     const entry = terminals.find((t) => t.terminalId === id);
     if (!entry) return fail(`unknown terminal "${String(id)}" (see action list)`);

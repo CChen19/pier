@@ -23,7 +23,10 @@ import {
   planLaunchValidation,
   planPatienceExpiry,
 } from '../subagent-launch.ts';
-import { toolError } from '../tool-error.ts';
+import { toolError } from '../tool-error.ts'
+
+/** Raw tool arguments: every field is validated inside the action handlers. */
+type ToolParams = Record<string, unknown> | undefined;;
 import { mkdirSync, stat as statCb } from 'node:fs';
 import { resolve as pathResolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -287,8 +290,9 @@ export default function subagentPlugin(ctx: Context): void {
    * A false no-output result caused the model to seize work from a healthy subagent. Probe
    * agent.list and session mtime before the tool result enters model context; if alive, emit the
    * same notice as A2 backgrounding. This hook enforces what prompting alone could not. */
-  scoped.on('tool_result', async (event: { toolName?: string; toolCallId?: string; isError?: boolean; content?: Array<{ type: string; text?: string }> }) => {
-    if (event?.toolName !== 'subagent' || !event.isError) return;
+  scoped.on('tool_result', async (rawEvent: unknown) => {
+    const event = (rawEvent ?? {}) as { toolName?: string; isError?: boolean; content?: Array<{ type: string; text?: string }> };
+    if (event.toolName !== 'subagent' || !event.isError) return;
     // Extract only pane ids carried by our own errors; leave unrelated errors untouched.
     const errText = (event.content ?? []).map((c) => c.text ?? '').join(' ');
     const paneId = [...subs.keys()].find((id) => errText.includes(id))
@@ -466,7 +470,7 @@ export default function subagentPlugin(ctx: Context): void {
             description: latest.description,
             background: true,
             status: 'running',
-            sessionFile: latest.sessionFile,
+            sessionFile: latest.sessionFile ?? null,
             launchCommand: latest.launchCommand,
             createdAt: Date.now(),
             revivedFrom: latest.paneId,
@@ -603,7 +607,7 @@ export default function subagentPlugin(ctx: Context): void {
             kind: latest.kind,
             paneId: latest.paneId,
             tabId: latest.tabId,
-            tabName: latest.tabName,
+            tabName: latest.tabName ?? '',
             cwd: latest.cwd,
             description: latest.description,
             background: true,
@@ -807,7 +811,7 @@ export default function subagentPlugin(ctx: Context): void {
       message: Type.Optional(Type.String({ description: '[send] The follow-up message' })),
       max_chars: Type.Optional(Type.Integer({ description: '[output] Maximum characters of output delta to return (default 6000, 100-16000)' })),
     }),
-    async execute(toolCallId, params, signal, onUpdate, toolCtx) {
+    async execute(toolCallId: string, params: ToolParams, signal: AbortSignal | undefined, onUpdate: ((update: unknown) => void) | undefined, toolCtx: unknown) {
       void toolCallId;
       void signal;
       const action = typeof params?.action === 'string' && params.action.trim() ? params.action.trim() : 'spawn';
@@ -886,7 +890,10 @@ export default function subagentPlugin(ctx: Context): void {
       let roleManifestEnv: Record<string, string> = {};
       let roleModel: string | null = null;
       try {
-        const { role, manifest } = composeForRole(manifestRole, suggested, { loadRoleOpts: { baseDir: masterCwd } });
+        // planLaunchValidation always names a role ('worker-default' by default); keep the same fallback
+        // here for callers that build a launch spec directly.
+        const roleName = manifestRole ?? 'worker-default';
+        const { role, manifest } = composeForRole(roleName, suggested, { loadRoleOpts: { baseDir: masterCwd } });
         roleManifestEnv = {
           PI_HERDR_ROLE_MANIFEST: JSON.stringify({
             role: role.role,
@@ -1008,7 +1015,7 @@ export default function subagentPlugin(ctx: Context): void {
             continue;
           }
         }
-        if (!text && settledKind !== 'blocked') {
+        if (!text) {
           const probe = await probeAlive(paneId, cwd);
           if (planPatienceExpiry(isAlive(probe, Date.now())) === 'move-to-background') {
             entry.background = true;

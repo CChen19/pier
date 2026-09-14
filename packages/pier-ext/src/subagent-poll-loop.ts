@@ -145,7 +145,7 @@ export function createPoller(h: PollerHost): Poller {
         if (gate.kind === 'clear-gate') h.blockedGateNotified.delete(paneId);
         if (state === 'idle' || state === 'done') {
           const s = await h.session.subSessionState(paneId, cwd, injectTs);
-          pollTrace?.(`state=${state} text=${s.text ? s.text.length : 'null'} pend=${s.pendingTool} act=${s.activity} obs=${String(entry.observationStartedAt ?? null)} takeover=${String(entry.userTakeover === true)}`);
+          pollTrace?.(`state=${state} text=${s.text ? s.text.length : 'null'} pend=${s.pendingTool} act=${s.activity} obs=${String(entry.observationStartedAt ?? null)} takeover=${String(Boolean(entry.userTakeover))}`);
           if (isSettlementCandidate(s)) {
             const closing = s.text;
             const obs = planObservationTick({

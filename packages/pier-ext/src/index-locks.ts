@@ -60,13 +60,14 @@ export function installWriteLocks(
     await acquireLocks(plan.paths);
   });
 
-  pi.on('tool_result', async (event: { toolCallId?: string; content?: Array<{ type: string; text: string }> }) => {
-    if (typeof event?.toolCallId !== 'string') return;
-    const warning = lockWarnByToolCall.get(event.toolCallId);
+  pi.on('tool_result', async (event: unknown) => {
+    const rec = (event ?? {}) as { toolCallId?: unknown; content?: unknown };
+    if (typeof rec.toolCallId !== 'string') return;
+    const warning = lockWarnByToolCall.get(rec.toolCallId);
     if (!warning) return;
-    lockWarnByToolCall.delete(event.toolCallId);
-    const content = Array.isArray(event.content) ? event.content : [];
-    return { content: [...content, { type: 'text', text: warning }] };
+    lockWarnByToolCall.delete(rec.toolCallId);
+    const content = Array.isArray(rec.content) ? rec.content as Array<{ type: 'text'; text: string }> : [];
+    return { content: [...content, { type: 'text' as const, text: warning }] };
   });
 
   pi.on('agent_settled', async () => {

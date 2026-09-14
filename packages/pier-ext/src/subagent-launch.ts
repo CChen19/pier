@@ -19,6 +19,8 @@ export type LaunchParams = {
   tab?: unknown;
 };
 
+import type { SubagentSpec } from './subagent-core.ts';
+
 export type LaunchValidation =
   | { kind: 'error'; text: string }
   | {
@@ -30,6 +32,8 @@ export type LaunchValidation =
       roleKind: string;
       suggested: string[];
       tab: string | null;
+      /** Role manifest supplied by the caller (drives tool gating); null when unset. */
+      manifestRole: string | null;
     };
 
 export function planLaunchValidation(

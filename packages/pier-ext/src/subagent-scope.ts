@@ -22,12 +22,14 @@ export async function mountSubagentScope(
   paneId: string,
   hooks: ScopeHooks = {},
 ) {
+  // Why no second argument: the pinned cordis version takes only the plugin object here; the pane id
+  // already identifies the scope through the plugin name and the effect label.
   return root.plugin({
     name: `subagent:${paneId}`,
     apply(ctx: Context) {
       ctx.effect(() => () => { hooks.onDispose?.(); }, `subagent:${paneId}`);
     },
-  }, { paneId });
+  });
 }
 
 export async function disposeSessionRoot(root: Context): Promise<void> {

@@ -353,8 +353,9 @@ export function registerSlimFrame(eventCtx: unknown): void {
   try {
     // overlay: true keeps the floating layer from clearing the screen (pi ctx.ui.custom replaces the editor area by default, so cover it explicitly);
     // nonCapturing leaves the keyboard with the editor (typing in a focused narrow pane remains possible, and the expanded heat view hides the frame).
+    if (!custom) throw new Error('pi ui.custom unavailable');
     const pending = custom(
-      (tui, theme) => {
+      (tui: FrameTui, theme: { fg(color: string, text: string): string }) => {
         const comp = new SlimFrameComponent(tui, (s) => theme.fg('accent', s));
         comp.startResizeWatchdog();
         active = comp;

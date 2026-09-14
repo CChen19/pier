@@ -171,8 +171,9 @@ export function revertedCompleted(prev: readonly TodoItem[], next: readonly Todo
 }
 
 /** Why: Preserve the established compatibility and safety behavior. */
-export function makeSnapshot(items: TodoItem[]): TodoSnapshot {
-  return { version: 1, items };
+export function makeSnapshot(items: readonly TodoItem[]): TodoSnapshot {
+  // Copy: the snapshot is persisted, the service list stays owned by TodosService.
+  return { version: 1, items: [...items] };
 }
 
 export interface BranchEntryLike {
@@ -338,7 +339,7 @@ export function boundedView(items: readonly TodoItem[], budget: number): Bounded
 }
 
 /** Why: Preserve the established compatibility and safety behavior. */
-export function currentActivity(items: TodoItem[]): string | null {
+export function currentActivity(items: readonly TodoItem[]): string | null {
   return items.find((it) => it.status === 'in_progress')?.content ?? null;
 }
 

@@ -78,7 +78,8 @@ export async function createCordisApp(hooks: BootstrapHooks = {}): Promise<Cordi
       console.error('[pi-herdr] hmr active (dev posture: --expose-internals + PI_HERDR_HMR=1)');
       // D80⑤: HMR already disposes old fiber effects; this hook additionally retires old pi-surface generations.
       // d87 keeps generations registered after the reload boundary alive; disposeKey retires only older entries.
-      root.on('hmr/reload', (reloads: unknown) => {
+      // Cordis' own HMR boundary event (not part of pi's typed Events map).
+      (root as unknown as { on(name: string, fn: (reloads: unknown) => void): void }).on('hmr/reload', (reloads: unknown) => {
         try {
           const files: string[] = [];
           for (const r of (reloads as Map<unknown, { filename?: string }>).values()) {

@@ -38,7 +38,6 @@ import { createHerdrClient } from './herdr-client.ts';
 // session-tail, and gc-core imports moved with it, leaving index.ts only the common readers.
 import { lastAssistantText, readSessionFile } from './session-tail.ts';
 import { fileURLToPath } from 'node:url';
-import { join } from 'node:path';
 import { TodosService } from './todos-service.ts';
 import { reconcileTodos } from './reconcile-core.ts';
 import type { TodoUiSlot } from './core/todo.ts';
@@ -60,7 +59,7 @@ import { emptySubagentPortBox } from './subagent-port.ts';
 import { createNoticeBuffer } from './index-notices.ts';
 import { handlePipeRequest } from './index-pipe.ts';
 import { installWriteLocks } from './index-locks.ts';
-import { registerObservationPack, createCompactionBatchPackHook, RECALL_TOOL_NAME } from './core/observation.ts';
+import { registerObservationPack, createCompactionBatchPackHook } from './core/observation.ts';
 import { installConfigCommand } from './config-command.ts';
 import { CompactCoordinator } from './compact-coordinator.ts';
 import { handleReducerToolResult, type ToolResultEventLike } from './reducer-invoker.ts';
@@ -671,10 +670,10 @@ export default async function (pi: ExtensionAPI) {
 
   // triggerTurn:true — idle followUp must start a new turn or settlement is lost.
   const sendUserMessageIn = (content: string): Promise<void> =>
-    (pi as { sendUserMessage?: (content: string, opts?: { deliverAs?: string; triggerTurn?: boolean }) => Promise<void> })
+    (pi as unknown as { sendUserMessage?: (content: string, opts?: { deliverAs?: string; triggerTurn?: boolean }) => Promise<void> })
       .sendUserMessage?.(content, { deliverAs: 'followUp', triggerTurn: true }) ?? Promise.resolve();
   const sendUserMessageAs = (content: string, mode: 'steer' | 'followUp'): Promise<void> =>
-    (pi as { sendUserMessage?: (content: string, opts?: { deliverAs?: string; triggerTurn?: boolean }) => Promise<void> })
+    (pi as unknown as { sendUserMessage?: (content: string, opts?: { deliverAs?: string; triggerTurn?: boolean }) => Promise<void> })
       .sendUserMessage?.(content, { deliverAs: mode, triggerTurn: true }) ?? Promise.resolve();
 
   const notices = createNoticeBuffer({
