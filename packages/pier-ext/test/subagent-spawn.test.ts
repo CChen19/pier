@@ -298,25 +298,21 @@ test('subagent action send & resume（B1）：短 taskId 唯一前缀 (>=4)、�
     assert.match(sendRes4.content[0].text, /Message sent to subagent p2/);
     assert.equal(h.prompts.length, 3);
 
-    // 3. send 使用 <4 字符短前缀且非精确匹配 → 拒绝并提示至少 4 字符
-    const sendShort = await tool.execute!(
-      'tc_send_short',
-      { action: 'send', agentId: short3, message: 'too short' },
-      undefined,
-      undefined,
-      { cwd },
-    ) as { content: Array<{ text: string }> };
-    assert.match(sendShort.content[0].text, /is too short \(minimum 4 characters\)/);
+    // 3. send 使用 <4 字符短前缀且非精确匹配 → 拒绝并提示至少 4 字符（A1：硬失败 = reject）
+    await assert.rejects(
+      async () => {
+        await tool.execute!('tc_send_short', { action: 'send', agentId: short3, message: 'too short' }, undefined, undefined, { cwd });
+      },
+      /is too short \(minimum 4 characters\)/,
+    );
 
     // 4. send 使用不存在的 id → 报错 unknown subagent id
-    const sendNotFound = await tool.execute!(
-      'tc_send_notfound',
-      { action: 'send', agentId: '00000000', message: 'not found' },
-      undefined,
-      undefined,
-      { cwd },
-    ) as { content: Array<{ text: string }> };
-    assert.match(sendNotFound.content[0].text, /unknown subagent id "00000000"/);
+    await assert.rejects(
+      async () => {
+        await tool.execute!('tc_send_notfound', { action: 'send', agentId: '00000000', message: 'not found' }, undefined, undefined, { cwd });
+      },
+      /unknown subagent id "00000000"/,
+    );
 
     // 5. resume 使用 8 位短前缀 → 成功解析历史并恢复 (paneId 匹配 existing 则 reuse)
     const resume8 = await tool.execute!(
@@ -329,25 +325,21 @@ test('subagent action send & resume（B1）：短 taskId 唯一前缀 (>=4)、�
     assert.match(resume8.content[0].text, /resumed subagent/);
     assert.equal(resume8.details?.taskId, fullTaskId, '返回详情恢复为完整 taskId');
 
-    // 6. resume 使用 <4 字符前缀 → 提示 too short
-    const resumeShort = await tool.execute!(
-      'tc_resume_short',
-      { action: 'resume', taskId: short3 },
-      undefined,
-      undefined,
-      { cwd },
-    ) as { content: Array<{ text: string }> };
-    assert.match(resumeShort.content[0].text, /is too short \(minimum 4 characters\)/);
+    // 6. resume 使用 <4 字符前缀 → 提示 too short（A1：硬失败 = reject）
+    await assert.rejects(
+      async () => {
+        await tool.execute!('tc_resume_short', { action: 'resume', taskId: short3 }, undefined, undefined, { cwd });
+      },
+      /is too short \(minimum 4 characters\)/,
+    );
 
     // 7. resume 使用不存在的前缀 → 提示 no history
-    const resumeNotFound = await tool.execute!(
-      'tc_resume_notfound',
-      { action: 'resume', taskId: 'ffffffff' },
-      undefined,
-      undefined,
-      { cwd },
-    ) as { content: Array<{ text: string }> };
-    assert.match(resumeNotFound.content[0].text, /no history for task "ffffffff"/);
+    await assert.rejects(
+      async () => {
+        await tool.execute!('tc_resume_notfound', { action: 'resume', taskId: 'ffffffff' }, undefined, undefined, { cwd });
+      },
+      /no history for task "ffffffff"/,
+    );
 
     // 8. resume 歧义前缀：追加一条同前缀历史条目后，使用 4 位前缀触发歧义
     const { preferredHistoryFile } = await import('../src/storage-layout.ts');
@@ -369,16 +361,17 @@ test('subagent action send & resume（B1）：短 taskId 唯一前缀 (>=4)、�
       createdAt: Date.now() + 10,
     });
 
-    const resumeAmbiguous = await tool.execute!(
-      'tc_resume_amb',
-      { action: 'resume', taskId: short4 },
-      undefined,
-      undefined,
-      { cwd },
-    ) as { content: Array<{ text: string }> };
-    assert.match(resumeAmbiguous.content[0].text, /ambiguous task id/);
-    assert.match(resumeAmbiguous.content[0].text, new RegExp(fullTaskId));
-    assert.match(resumeAmbiguous.content[0].text, new RegExp(ambiguousTaskId));
+    const ambiguousText = await (async () => {
+      try {
+        await tool.execute!('tc_resume_amb', { action: 'resume', taskId: short4 }, undefined, undefined, { cwd });
+      } catch (e) {
+        return (e as Error).message;
+      }
+      throw new Error('expected an ambiguous prefix to throw');
+    })();
+    assert.match(ambiguousText, /ambiguous task id/);
+    assert.match(ambiguousText, new RegExp(fullTaskId));
+    assert.match(ambiguousText, new RegExp(ambiguousTaskId));
   });
 });
 

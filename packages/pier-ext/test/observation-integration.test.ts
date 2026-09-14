@@ -76,9 +76,11 @@ test('ObservationPack: registers obs_recall tool and executes paged recall', asy
     const recallTool = pi.tools.get(RECALL_TOOL_NAME);
     const ctx = createMockContext(tempDir, sessionId);
 
-    // 1. Invalid ID rejection
-    const invalidRes = await recallTool.execute('call_1', { id: 'bad_id' }, undefined, undefined, ctx);
-    assert.match(invalidRes.content[0].text, /invalid observation id format/);
+    // 1. Invalid ID rejection (A1: hard failures reject instead of returning error text)
+    await assert.rejects(
+      async () => { await recallTool.execute('call_1', { id: 'bad_id' }, undefined, undefined, ctx); },
+      /invalid observation id format/,
+    );
 
     // 2. Prepare context with a large output (2KB)
     const largeLog = 'INFO: step processing\n'.repeat(100); // ~2200 bytes

@@ -97,8 +97,10 @@ test('core/terminal：surface 挂载 terminal 工具 + GC 槽回填 + open/list 
   const list = await pi.tools.get(TOOL_NAME)?.execute?.(null, { action: 'list' }) as { content: Array<{ text: string }> };
   assert.match(list.content[0].text, /term-1 \[open\] pane=pane-2/);
 
-  const bad = await pi.tools.get(TOOL_NAME)?.execute?.(null, { action: 'explode' }) as { content: Array<{ text: string }> };
-  assert.match(bad.content[0].text, /unknown action "explode"/);
+  await assert.rejects(
+    async () => { await pi.tools.get(TOOL_NAME)?.execute?.(null, { action: 'explode' }); },
+    /unknown action "explode"/,
+  );
   await ctx.fiber.dispose();
 });
 
@@ -241,10 +243,15 @@ test('core/terminal：wait 命中 → matched；超时 → 带尾部输出的 no
   assert.equal(unavail.details.matched, false);
   assert.match(unavail.content[0].text, /no match within 3000ms \(wait unavailable\)/);
 
-  const bad = await pi.tools.get(TOOL_NAME)?.execute?.(null, {
-    action: 'wait', terminal_id: 'term-1', pattern: '(', regex: true,
-  }) as { content: Array<{ text: string }> };
-  assert.match(bad.content[0].text, /invalid regex/);
+  // A1: an invalid pattern is a hard failure → execute() rejects
+  await assert.rejects(
+    async () => {
+      await pi.tools.get(TOOL_NAME)?.execute?.(null, {
+        action: 'wait', terminal_id: 'term-1', pattern: '(', regex: true,
+      });
+    },
+    /invalid regex/,
+  );
   await ctx.fiber.dispose();
 });
 
@@ -263,11 +270,19 @@ test('core/terminal：send(wait_prompt) 就绪才发；busy 拒发不排队', as
   };
   busy.waitForOutput = async () => false;
   busy.readPane = async () => ({ text: 'compiling src/main.rs...', revision: 2, truncated: false });
-  const refused = await pi.tools.get(TOOL_NAME)?.execute?.(null, {
-    action: 'send', terminal_id: 'term-1', text: 'echo next', wait_prompt: true,
-  }) as { content: Array<{ text: string }> };
-  assert.match(refused.content[0].text, /text was NOT sent/);
-  assert.match(refused.content[0].text, /busy/);
+  // A1: refusing to send into a busy shell is a hard failure → execute() rejects
+  const refusedText = await (async () => {
+    try {
+      await pi.tools.get(TOOL_NAME)?.execute?.(null, {
+        action: 'send', terminal_id: 'term-1', text: 'echo next', wait_prompt: true,
+      });
+    } catch (e) {
+      return (e as Error).message;
+    }
+    throw new Error('expected send into a busy shell to throw');
+  })();
+  assert.match(refusedText, /text was NOT sent/);
+  assert.match(refusedText, /busy/);
   assert.equal(calls.sendPaneText.length, 0, 'busy 时文本不入队');
 
   // 提示符就绪 → 正常发送

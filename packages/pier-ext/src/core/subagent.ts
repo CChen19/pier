@@ -23,6 +23,7 @@ import {
   planLaunchValidation,
   planPatienceExpiry,
 } from '../subagent-launch.ts';
+import { toolError } from '../tool-error.ts';
 import { mkdirSync, stat as statCb } from 'node:fs';
 import { resolve as pathResolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -425,48 +426,30 @@ export default function subagentPlugin(ctx: Context): void {
 
   async function executeSubagentResume(params: Record<string, unknown> | undefined, toolCtx: unknown) {
       if (!client.available) {
-        return {
-          content: [{ type: 'text', text: 'Error: requires a herdr-managed pane.' }],
-          details: {},
-        };
+        return toolError('requires a herdr-managed pane.');
       }
       const cwd = (toolCtx as { cwd?: string }).cwd ?? process.cwd();
       const rawTaskId = String(params?.taskId ?? params?.agentId ?? '').trim();
       if (!rawTaskId) {
-        return {
-          content: [{ type: 'text', text: 'Error: missing taskId for resume (see action list or delegation ledger).' }],
-          details: {},
-        };
+        return toolError('missing taskId for resume (see action list or delegation ledger).');
       }
       const history = readHistory(histFile(cwd));
       const resolution = resolveTaskIdPrefix(rawTaskId, history.map((e) => e.taskId));
       if (resolution.kind === 'too_short') {
-        return {
-          content: [{ type: 'text', text: `Error: task id prefix "${rawTaskId}" is too short (minimum 4 characters).` }],
-          details: {},
-        };
+        return toolError(`Error: task id prefix "${rawTaskId}" is too short (minimum 4 characters).`);
       }
       if (resolution.kind === 'ambiguous') {
         const list = resolution.candidates.slice(0, 5).join(', ');
         const more = resolution.candidates.length > 5 ? `, ... (+${resolution.candidates.length - 5} more)` : '';
-        return {
-          content: [{ type: 'text', text: `Error: ambiguous task id "${rawTaskId}" matches ${resolution.candidates.length} tasks: ${list}${more}` }],
-          details: {},
-        };
+        return toolError(`Error: ambiguous task id "${rawTaskId}" matches ${resolution.candidates.length} tasks: ${list}${more}`);
       }
       if (resolution.kind === 'not_found') {
-        return {
-          content: [{ type: 'text', text: `Error: no history for task "${rawTaskId}" in this workspace.` }],
-          details: {},
-        };
+        return toolError(`Error: no history for task "${rawTaskId}" in this workspace.`);
       }
       const taskId = resolution.taskId;
       const latest = latestGeneration(history, taskId);
       if (!latest) {
-        return {
-          content: [{ type: 'text', text: `Error: no history for task "${taskId}" in this workspace.` }],
-          details: {},
-        };
+        return toolError(`Error: no history for task "${taskId}" in this workspace.`);
       }
       const release = await subSemaphore.acquire();
       try {
@@ -530,10 +513,7 @@ export default function subagentPlugin(ctx: Context): void {
           details: { paneId: entry.paneId, taskId },
         };
       } catch (err) {
-        return {
-          content: [{ type: 'text', text: `Error: failed to resume task "${taskId}": ${(err as Error).message}` }],
-          details: {},
-        };
+        return toolError(`Error: failed to resume task "${taskId}": ${(err as Error).message}`);
       } finally {
         release();
       }
@@ -653,7 +633,7 @@ export default function subagentPlugin(ctx: Context): void {
       const cwd = (toolCtx as { cwd?: string })?.cwd ?? process.cwd();
       const resolved = resolveSubEntry(rawId, cwd);
       if ('error' in resolved) {
-        return { content: [{ type: 'text', text: resolved.error }], details: {} };
+        return toolError(resolved.error);
       }
       const entry = resolved.entry;
       const spawnedAt = Date.now();
@@ -696,7 +676,7 @@ export default function subagentPlugin(ctx: Context): void {
         }
         return { content: [{ type: 'text', text: `Message sent to subagent ${entry.paneId}.` }], details: { paneId: entry.paneId } };
       } catch (err) {
-        return { content: [{ type: 'text', text: `Error: failed to reach subagent ${entry.paneId}: ${(err as Error).message}` }], details: {} };
+        return toolError(`Error: failed to reach subagent ${entry.paneId}: ${(err as Error).message}`);
       }
   }
 
@@ -705,7 +685,7 @@ export default function subagentPlugin(ctx: Context): void {
       const cwd = (toolCtx as { cwd?: string })?.cwd ?? process.cwd();
       const resolved = resolveSubEntry(rawId, cwd);
       if ('error' in resolved) {
-        return { content: [{ type: 'text', text: resolved.error }], details: {} };
+        return toolError(resolved.error);
       }
       const entry = resolved.entry;
       if (entry.status === 'closed') {
@@ -725,19 +705,19 @@ export default function subagentPlugin(ctx: Context): void {
         if (lastId) d.claimSettleNotice(`${entry.paneId}:${lastId}`);
         return { content: [{ type: 'text', text: `Interrupt accepted for subagent ${entry.paneId} (fire-and-return).` }], details: { paneId: entry.paneId } };
       } catch (err) {
-        return { content: [{ type: 'text', text: `Error: failed to reach subagent ${entry.paneId}: ${(err as Error).message}` }], details: {} };
+        return toolError(`Error: failed to reach subagent ${entry.paneId}: ${(err as Error).message}`);
       }
   }
 
   async function executeSubagentOutput(params: Record<string, unknown> | undefined, toolCtx?: unknown) {
     const rawId = String(params?.agentId ?? params?.taskId ?? '').trim();
     if (!rawId) {
-      return { content: [{ type: 'text', text: 'Error: missing agentId for output (see action list)' }], details: {} };
+      return toolError('Error: missing agentId for output (see action list)');
     }
     const cwd = (toolCtx as { cwd?: string })?.cwd ?? process.cwd();
     const resolved = resolveSubEntry(rawId, cwd);
     if ('error' in resolved) {
-      return { content: [{ type: 'text', text: resolved.error }], details: {} };
+      return toolError(resolved.error);
     }
     const entry = resolved.entry;
     let agentState: HerdrAgentState | null = null;
@@ -767,7 +747,7 @@ export default function subagentPlugin(ctx: Context): void {
     try {
       rawRead = await readSubagentOutput(client, entry.paneId);
     } catch (err) {
-      return { content: [{ type: 'text', text: `Error: failed to read output for subagent ${entry.paneId}: ${(err as Error).message}` }], details: {} };
+      return toolError(`Error: failed to read output for subagent ${entry.paneId}: ${(err as Error).message}`);
     }
 
     const prevCursor = outputCursors.get(entry.paneId);
@@ -837,11 +817,11 @@ export default function subagentPlugin(ctx: Context): void {
       if (action === 'interrupt') return executeSubagentInterrupt(params, toolCtx);
       if (action === 'output') return executeSubagentOutput(params, toolCtx);
       if (action !== 'spawn') {
-        return { content: [{ type: 'text', text: `Error: unknown action "${action}" (valid: spawn, resume, list, send, interrupt, output)` }], details: {} };
+        return toolError(`Error: unknown action "${action}" (valid: spawn, resume, list, send, interrupt, output)`);
       }
       const launch = planLaunchValidation(params, client.available);
       if (launch.kind === 'error') {
-        return { content: [{ type: 'text', text: launch.text }], details: {} };
+        return toolError(launch.text);
       }
       const { spec, background, isolate, cwdParam, roleKind: kind, suggested, manifestRole, tab } = launch;
       const masterCwd = (toolCtx as { cwd?: string }).cwd ?? process.cwd();
@@ -856,7 +836,7 @@ export default function subagentPlugin(ctx: Context): void {
         const baseSha = await runGit(masterCwd, ['rev-parse', 'HEAD']);
         const isoGuard = planIsolateRepoGuard(baseSha);
         if (isoGuard.kind === 'error') {
-          return { content: [{ type: 'text', text: isoGuard.text }], details: {} };
+          return toolError(isoGuard.text);
         }
         const sha = isoGuard.sha.trim();
         const pierBranches = new Set(
@@ -880,10 +860,7 @@ export default function subagentPlugin(ctx: Context): void {
         const added = await runGit(masterCwd, ['worktree', 'add', '-b', plan.branch, wtPath, sha]);
         if (added === null) {
           pendingIsolateBranches.delete(plan.branch);
-          return {
-            content: [{ type: 'text', text: `Error: failed to create worktree ${wtPath} (branch ${plan.branch}) — run \`git worktree prune\` and retry if it reports stale entries` }],
-            details: {},
-          };
+          return toolError(`Error: failed to create worktree ${wtPath} (branch ${plan.branch}) — run \`git worktree prune\` and retry if it reports stale entries`);
         }
         git.invalidateWorktreesCache(); // Invalidate the 5s cache so the zone classifier sees the new worktree immediately.
         cwd = wtPath;
@@ -895,10 +872,7 @@ export default function subagentPlugin(ctx: Context): void {
           const st = await statAsync(cwd);
           if (!st.isDirectory()) throw new Error('not a directory');
         } catch {
-          return {
-            content: [{ type: 'text', text: `Error: \`cwd\` is not an existing directory: ${cwdParam}` }],
-            details: {},
-          };
+          return toolError(`Error: \`cwd\` is not an existing directory: ${cwdParam}`);
         }
       }
       // D86 R1: Group by the git worktree containing cwd (main checkout → main tab; other worktree → directory-named tab).
@@ -927,10 +901,7 @@ export default function subagentPlugin(ctx: Context): void {
         if (typeof role.model === 'string' && role.model.trim()) roleModel = role.model.trim();
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        return {
-          content: [{ type: 'text', text: `Error: role "${manifestRole}" manifest invalid — ${msg}` }],
-          details: {},
-        };
+        return toolError(`Error: role "${manifestRole}" manifest invalid — ${msg}`);
       }
       const release = await subSemaphore.acquire();
       let paneId = '';

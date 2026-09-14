@@ -188,14 +188,24 @@ async function runSubagent(pi: FakePi, params: Record<string, unknown>, cwd?: st
   return r.content[0]!.text;
 }
 
+/** A1: hard failures throw (pi marks isError only for throws); guard tests read the message. */
+async function runSubagentError(pi: FakePi, params: Record<string, unknown>, cwd?: string): Promise<string> {
+  try {
+    await pi.tools.get('subagent')?.execute?.('tc1', params, undefined, undefined, { cwd: cwd ?? process.cwd() });
+  } catch (e) {
+    return (e as Error).message;
+  }
+  throw new Error('expected the subagent tool to throw');
+}
+
 test('subagent 工具：isolate×cwd 互斥显式报错', async () => {
   const pi = fakePi();
   const root = await mount(pi);
   try {
-    const text = await runSubagent(pi, {
+    const text = await runSubagentError(pi, {
       description: 'x', prompt: 'do x', isolate: true, cwd: 'F:/somewhere',
     });
-    assert.match(text, /Error: `isolate` and `cwd` are mutually exclusive — isolate creates a new worktree, cwd delegates into an existing one/);
+    assert.match(text, /`isolate` and `cwd` are mutually exclusive — isolate creates a new worktree, cwd delegates into an existing one/);
   } finally {
     await root.fiber.dispose();
   }
@@ -206,8 +216,8 @@ test('subagent 工具：isolate 在非 git 目录显式失败（不降级共享�
   const root = await mount(pi);
   try {
     const nonGit = mkdtempSync(join(tmpdir(), 'd98-nogit-'));
-    const text = await runSubagent(pi, { description: 'x', prompt: 'do x', isolate: true }, nonGit);
-    assert.match(text, /Error: isolate requires a git repository with at least one commit/);
+    const text = await runSubagentError(pi, { description: 'x', prompt: 'do x', isolate: true }, nonGit);
+    assert.match(text, /isolate requires a git repository with at least one commit/);
   } finally {
     await root.fiber.dispose();
   }

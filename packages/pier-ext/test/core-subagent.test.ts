@@ -9,6 +9,7 @@ import subagentPlugin, { resolveTaskIdPrefix } from '../src/core/subagent.ts';
 import { PiSurface } from '../src/pi-surface.ts';
 import { DisposeLedger } from '../src/ledger.ts';
 import type { HerdrClientLike } from '../src/herdr-client.ts';
+import { SUBS_CUSTOM_TYPE } from '../src/subagent-core.ts';
 import { emptySubagentPortBox } from '../src/subagent-port.ts';
 
 function fakePi() {
@@ -85,8 +86,10 @@ test('core/subagent：单工具注册 + 生命周期钩子 + 槽回填', async (
   assert.deepEqual(port.current.reconcileOnReply('unknown'), []);
   const r = await pi.tools.get('subagent')?.execute?.(null, { action: 'list' }) as { content: Array<{ text: string }> };
   assert.match(r.content[0].text, /No background subagents/);
-  const bad = await pi.tools.get('subagent')?.execute?.(null, { action: 'explode' }) as { content: Array<{ text: string }> };
-  assert.match(bad.content[0].text, /unknown action "explode"/);
+  await assert.rejects(
+    async () => { await pi.tools.get('subagent')?.execute?.(null, { action: 'explode' }); },
+    /unknown action "explode"/,
+  );
   await root.fiber.dispose();
   assert.equal(port.current, null, 'port unbound on dispose');
 });
@@ -150,3 +153,69 @@ test('resolveTaskIdPrefix (B1): 唯一前缀 (>=4)、歧义列表、过短 (<4) 
 });
 
 
+
+test('A1 连带修复：tool_result(isError) 钩子被真正触发（存活重写不再死代码）', async () => {
+  // A1 之前工具把失败当普通文本返回 → pi 从不置 isError → 这个钩子（core/subagent.ts 的
+  // `scoped.on('tool_result')`）永远不会执行，等于死代码。现在失败会 throw，钩子必须被调用。
+  //
+  // 这里覆盖钩子的「入口 + 死 pane 保真」两段：探活失败时必须原样放行原错误（不能把真死的 agent
+  // 说成活着）。存活分支会拉起 poller（观测窗口默认 30s），不适合放进单测——
+  // 该分支的判定函数（isAlive / buildAliveNotice）已在 test/subagent-alive.test.ts 覆盖。
+  const pi = fakePi();
+  const surface = new PiSurface(pi as unknown as object);
+  const port = emptySubagentPortBox();
+  const root = new Context();
+  const deps = {
+    client: {
+      ...fakeClient(),
+      listAgents: async () => [], // pane 不存在 → 探活为死
+    } as unknown as HerdrClientLike,
+    env: { paneId: 'p0', tabId: 't0', workspaceId: 'w1' },
+    extPath: 'F:/repo/pier/packages/pier-ext/src/index.ts',
+    sessionRoot: root,
+    port,
+    getSessionId: () => '',
+    reconcileOnSettlement: () => [],
+    withReconcileNotes: (b: string) => b,
+    claimSettleNotice: () => true,
+    terminalState: { activePaneIds: () => new Set<string>() },
+  };
+  root.provide('pi-herdr.surface', surface);
+  root.provide('pi-herdr.subagent-deps', deps);
+  await root.plugin(subagentPlugin);
+
+  const branch = [{
+    type: 'custom',
+    customType: SUBS_CUSTOM_TYPE,
+    data: {
+      version: 1,
+      subs: [{
+        taskId: 'task-1', kind: 'task', paneId: 'w1:p2', tabId: 't0', cwd: '/tmp',
+        description: '已死的 worker', background: true, status: 'running', createdAt: Date.now(),
+      }],
+    },
+  }];
+  for (const h of pi.listeners.get('session_start') ?? []) {
+    await h({ reason: 'resume' }, { sessionManager: { getBranch: () => branch } });
+  }
+
+  const hook = (pi.listeners.get('tool_result') ?? [])[0];
+  assert.ok(hook, 'tool_result 钩子已注册');
+
+  // 死 pane → 钩子保持沉默，原错误原样进入模型上下文（不能把真死的 agent 说成活着）
+  assert.equal(
+    await hook!({
+      toolName: 'subagent',
+      toolCallId: 'tc1',
+      isError: true,
+      content: [{ type: 'text', text: 'Error: failed to reach subagent w1:p2: pipe not ready' }],
+    }),
+    undefined,
+  );
+  // 非失败结果 / 别的工具 → 一律不介入
+  assert.equal(await hook!({ toolName: 'subagent', toolCallId: 'tc2', isError: false, content: [] }), undefined);
+  assert.equal(await hook!({ toolName: 'bash', toolCallId: 'tc3', isError: true, content: [] }), undefined);
+  // 错误文本里没有 pane id → 不介入（不猜）
+  assert.equal(await hook!({ toolName: 'subagent', toolCallId: 'tc4', isError: true, content: [{ type: 'text', text: 'Error: unknown action' }] }), undefined);
+  await root.fiber.dispose();
+});

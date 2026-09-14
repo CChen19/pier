@@ -35,6 +35,7 @@ import {
   type ObservationPackConfig,
 } from '../efficiency-config-core.ts';
 import { planToolGate, type RuntimeRoleManifest } from '../tool-gate.ts';
+import { toolError } from '../tool-error.ts';
 
 export const RECALL_TOOL_NAME = 'obs_recall';
 export const RECALL_MAX_BYTES = 16 * 1024;
@@ -311,10 +312,8 @@ export function registerObservationPack(deps: ObservationPackDeps): void {
       const offset = params?.offset ?? 0;
 
       if (!isObservationId(id)) {
-        return {
-          content: [{ type: 'text', text: `Error: invalid observation id format: "${id}"` }],
-          details: {},
-        };
+        // A1: hard failures throw so pi flags isError for the model.
+        return toolError(`invalid observation id format: "${id}"`);
       }
 
       const sessionDir = ctx?.sessionManager?.getSessionDir?.();
@@ -322,10 +321,7 @@ export function registerObservationPack(deps: ObservationPackDeps): void {
       const sessionRoot = resolveSessionRoot(sessionDir, sessionId);
 
       if (!sessionRoot) {
-        return {
-          content: [{ type: 'text', text: 'Error: session storage is unavailable for observation recall.' }],
-          details: {},
-        };
+        return toolError('session storage is unavailable for observation recall.');
       }
 
       const filePath = observationObjectPath(sessionRoot, id);

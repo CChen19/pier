@@ -11,6 +11,7 @@ import { Type } from 'typebox';
 import type { PiSurface } from '../pi-surface.ts';
 import type { HerdrClientLike } from '../herdr-client.ts';
 import { herdrUnavailableHint } from '../herdr-client.ts';
+import { toolError } from '../tool-error.ts';
 import {
   READINESS_TIMEOUT_MS,
   READ_MAX_CHARS,
@@ -179,7 +180,8 @@ export default function terminalPlugin(ctx: Context): void {
   /** wait action: recent-tail size handed back on timeout so the model can decide the next move. */
   const WAIT_TAIL_CHARS = 2_000;
 
-  const errText = (msg: string) => ({ content: [{ type: 'text' as const, text: `Error: ${msg}` }], details: {} });
+  /** A1: a hard failure must throw (pi sets isError only for throws); non-failures stay results. */
+  const fail = (msg: string): never => toolError(msg);
 
   scoped.registerTool({
     name: 'terminal',
@@ -225,7 +227,7 @@ export default function terminalPlugin(ctx: Context): void {
         case 'close': return executeTerminalClose(params);
         case 'list': return executeTerminalList();
         default:
-          return errText(action
+          return fail(action
             ? `unknown action "${action}" (valid: open, send, wait, read, signal, close, list)`
             : 'action is required (open, send, wait, read, signal, close, list)');
       }
@@ -250,7 +252,7 @@ export default function terminalPlugin(ctx: Context): void {
   }
 
   async function executeTerminalOpen(params, ctx) {
-    if (!client.available || !env) return errText('terminal tools require a herdr-managed pane');
+    if (!client.available || !env) return fail('terminal tools require a herdr-managed pane');
     const cwd = typeof params?.cwd === 'string' && params.cwd ? params.cwd
       : (ctx as { cwd?: string }).cwd ?? process.cwd();
     const r = registerTerminal(terminals, {
@@ -259,13 +261,13 @@ export default function terminalPlugin(ctx: Context): void {
       cwd,
       createdAt: Date.now(),
     });
-    if (!r.ok) return errText(r.error);
+    if (!r.ok) return fail(r.error);
     let paneId: string;
     try {
       paneId = await client.splitPane({ direction: 'right', cwd, focus: false, targetPaneId: env.paneId });
     } catch (e) {
       const hint = herdrUnavailableHint(e);
-      return errText(hint ?? `failed to split terminal pane: ${(e as Error).message}`);
+      return fail(hint ?? `failed to split terminal pane: ${(e as Error).message}`);
     }
     r.entry.paneId = paneId;
     terminals = r.entries;
@@ -292,9 +294,9 @@ export default function terminalPlugin(ctx: Context): void {
 
   async function executeTerminalSend(params) {
     const entry = findOpenTerminal(params?.terminal_id);
-    if (!entry) return errText(`unknown or closed terminal "${String(params?.terminal_id)}" (see action list)`);
+    if (!entry) return fail(`unknown or closed terminal "${String(params?.terminal_id)}" (see action list)`);
     const v = validateSendText(typeof params?.text === 'string' ? params.text : '');
-    if (!v.ok) return errText(v.error);
+    if (!v.ok) return fail(v.error);
     if (!entry.initialized) {
       const prompt = promptStrategyFor();
       const init = planShellInit({ strategy: prompt });
@@ -314,7 +316,7 @@ export default function terminalPlugin(ctx: Context): void {
       // Refuse with the observed readiness instead of guessing.
       const readiness = await probeReadiness(entry.paneId);
       if (readiness !== 'prompt') {
-        return errText(
+        return fail(
           `shell is ${readiness === 'busy' ? 'busy (a previous command may still be running)' : 'silent (no prompt detected)'} — text was NOT sent. `
             + 'Use action read to inspect the pane, or omit wait_prompt to send anyway.',
         );
@@ -325,7 +327,7 @@ export default function terminalPlugin(ctx: Context): void {
     } catch (e) {
       // B5: a dead herdr socket would otherwise read as "pane may be closed", which sends the
       // model hunting for a pane that is fine. Prefer the actionable transport sentence.
-      return errText(herdrUnavailableHint(e) ?? `send failed (pane may be closed): ${(e as Error).message}`);
+      return fail(herdrUnavailableHint(e) ?? `send failed (pane may be closed): ${(e as Error).message}`);
     }
     touchTerminal(entry);
     return { content: [{ type: 'text', text: `sent to ${entry.terminalId} (${v.text.length} chars)` }], details: { terminal_id: entry.terminalId } };
@@ -333,15 +335,15 @@ export default function terminalPlugin(ctx: Context): void {
 
   async function executeTerminalWait(params) {
     const entry = findOpenTerminal(params?.terminal_id);
-    if (!entry) return errText(`unknown or closed terminal "${String(params?.terminal_id)}" (see action list)`);
+    if (!entry) return fail(`unknown or closed terminal "${String(params?.terminal_id)}" (see action list)`);
     const raw = typeof params?.pattern === 'string' ? params.pattern : '';
-    if (!raw) return errText('pattern is required (literal text, or a regular expression with regex: true)');
+    if (!raw) return fail('pattern is required (literal text, or a regular expression with regex: true)');
     const useRegex = params?.regex === true;
     if (useRegex) {
       try {
         new RegExp(raw);
       } catch (e) {
-        return errText(`invalid regex: ${(e as Error).message}`);
+        return fail(`invalid regex: ${(e as Error).message}`);
       }
     }
     const requested = typeof params?.timeout_ms === 'number' && params.timeout_ms > 0 ? params.timeout_ms : WAIT_DEFAULT_MS;
@@ -360,7 +362,7 @@ export default function terminalPlugin(ctx: Context): void {
         waitResult = { matched: false, reason: 'unavailable' };
       }
     } catch (e) {
-      return errText(herdrUnavailableHint(e) ?? `wait failed (pane may be closed): ${(e as Error).message}`);
+      return fail(herdrUnavailableHint(e) ?? `wait failed (pane may be closed): ${(e as Error).message}`);
     }
     if (!waitResult.matched) {
       // wait-for-text convention: on timeout, hand back the recent tail so the model can decide
@@ -389,24 +391,32 @@ export default function terminalPlugin(ctx: Context): void {
     let entry: TerminalEntry | null = null;
     if (typeof params?.terminal_id === 'string') {
       entry = findOpenTerminal(params.terminal_id);
-      if (!entry) return errText(`unknown or closed terminal "${params.terminal_id}" (see action list)`);
+      if (!entry) return fail(`unknown or closed terminal "${params.terminal_id}" (see action list)`);
       paneId = entry.paneId;
     } else if (typeof params?.pane_id === 'string') {
       // T5 limits direct reads to this task tab or owned terminals to prevent cross-task access.
+      // A1: the guard result is carried out of the try block — a thrown tool error must not be eaten
+      // by the lookup catch below (it would be reported as a bogus "pane lookup failed").
+      let allowed = false;
+      let lookupError: unknown = null;
       try {
         const panes = await client.listPanes();
         const target = panes.find((p) => p.paneId === params.pane_id);
         const ownTab = target?.tabId && target.tabId === env?.tabId;
         const ownTerminal = activeTerminalPaneIds(terminals).has(params.pane_id);
-        if (!target || (!ownTab && !ownTerminal)) {
-          return errText('pane_id read is limited to panes in this session\'s own tab or self-created terminal panes');
-        }
-        paneId = params.pane_id;
+        allowed = Boolean(target) && Boolean(ownTab || ownTerminal);
+        if (allowed) paneId = params.pane_id;
       } catch (e) {
-        return errText(herdrUnavailableHint(e) ?? `pane lookup failed: ${(e as Error).message}`);
+        lookupError = e;
+      }
+      if (lookupError !== null) {
+        return fail(herdrUnavailableHint(lookupError) ?? `pane lookup failed: ${(lookupError as Error).message}`);
+      }
+      if (!allowed) {
+        return fail('pane_id read is limited to panes in this session\'s own tab or self-created terminal panes');
       }
     } else {
-      return errText('provide terminal_id (or pane_id for a direct own-tab read)');
+      return fail('provide terminal_id (or pane_id for a direct own-tab read)');
     }
     const maxChars = typeof params?.max_chars === 'number' && params.max_chars > 0
       ? Math.min(params.max_chars, TERM_READ_MAX) : TERM_READ_MAX;
@@ -414,7 +424,7 @@ export default function terminalPlugin(ctx: Context): void {
     try {
       read = await client.readPane(paneId, { stripAnsi: false });
     } catch (e) {
-      return errText(herdrUnavailableHint(e) ?? `read failed (pane may be closed): ${(e as Error).message}`);
+      return fail(herdrUnavailableHint(e) ?? `read failed (pane may be closed): ${(e as Error).message}`);
     }
     // T6 inspects raw output because ANSI stripping would erase alternate-screen evidence.
     const tui = detectFullscreenTUI(read.text);
@@ -455,13 +465,13 @@ export default function terminalPlugin(ctx: Context): void {
 
   async function executeTerminalSignal(params) {
     const entry = findOpenTerminal(params?.terminal_id);
-    if (!entry) return errText(`unknown or closed terminal "${String(params?.terminal_id)}" (see action list)`);
+    if (!entry) return fail(`unknown or closed terminal "${String(params?.terminal_id)}" (see action list)`);
     const v = validateSignal(typeof params?.key === 'string' ? params.key : '');
-    if (!v.ok) return errText(v.error);
+    if (!v.ok) return fail(v.error);
     try {
       await client.sendPaneKeys(entry.paneId, [v.key]);
     } catch (e) {
-      return errText(herdrUnavailableHint(e) ?? `signal failed (pane may be closed): ${(e as Error).message}`);
+      return fail(herdrUnavailableHint(e) ?? `signal failed (pane may be closed): ${(e as Error).message}`);
     }
     touchTerminal(entry);
     return { content: [{ type: 'text', text: `signal ${v.key} sent to ${entry.terminalId}` }], details: { terminal_id: entry.terminalId, key: v.key } };
@@ -470,7 +480,7 @@ export default function terminalPlugin(ctx: Context): void {
   async function executeTerminalClose(params) {
     const id = params?.terminal_id;
     const entry = terminals.find((t) => t.terminalId === id);
-    if (!entry) return errText(`unknown terminal "${String(id)}" (see action list)`);
+    if (!entry) return fail(`unknown terminal "${String(id)}" (see action list)`);
     if (entry.status === 'open') {
       try {
         await client.closePane(entry.paneId);

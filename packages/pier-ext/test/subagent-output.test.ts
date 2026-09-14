@@ -298,13 +298,17 @@ test('subagent action output: missing or unknown agentId returns helpful error',
     const tool = pi.tools.get('subagent');
     assert.ok(tool?.execute);
 
-    // Missing agentId
-    const resNoId = await tool.execute(null, { action: 'output' }) as { content: Array<{ text: string }> };
-    assert.match(resNoId.content[0].text, /Error: missing agentId for output/);
+    // Missing agentId (A1: hard failures throw, so the message is the rejection reason)
+    await assert.rejects(
+      async () => { await tool.execute!(null, { action: 'output' }); },
+      /missing agentId for output/,
+    );
 
     // Unknown agentId
-    const resUnknown = await tool.execute(null, { action: 'output', agentId: 'nonexistent-pane' }) as { content: Array<{ text: string }> };
-    assert.match(resUnknown.content[0].text, /Error: unknown subagent id "nonexistent-pane"/);
+    await assert.rejects(
+      async () => { await tool.execute!(null, { action: 'output', agentId: 'nonexistent-pane' }); },
+      /unknown subagent id "nonexistent-pane"/,
+    );
   } finally {
     await root.fiber.dispose();
   }

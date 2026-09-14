@@ -15,6 +15,7 @@ import { planTodoReadHook } from '../todo-read-hook.ts';
 import { TODO_REMINDER_CUSTOM_TYPE, planStopTodoReminder, todoReminderGraceMs } from '../todo-reminder-core.ts';
 import { makeProgressUpdate } from '../subagent-core.ts';
 import { TODO_DETAILS_KEY, TODO_TOOL_NAME, formatTodoConfirmation, type TodoItem } from '../vocab.ts';
+import { toolError } from '../tool-error.ts';
 import { formatAge, isArchived } from '../stale-core.ts';
 import {
   TODO_EDIT_CUSTOM_TYPE,
@@ -306,10 +307,8 @@ export default function todoPlugin(ctx: Context): void {
       void signal;
       const result = validateTodos(params?.todos, allowParallelInProgress);
       if (!result.ok) {
-        return {
-          content: [{ type: 'text', text: `Error: ${result.error}` }],
-          details: {},
-        };
+        // A1: an invalid list is a hard failure — throw so pi flags isError for the model.
+        return toolError(result.error);
       }
       const strictMode = todos.config.strict; // D75 phase 2 keeps policy in the service config.
       let next = result.items!;
