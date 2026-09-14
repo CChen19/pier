@@ -2,8 +2,8 @@
  * Agent view registration builder for Herdr sidebar.
  *
  * Conforms to Herdr 0.9.0 protocol 22 `agent.view.set` schema.
- * Registers a dedicated sidebar view targeting pier-managed panes
- * (identified by agent === 'pi' or presence of the `pi-todo` token).
+ * Registers the Pier sidebar view: no agent-kind filter (every harness stays
+ * visible) plus attention-first ordering.
  */
 
 export interface AgentViewFieldToken {
@@ -56,32 +56,27 @@ export interface AgentViewSetParams {
 export interface BuildAgentViewOptions {
   source?: string;
   label?: string;
-  tokenKey?: string;
   filter?: AgentViewFilter | null;
 }
 
 /**
  * Builds validated parameters for agent.view.set.
- * Defaults to filtering panes where agent is 'pi' or that carry the `pi-todo` token,
- * sorted by attention descending and pane order ascending.
+ *
+ * The default filter is null — no harness restriction. `agent.view.set`
+ * replaces Herdr's built-in Agents projection for the whole UI (expanded and
+ * collapsed sidebar, indexed focus, next/previous agent navigation), so any
+ * harness missing from a filter silently disappears from the sidebar: a
+ * `pi`-only filter used to hide every omp pane (D105). Only the ordering is
+ * opinionated — blocked/working agents float to the top.
  */
 export function buildAgentViewSetParams(options?: BuildAgentViewOptions): AgentViewSetParams {
   const source = options?.source ?? 'pier.workbench';
   const label = options?.label ?? 'Pier';
-  const tokenKey = options?.tokenKey ?? 'pi-todo';
-
-  const defaultFilter: AgentViewFilter = {
-    op: 'any',
-    filters: [
-      { op: 'eq', field: 'agent', value: 'pi' },
-      { op: 'exists', field: { token: tokenKey } },
-    ],
-  };
 
   return {
     source,
     label,
-    filter: options?.filter !== undefined ? options.filter : defaultFilter,
+    filter: options?.filter !== undefined ? options.filter : null,
     sort: [
       { field: 'attention', order: 'desc' },
       { field: 'pane_order', order: 'asc' },

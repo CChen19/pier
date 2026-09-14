@@ -70,3 +70,4 @@
 | D102 | 进程内测试日志保真提炼（EPR）：基于未截断输出逐字节引文验真，替换前强制归档原文且支持密钥过滤 | `packages/pier-ext/src/reducer-core.ts:117` |
 | D103 | 能效多级配置与独立遥测闭环：支持环境变量覆盖、项目信任安全门控与细粒度 JSONL 审计流水 | `packages/pier-ext/src/efficiency-config-core.ts:368` |
 | D104 | 配置说明只读命令与 agent 引导式改配置（5 平面目录、生效值+来源、schema 漂移守卫） | `packages/pier-ext/src/config-catalog-core.ts:1` |
+| D105 | Pier 侧边栏 agent 视图不设 harness 过滤（`filter: null`，任何 agent 都显示），只保留 attention-first 排序：`agent.view.set` 全局替换 herdr 内置 Agents 投影，任何过滤都会静默隐藏未列入的 harness | `packages/pier-workbench/src/agent-view.ts:79` |
