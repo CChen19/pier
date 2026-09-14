@@ -186,7 +186,12 @@ test('resolveCacheRatioFromCost: calculates ratio correctly or defaults to 12.5'
   assert.equal(resolveCacheRatioFromCost('auto', null), 12.5);
   assert.equal(resolveCacheRatioFromCost('auto', { cacheRead: 0.1, cacheWrite: 1.25 }), 12.5);
   assert.equal(resolveCacheRatioFromCost('auto', { cacheRead: 0.25, cacheWrite: 1.0 }), 4.0);
-  assert.equal(resolveCacheRatioFromCost('auto', { cacheRead: 0, cacheWrite: 0 }), 0);
+  // No cache capability at all
+  assert.equal(resolveCacheRatioFromCost('auto', { cacheRead: 0, cacheWrite: 0 }), null);
+  // Free cache writes with no read price → no cache capability
+  assert.equal(resolveCacheRatioFromCost('auto', { cacheRead: 0.003, cacheWrite: 0 }), null);
+  // Missing read price → cannot compute ratio
+  assert.equal(resolveCacheRatioFromCost('auto', { cacheRead: 0, cacheWrite: 0.5 }), null);
 });
 
 test('nativeCompactionFeasible: returns false for empty or small session branch', () => {

@@ -255,23 +255,51 @@ export function decideCompaction(input: {
   };
 }
 
+/**
+ * Resolve cache write/read cost ratio for economic compaction decisions.
+ *
+ * Priority:
+ *  1. Explicit numeric config → use as-is (e.g., 12.5 for Anthropic models)
+ *  2. Model cost metadata → derive ratio from cacheWrite/cacheRead
+ *  3. Fallback → 12.5 (standard Anthropic-like pricing)
+ *
+ * Returns null to disable economic decisions when:
+ *  - Model has no cache capability (both read=0, write=0)
+ *  - Model has free cache writes but no read price (write=0 while read exists)
+ *    → Indicates no cache feature, not truly free writes
+ *  - Missing cacheRead price → cannot compute valid ratio
+ *
+ * Rationale for write=0 → null (P0-1 fix):
+ *  DeepSeek/Gemini report cacheWrite=0 not because writes are free,
+ *  but because they don't support KV cache at all. Treating 0 as "free"
+ *  would trigger spurious compactions with infinite breakeven horizon.
+ */
 export function resolveCacheRatioFromCost(
   ratioConfig: number | 'auto',
   cost?: { cacheRead?: number; cacheWrite?: number } | null,
 ): number | null {
+  // Explicit config takes absolute precedence
   if (typeof ratioConfig === 'number') {
     return Number.isFinite(ratioConfig) && ratioConfig >= 0 ? ratioConfig : null;
   }
-  if (!cost) return 12.5; // fallback standard Anthropic-like pricing
+
+  // No model cost metadata → conservative fallback
+  if (!cost) return 12.5;
+
   const read = cost.cacheRead ?? 0;
   const write = cost.cacheWrite ?? 0;
-  if (read > 0) {
-    return write / read;
-  }
-  if (read === 0 && write === 0) {
-    return 0; // free cache writes
-  }
-  return 12.5;
+
+  // No cache capability at all
+  if (read === 0 && write === 0) return null;
+
+  // Missing read price → cannot compute ratio
+  if (read === 0) return null;
+
+  // Zero write cost → indicates no cache support, not free writes
+  // (DeepSeek/Gemini/GLM report write=0 when cache is unavailable)
+  if (write === 0) return null;
+
+  return write / read;
 }
 
 function compactionMessageCount(entries: readonly SessionEntry[], startIndex: number, endIndex: number): number {
