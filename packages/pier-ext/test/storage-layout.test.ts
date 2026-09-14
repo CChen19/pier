@@ -10,6 +10,8 @@ import {
   historyFilePath,
   historyFilePathLegacy,
   preferredHistoryFile,
+  piCoreSessionDirName,
+  piSessionDirCandidates,
   preferredSessionDir,
   sessionDirCandidates,
   sessionDirName,
@@ -85,4 +87,32 @@ test('re-exports stay stable for existing importers', () => {
   assert.equal(sessionDirNameReexport, sessionDirName);
   assert.equal(historyFilePathReexport, historyFilePath);
   assert.equal(userRolesDirReexport, userRolesDir);
+});
+
+/* ──────────── A8：pi core 自有 session 目录名（读 pi 会话必须对齐它，而不是 pier 的编码） ──────────── */
+
+test('piCoreSessionDirName: 与 pi core 逐字节一致（本机实证样例）', () => {
+  // pi core（dist/migrations.js:102）: `--${cwd.replace(/^[/\\]/, '').replace(/[/\\:]/g, '-')}--`
+  // 与 `~/.pi/agent/sessions/` 下真实目录名对齐：
+  assert.equal(piCoreSessionDirName('/Users/yehaoyu/Documents/pier'), '--Users-yehaoyu-Documents-pier--');
+  assert.equal(
+    piCoreSessionDirName('/Users/yehaoyu/.herdr/worktrees/pier/pier-fix-batch-0-regressions-a7-a8-b1-a11'),
+    '--Users-yehaoyu-.herdr-worktrees-pier-pier-fix-batch-0-regressions-a7-a8-b1-a11--',
+  );
+  // Windows：只有一个开头分隔符被剥离（盘符前没有分隔符，等价于 pier 的 legacy 形态）
+  assert.equal(piCoreSessionDirName('F:\\herdr-pi'), '--F--herdr-pi--');
+  // `%` 不转义（这正是旧实现 POSIX 全落空的原因：pier 新版编成了 %2F）
+  assert.equal(piCoreSessionDirName('/a%2Fb'), '--a%2Fb--');
+  assert.notEqual(piCoreSessionDirName('/home/u/proj'), sessionDirName('/home/u/proj'));
+  assert.notEqual(piCoreSessionDirName('/home/u/proj'), sessionDirNameLegacy('/home/u/proj'));
+});
+
+test('piSessionDirCandidates: pi core 名在前，pier 旧编码兜底且去重', () => {
+  assert.deepEqual(piSessionDirCandidates('/home/u/proj'), [
+    '--home-u-proj--',
+    '--%2Fhome%2Fu%2Fproj--',
+    '---home-u-proj--',
+  ]);
+  // Windows 上 pi core 名与 legacy 相同 → 不重复
+  assert.deepEqual(piSessionDirCandidates('F:\\herdr-pi'), ['--F--herdr-pi--', '--F%3A%5Cherdr-pi--']);
 });
