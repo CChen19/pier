@@ -12,6 +12,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { latestBootRecordPerWorkspace, parseBootRecords } from '../src/restore-plan.ts';
 
 const SOCKET = process.env.HERDR_SOCKET_PATH;
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -62,12 +63,11 @@ function request(method, params = {}, timeoutMs = 15000) {
   });
 }
 
+/** F05: append-only log -> newest record per workspace, so restore never rebuilds a tab twice. */
 function readBootRecords() {
   try {
     if (!fs.existsSync(BOOT_FILE)) return [];
-    return fs.readFileSync(BOOT_FILE, 'utf8').split('\n').filter(Boolean)
-      .map((l) => { try { return JSON.parse(l); } catch { return null; } })
-      .filter((r) => r && typeof r.workspace_id === 'string');
+    return latestBootRecordPerWorkspace(parseBootRecords(fs.readFileSync(BOOT_FILE, 'utf8')));
   } catch {
     return [];
   }

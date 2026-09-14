@@ -8,6 +8,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { parseEventEnv, runReflow } from '../src/reflow.ts';
+import { readJsonSafe, writeJsonAtomic } from '../src/state-file.ts';
 
 const SOCKET = process.env.HERDR_SOCKET_PATH;
 const TARGET = process.platform === 'win32' && SOCKET
@@ -18,17 +19,13 @@ const STATE_DIR = process.env.HERDR_PLUGIN_STATE_DIR
   || path.join(os.homedir(), '.pi', 'agent', 'herdr-pi');
 const STATE_FILE = path.join(STATE_DIR, 'tab-layout.json');
 
+// F15: concurrent hook processes share this file — read tolerantly, write atomically.
 function loadState() {
-  try {
-    return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-  } catch {
-    return { tabs: {}, panes: {}, debounce: null };
-  }
+  return readJsonSafe(STATE_FILE, { tabs: {}, panes: {}, debounce: null });
 }
 
 function saveState(state) {
-  fs.mkdirSync(STATE_DIR, { recursive: true });
-  fs.writeFileSync(STATE_FILE, JSON.stringify(state));
+  writeJsonAtomic(STATE_FILE, state);
 }
 
 function request(method, params = {}, timeoutMs = 8000) {
