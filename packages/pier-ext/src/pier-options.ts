@@ -34,6 +34,11 @@ export const PIER_OPTIONS: readonly OptionSpec[] = [
   { name: 'PIER_TERMINAL_PROMPT', legacy: 'PI_HERDR_TERMINAL_PROMPT', fallback: '(auto from $SHELL)', description: 'prompt strategy for terminal readiness: bash|zsh|powershell|pwsh' },
   { name: 'PIER_SLIM_FRAME', legacy: 'PI_HERDR_SLIM_FRAME', fallback: '1', description: 'mutation frame around todo-tool cards (0 disables)' },
   { name: 'PIER_TRACE', legacy: 'PI_HERDR_TRACE', fallback: '', description: 'write diagnostics (renderers, swallowed errors) to stderr' },
+  { name: 'PIER_TERM_IDLE_MS', legacy: 'PI_HERDR_TERM_IDLE_MS', fallback: '1800000', description: 'idle time before pier nudges about an open terminal' },
+  { name: 'PIER_TERM_GRACE_MS', legacy: 'PI_HERDR_TERM_GRACE_MS', fallback: '30000', description: 'settle grace before the terminal idle nudge' },
+  { name: 'PIER_TERM_READ_MAX', legacy: 'PI_HERDR_TERM_READ_MAX', fallback: '8000', description: 'characters returned per terminal read' },
+  { name: 'PIER_TODO_GRACE_MS', legacy: 'PI_HERDR_TODO_GRACE_MS', fallback: '30000', description: 'settle grace before the unfinished-todo reminder' },
+  { name: 'PIER_HMR', legacy: 'PI_HERDR_HMR', fallback: '', description: 'dev: enable the cordis HMR boundary (requires --expose-internals)' },
 ];
 
 /**

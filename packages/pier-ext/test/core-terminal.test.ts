@@ -11,6 +11,7 @@ import {
   makeTerminalsRegistry,
   planIdleTerminalReminder,
   TERM_REMINDERS_MAX,
+  terminalIdleMs,
 } from '../src/terminal-core.ts';
 import { PiSurface } from '../src/pi-surface.ts';
 import { DisposeLedger } from '../src/ledger.ts';
@@ -342,4 +343,30 @@ test('B4：terminal 工具同样有 snippet/guidelines（何时用常驻终端 v
   assert.match(g, /dev servers|server, REPL/);
   assert.match(g, /Close the terminal/);
   await ctx.fiber.dispose();
+});
+
+test('B6：终端闲置提醒的噪音上限（一次/终端 + 硬封顶 + 不许告别语）', async () => {
+  // 实证：term-reminder 曾比 todo-reminder 吵（53 vs 17 次），单会话触发过 52 轮。
+  // 现行规则：闲置阈值 + 每个终端只催一次（nudgedAt）+ 每会话硬封顶 TERM_REMINDERS_MAX。
+  const t = (id: string, lastActivityAt: number, nudgedAt: number | null = null) => ({
+    terminalId: id, cwd: `/w/${id}`, label: id, lastActivityAt, nudgedAt,
+  });
+  const now = 10_000_000;
+  const idleMs = terminalIdleMs();
+
+  // 1. 未到闲置阈值 → 不催（长跑 dev server 被触碰过就不会进催办）
+  assert.equal(planIdleTerminalReminder({ open: [t('term-1', now - 1000)], now, reminders: 0 }).due, false);
+  // 2. 到阈值但已催过（nudgedAt 非空）→ 不重复催同一个终端
+  assert.equal(planIdleTerminalReminder({ open: [t('term-1', now - idleMs - 1, now - 1000)], now, reminders: 0 }).due, false);
+  // 3. 已到硬封顶 → 整场会话不再催（这是"52 轮"不可能再发生的保证）
+  for (let reminders = 0; reminders < TERM_REMINDERS_MAX + 2; reminders += 1) {
+    const plan = planIdleTerminalReminder({ open: [t('term-1', now - idleMs - 1)], now, reminders });
+    assert.equal(plan.due, reminders < TERM_REMINDERS_MAX, `reminders=${reminders}`);
+  }
+  // 4. 提醒文案必须禁止模型对这条内部通知回话/告别（否则会骗出无意义的一轮）
+  const plan = planIdleTerminalReminder({ open: [t('term-1', now - idleMs - 1)], now, reminders: 0 });
+  assert.equal(plan.due, true);
+  assert.match(plan.content!, /do NOT reply to the user and do NOT send any farewell/);
+  assert.match(plan.content!, new RegExp(`nudge 1/${TERM_REMINDERS_MAX}`));
+  assert.deepEqual(plan.ids, ['term-1']);
 });

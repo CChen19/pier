@@ -30,6 +30,7 @@
 import { isArchived } from './stale-core.ts';
 import type { TodoItem } from './vocab.ts';
 import { anchorTodoRange, formatTodoSummary, renderTodoGroups } from './todo-window.ts';
+import { pierOption } from './pier-options.ts';
 
 /** Minimum usable TUI dimensions (pi interactive-mode layout: editor 3 rows + footer 1 + transcript ≥3 + spacing).
  * Below either threshold the pane cannot display a readable TUI, so the overlay covers it. */
@@ -343,7 +344,7 @@ let active: SlimFrameComponent | null = null;
  */
 export function registerSlimFrame(eventCtx: unknown): void {
   if (active) return;
-  if (process.env.PI_HERDR_SLIM_FRAME === '0') return;
+  if (pierOption('PIER_SLIM_FRAME') === '0') return;
   const ui = eventCtx !== null && typeof eventCtx === 'object' && 'ui' in eventCtx
     ? eventCtx.ui
     : null;

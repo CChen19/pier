@@ -6,7 +6,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PIER_OPTIONS, formatOptionRows, pierOption, pierOptionRows } from '../src/pier-options.ts';
 import { createRuntimePolicy } from '../src/runtime-policy.ts';
-import { promptStrategyFor, POSIX_PROMPT, POWERSHELL_PROMPT } from '../src/terminal-core.ts';
+import {
+  POSIX_PROMPT,
+  POWERSHELL_PROMPT,
+  promptStrategyFor,
+  terminalIdleMs,
+  terminalReminderGraceMs,
+} from '../src/terminal-core.ts';
 
 test('pierOption: canonical 优先，legacy 兜底，空串视为未设置', () => {
   assert.equal(pierOption('PIER_GIT_TIMEOUT_MS', { PIER_GIT_TIMEOUT_MS: '5000' }), '5000');
@@ -44,4 +50,24 @@ test('runtime policy 与 terminal prompt 都接受 legacy 前缀', () => {
   assert.equal(promptStrategyFor({ PI_HERDR_TERMINAL_PROMPT: 'powershell' }), POWERSHELL_PROMPT);
   assert.equal(promptStrategyFor({ PIER_TERMINAL_PROMPT: 'powershell', PI_HERDR_TERMINAL_PROMPT: 'bash' }), POWERSHELL_PROMPT);
   assert.equal(promptStrategyFor({ PIER_TERMINAL_PROMPT: 'bash' }), POSIX_PROMPT);
+});
+
+test('B10 收口：terminal/todo/slim-frame/HMR 的读取点都走 catalog（legacy 名仍生效）', () => {
+  // 目录里必须登记这些键，且都带 legacy 别名（旧 shell 脚本不能失效）
+  for (const name of ['PIER_TERM_IDLE_MS', 'PIER_TERM_GRACE_MS', 'PIER_TERM_READ_MAX', 'PIER_TODO_GRACE_MS', 'PIER_HMR']) {
+    const spec = PIER_OPTIONS.find((o) => o.name === name);
+    assert.ok(spec, `${name} 应在目录中`);
+    assert.ok(spec!.legacy?.startsWith('PI_HERDR_'), `${name} 应保留 legacy 别名`);
+  }
+  const prev = process.env.PI_HERDR_TERM_IDLE_MS;
+  process.env.PI_HERDR_TERM_IDLE_MS = '1234';
+  process.env.PIER_TERM_GRACE_MS = '4321';
+  try {
+    assert.equal(terminalIdleMs(), 1234, 'legacy 名生效');
+    assert.equal(terminalReminderGraceMs(), 4321, 'canonical 名生效');
+  } finally {
+    delete process.env.PIER_TERM_GRACE_MS;
+    if (prev === undefined) delete process.env.PI_HERDR_TERM_IDLE_MS;
+    else process.env.PI_HERDR_TERM_IDLE_MS = prev;
+  }
 });

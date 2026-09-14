@@ -15,6 +15,7 @@ import Group from '@deepseek-ai/cordis-plugin-group';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import * as path from 'node:path';
 import { DisposeLedger } from './ledger.ts';
+import { pierOption } from './pier-options.ts';
 
 export interface BootstrapHooks {
   onDispose?: () => void;
@@ -60,7 +61,8 @@ export async function createCordisApp(hooks: BootstrapHooks = {}): Promise<Cordi
     console.error(`[pi-herdr] cordis loader degraded (bare tree): ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  if (loaderReady && detectExposeInternals() && process.env.PI_HERDR_HMR === '1') {
+  // B10: canonical PIER_HMR, legacy PI_HERDR_HMR.
+  if (loaderReady && detectExposeInternals() && pierOption('PIER_HMR') === '1') {
     try {
       const withLoader = root as Context & {
         loader?: { create: (o: { name: string; config?: unknown }) => Promise<unknown> };

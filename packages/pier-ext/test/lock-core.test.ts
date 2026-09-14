@@ -6,6 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  bashWriteTargets,
   LOCK_BATCH_LIMIT,
   LOCK_TOKEN_PREFIX,
   WRITE_LOCK_ENV,
@@ -198,4 +199,60 @@ test('planWriteGuard：硬模式的 block reason 列出全部持有者并附查�
 test('常量：env 名与工具集锁定', () => {
   assert.equal(WRITE_LOCK_ENV, 'PI_HERDR_WRITE_LOCK');
   assert.deepEqual([...WRITE_TOOLS].sort(), ['edit', 'write']);
+});
+
+/* ──────────── B7：bash 重定向绕过软锁（只提示、不阻断） ──────────── */
+
+test('bashWriteTargets: 抽取明显的重定向/tee/sed -i/truncate 目标', () => {
+  assert.deepEqual(bashWriteTargets('echo hi > out.txt'), ['out.txt']);
+  assert.deepEqual(bashWriteTargets('npm test >> logs/build.log'), ['logs/build.log']);
+  assert.deepEqual(bashWriteTargets('cat a b > "my file.txt"'), ['my file.txt']);
+  assert.deepEqual(bashWriteTargets("printf x | tee -a 'report.csv'"), ['report.csv']);
+  assert.deepEqual(bashWriteTargets("sed -i '' 's/a/b/' src/app.ts"), ['src/app.ts']);
+  assert.deepEqual(bashWriteTargets("sed -i.bak 's/a/b/' src/app.ts"), ['src/app.ts']);
+  assert.deepEqual(bashWriteTargets('truncate -s 0 cache.db'), ['cache.db']);
+  // 多个目标去重
+  assert.deepEqual(bashWriteTargets('echo x > a.txt && echo y >> a.txt'), ['a.txt']);
+  // 只读命令 / 未知语法一律不猜（宁可不报，也不能误报阻断）
+  assert.deepEqual(bashWriteTargets('git status'), []);
+  assert.deepEqual(bashWriteTargets('echo "a > b"'), []);
+  assert.deepEqual(bashWriteTargets('make 2>&1'), []);
+  assert.deepEqual(bashWriteTargets(undefined), []);
+  assert.deepEqual(bashWriteTargets(''), []);
+});
+
+test('planWriteGuard (B7)：bash 撞到别人的锁 → warn（不 block），write 工具仍可硬阻断', () => {
+  const agents = [agent('p9', { [LOCKED]: 'p9' })];
+  const bash = planWriteGuard({
+    toolName: 'bash',
+    input: { command: `sed -i '' 's/a/b/' ${LOCKED_ALT}` },
+    agents,
+    ownPaneId: 'pB',
+    cwd: CWD,
+    hard: true, // 即便开了硬锁，bash 也不能阻断（没解析 shell，误判代价太高）
+  });
+  assert.equal(bash.kind, 'warn');
+  if (bash.kind !== 'warn') return;
+  assert.deepEqual(bash.paths, [LOCKED]);
+  assert.match(bash.warning, /not blocked/);
+  assert.match(bash.warning, /re-read the file/);
+
+  const write = planWriteGuard({
+    toolName: 'write',
+    input: { path: LOCKED_ALT, content: '' },
+    agents,
+    ownPaneId: 'pB',
+    cwd: CWD,
+    hard: true,
+  });
+  assert.equal(write.kind, 'block');
+
+  // 没有冲突时 bash 不产生噪音
+  assert.equal(planWriteGuard({
+    toolName: 'bash', input: { command: 'echo hi > free.txt' }, agents, ownPaneId: 'pB', cwd: CWD, hard: true,
+  }).kind, 'pass');
+  // 自己锁自己（重入）也不提示
+  assert.equal(planWriteGuard({
+    toolName: 'bash', input: { command: `echo x > ${LOCKED_ALT}` }, agents, ownPaneId: 'p9', cwd: CWD, hard: true,
+  }).kind, 'pass');
 });

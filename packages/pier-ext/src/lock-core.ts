@@ -65,6 +65,66 @@ export function writePathsOfTool(toolName: string, input: unknown): string[] {
   return typeof p === 'string' && p.trim() ? [p] : [];
 }
 
+/**
+ * B7: write-locks only see the write/edit tools, so a `bash` command that redirects into a file
+ * bypasses the beacon entirely (`> file`, `>> file`, `tee file`, `sed -i`, `truncate -s 0`).
+ * We do not try to parse shell: this extracts the *obvious* redirect/tee targets so the lock layer
+ * can raise a soft warning, and the limitation stays documented rather than implied.
+ *
+ * Pure and conservative: unknown syntax yields no paths, and a failure here must never block.
+ */
+export function bashWriteTargets(command: unknown): string[] {
+  if (typeof command !== 'string' || command.trim() === '') return [];
+  const found: string[] = [];
+  // Quoted or bare targets; stops at shell metacharacters. Deliberately ignores process substitution.
+  const target = String.raw`(?:'([^']+)'|"([^"]+)"|([^\s;|&<>()]+))`;
+  const patterns = [
+    new RegExp(String.raw`(?:^|[^0-9>])>>?\s*` + target, 'g'),      // > file, >> file
+    new RegExp(String.raw`\btee\s+(?:-a\s+)?` + target, 'g'),        // tee [-a] file
+    new RegExp(String.raw`\btruncate\s+-s\s*0\s+` + target, 'g'),   // truncate -s 0 file
+  ];
+  for (const re of patterns) {
+    for (const m of command.matchAll(re)) {
+      const path = (m[1] ?? m[2] ?? m[3] ?? '').trim();
+      const quoted = m[1] !== undefined || m[2] !== undefined;
+      if (isObviousPath(path, quoted)) found.push(path);
+    }
+  }
+  // `sed -i '' 's/a/b/' file`: the first argument is the (possibly empty) backup suffix and the second
+  // the expression, so take the LAST argument as the file rather than guessing the argument order.
+  for (const m of command.matchAll(/\bsed\s+-i[^\s]*\s+([^|;&\n]+)/g)) {
+    const args = splitShellWords(m[1] ?? '');
+    for (let i = args.length - 1; i >= 0; i -= 1) {
+      const candidate = args[i]!;
+      if (candidate.startsWith('-')) continue;
+      if (isObviousPath(candidate)) found.push(candidate);
+      break;
+    }
+  }
+  return [...new Set(found)];
+}
+
+/** Only unquoted, metacharacter-free paths count as "obvious" (anything else is left to the shell). */
+function isObviousPath(path: string, quoted = false): boolean {
+  if (path === '' || path === '/' || path.startsWith('$')) return false;
+  if (/['"`$*?{}()[\]]/.test(path)) return false; // Never a literal path (expansion, glob, nested quotes).
+  return quoted ? true : !/\s/.test(path); // An explicitly quoted target may contain spaces.
+}
+
+/** Whitespace split that keeps quoted segments together and strips their quotes. */
+function splitShellWords(input: string): string[] {
+  const out: string[] = [];
+  const re = /'([^']*)'|"([^"]*)"|(\S+)/g;
+  for (const m of input.matchAll(re)) out.push(m[1] ?? m[2] ?? m[3] ?? '');
+  return out.filter((s) => s !== '');
+}
+
+/** Soft hint shown after a bash call that wrote into a path another pane has locked. */
+export function formatBashLockHint(normPath: string, holders: readonly string[]): string {
+  return `Note: this bash command wrote to ${normPath}, which ${holdersLabel(holders)} is editing. `
+    + `Write-locks only cover the write/edit tools, so this write was not blocked: re-read the file before your next edit.`;
+}
+
 /** Why: Preserve the established compatibility and safety behavior. */
 
 /**
@@ -122,13 +182,18 @@ export function planWriteGuard(opts: {
   cwd: string;
   hard: boolean;
 }): WriteGuardPlan {
-  const raw = writePathsOfTool(opts.toolName, opts.input);
+  // B7: bash redirects are invisible to the write tools, so warn (never block) when their obvious
+  // targets collide with a lock beacon held by another pane.
+  const isBash = opts.toolName === 'bash';
+  const raw = isBash
+    ? bashWriteTargets((opts.input as { command?: unknown } | null | undefined)?.command)
+    : writePathsOfTool(opts.toolName, opts.input);
   if (raw.length === 0) return { kind: 'skip' };
   const paths = raw.map((p) => normalizeLockPath(p, opts.cwd));
   for (const norm of paths) {
     const holders = findLockHolders(opts.agents, opts.ownPaneId, norm);
     if (holders.length === 0) continue;
-    if (opts.hard) {
+    if (opts.hard && !isBash) {
       return {
         kind: 'block',
         paths,
@@ -140,7 +205,7 @@ export function planWriteGuard(opts: {
       kind: 'warn',
       paths,
       holderPaneIds: holders,
-      warning: formatConflictWarning(norm, holders),
+      warning: isBash ? formatBashLockHint(norm, holders) : formatConflictWarning(norm, holders),
     };
   }
   return { kind: 'pass', paths };

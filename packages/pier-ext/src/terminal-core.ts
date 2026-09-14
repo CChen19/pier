@@ -410,12 +410,13 @@ export const TERM_REMINDERS_MAX = 2;
 
 /** Idle threshold before a nudge is due; PI_HERDR_TERM_IDLE_MS is read per call so tests can use small values. */
 export function terminalIdleMs(): number {
-  return Number(process.env.PI_HERDR_TERM_IDLE_MS ?? 30 * 60_000) || 30 * 60_000;
+  // B10: canonical PIER_TERM_IDLE_MS, legacy PI_HERDR_TERM_IDLE_MS.
+  return Number(pierOption('PIER_TERM_IDLE_MS') ?? 30 * 60_000) || 30 * 60_000;
 }
 
 /** Grace from agent_settled to injection, letting the user read the answer and intervene; cancel on agent_start. */
 export function terminalReminderGraceMs(): number {
-  return Number(process.env.PI_HERDR_TERM_GRACE_MS ?? 30_000) || 30_000;
+  return Number(pierOption('PIER_TERM_GRACE_MS') ?? 30_000) || 30_000;
 }
 
 /** Custom message type for the idle-terminal nudge (registerMessageRenderer may restyle it). */

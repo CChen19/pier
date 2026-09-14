@@ -40,6 +40,7 @@ import {
   type TerminalEntry,
 } from '../terminal-core.ts';
 import { swallow } from '../swallow.ts';
+import { pierOption } from '../pier-options.ts';
 
 export interface TerminalStateSlot {
   /** Lets index GC preserve panes that host active terminals. */
@@ -178,7 +179,7 @@ export default function terminalPlugin(ctx: Context): void {
     idleReminderTimer.unref?.();
   });
 
-  const TERM_READ_MAX = Number(process.env.PI_HERDR_TERM_READ_MAX ?? READ_MAX_CHARS) || READ_MAX_CHARS;
+  const TERM_READ_MAX = Number(pierOption('PIER_TERM_READ_MAX') ?? READ_MAX_CHARS) || READ_MAX_CHARS;
   /** wait action: default and ceiling for the blocking output wait (an LLM call must not hang forever). */
   const WAIT_DEFAULT_MS = 120_000;
   const WAIT_MAX_MS = 600_000;

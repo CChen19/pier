@@ -17,6 +17,7 @@
  *    running, a human gate is blocked, or no open items remain.
  */
 import { ABORT_STOP_REASON } from './settle-wake-core.ts';
+import { pierOption } from './pier-options.ts';
 
 /** Cap reminders for the lifetime of the process, matching the previous behavior. */
 export const TODO_REMINDERS_MAX = 3;
@@ -31,7 +32,8 @@ export const TODO_REMINDER_CUSTOM_TYPE = 'pi-herdr.todo-reminder';
  * can use a small value rather than freezing configuration at module load.
  */
 export function todoReminderGraceMs(): number {
-  return Number(process.env.PI_HERDR_TODO_GRACE_MS ?? 30_000) || 30_000;
+  // B10: canonical PIER_TODO_GRACE_MS, legacy PI_HERDR_TODO_GRACE_MS.
+  return Number(pierOption('PIER_TODO_GRACE_MS') ?? 30_000) || 30_000;
 }
 
 export interface TodoReminderInput {
