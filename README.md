@@ -179,7 +179,7 @@ Runtime policies and operational limits are centralized in `runtime-policy.ts` (
 | `PIER_READY_TIMEOUT_MS` | `90000` | ms | Subagent pane pipe readiness wait (exponential backoff; a pane that exited fails immediately with its last output attached) |
 | `PIER_SESSION_TTL_SECONDS` | `600` | s | Session retention TTL after subagent exit before GC cleanup |
 | `PIER_GIT_TIMEOUT_MS` | `10000` | ms | Execution timeout for git operations (worktree creation, diff summary, cleanup) |
-| `PIER_FOCUS_POLL_MS` | `1500` | ms | Pane-focus sampling cadence that drives the workbench heat layout (`0` disables; see below) |
+| `PIER_FOCUS_POLL_MS` | `1500` / `0` | ms | Focus sampling for heat layout (`0` disables). Default 1500ms on Herdr <0.9.1; 0 (event-first) on 0.9.1+ |
 | `PIER_TERM_READ_MAX` | `8000` | chars | Maximum terminal buffer characters read per operation |
 | `PIER_TERM_IDLE_MS` | `1800000` | ms | Idle time before pier nudges about an open terminal |
 | `PIER_TODO_GRACE_MS` | `30000` | ms | Settle grace before the unfinished-todo reminder |
@@ -192,11 +192,10 @@ processes stay as they are (`PI_HERDR_SUBAGENT`, `PI_HERDR_ROLE_MANIFEST`, `PI_H
 `/pier-config doctor` lists every option with its effective value and where it came from, plus the
 errors pier deliberately swallowed this session.
 
-**Focus heat (herdr 0.9):** herdr resolves mouse focus inside its own client and no longer delivers
-`pane.focused` to plugins, so the workbench heat layout is driven by each pane sampling its own tab
-(`layout.export` → `focused_pane_id`) and replaying the event the workbench already understands. It
-takes effect for pi processes started after the change; every spawned subagent pane has it. Set
-`PIER_FOCUS_POLL_MS=0` to turn it off, `PIER_WORKBENCH_ROOT` to point at a relocated plugin checkout.
+**Focus heat:** Herdr 0.9.0 resolved mouse focus in the client and did not deliver `pane.focused`
+to plugins, so each pane sampled `layout.export → focused_pane_id` and replayed the workbench
+event. Herdr 0.9.1+ delivers `pane.focused` natively, so the poller defaults off. Override with
+`PIER_FOCUS_POLL_MS`; `PIER_WORKBENCH_ROOT` points at a relocated plugin checkout.
 
 ### Efficiency mechanisms (D100–D103, opt-in)
 

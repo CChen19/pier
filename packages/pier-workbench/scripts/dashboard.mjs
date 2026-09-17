@@ -17,6 +17,17 @@ const TARGET = process.platform === 'win32' && SOCKET
   ? (SOCKET.startsWith('\\\\.\\pipe\\') ? SOCKET : '\\\\.\\pipe\\' + SOCKET)
   : SOCKET;
 
+if (!SOCKET) {
+  console.log(
+    [
+      '==================== PIER OPS DASHBOARD ==================== (standalone)',
+      'No HERDR_SOCKET_PATH — offline. Inside Herdr 0.9.1, /dashboard opens the modal popup.',
+      '================================================================================',
+    ].join('\n'),
+  );
+  process.exit(0);
+}
+
 let targetWorkspaceId = null;
 if (process.env.HERDR_PLUGIN_CONTEXT_JSON) {
   try {

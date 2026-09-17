@@ -74,7 +74,6 @@ import {
   type EfficiencyConfig,
 } from './efficiency-config-core.ts';
 import {
-  FOCUS_POLL_DEFAULT_MS,
   resolveDefaultFocusPollMs,
   parseFocusSample,
   spawnReflow,
@@ -84,8 +83,8 @@ import {
 
 /**
  * D-4: focus sampling cadence. `PIER_FOCUS_POLL_MS=0` disables the poller (heat layout then only
- * reacts to herdr events, i.e. today's degraded behaviour); invalid values fall back to the default.
- * Herdr 0.9.1+ adapts to low-frequency polling (8000ms) as native pane.focused events are authoritative.
+ * reacts to herdr events). Invalid values fall back to the version default: 1500ms on Herdr <0.9.1,
+ * 0 (event-first) on 0.9.1+ where native pane.focused is authoritative.
  */
 function focusPollIntervalMs(env: NodeJS.ProcessEnv = process.env, herdrVersion?: string | null): number {
   const defaultMs = resolveDefaultFocusPollMs(herdrVersion);
@@ -702,8 +701,8 @@ export default async function (pi: ExtensionAPI) {
     latestCtx = ctx as { abort?: () => void } | null;
     const cwd = (ctx as { cwd?: string }).cwd ?? process.cwd();
     const paneId = env?.paneId ?? '';
-    // D-4: herdr 0.9 never delivers pane.focused to plugins, so the workbench heat layout is
-    // driven by our own focus sampling (see focus-poller.ts). One poller per pane, self-scoped.
+    // D-4: herdr 0.9.0 never delivered pane.focused to plugins; 0.9.1+ does. Poller is a
+    // fallback for old servers (see resolveDefaultFocusPollMs). One poller per pane, self-scoped.
     if (sessionFocusPoller.current) {
       sessionFocusPoller.current.stop();
       sessionFocusPoller.current = null;

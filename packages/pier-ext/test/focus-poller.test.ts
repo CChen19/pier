@@ -190,7 +190,7 @@ test('Herdr 0.9.1 adaptive cadence: isHerdr091OrLater and resolveDefaultFocusPol
   assert.equal(isHerdr091OrLater(null), false);
   assert.equal(isHerdr091OrLater(undefined), false);
 
-  assert.equal(resolveDefaultFocusPollMs('0.9.1'), 8000);
+  assert.equal(resolveDefaultFocusPollMs('0.9.1'), 0);
   assert.equal(resolveDefaultFocusPollMs('0.9.0'), 1500);
   assert.equal(resolveDefaultFocusPollMs(null), 1500);
 });

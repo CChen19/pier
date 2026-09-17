@@ -150,7 +150,7 @@ const ENV_KNOBS: readonly ConfigKnob[] = [
   { plane: 'env', key: 'PIER_GIT_TIMEOUT_MS', aliases: ['PI_HERDR_GIT_TIMEOUT_MS'], kind: 'number', defaultValue: 10000, min: 1, impact: 'git worktree/diff/cleanup execution timeout' },
   { plane: 'env', key: 'PIER_READY_TIMEOUT_MS', aliases: ['PI_HERDR_READY_TIMEOUT_MS'], kind: 'number', defaultValue: 90000, min: 1000, impact: 'Subagent pane pipe readiness wait (backoff; a dead pane fails fast)' },
   { plane: 'env', key: 'PIER_ISOLATE_SWEEP_ORPHANS', aliases: ['PI_HERDR_ISOLATE_SWEEP_ORPHANS'], kind: 'string', impact: 'Opt-in sweeping of orphaned isolate worktrees' },
-  { plane: 'env', key: 'PIER_FOCUS_POLL_MS', kind: 'number', defaultValue: 1500, min: 0, impact: 'Pane-focus sampling cadence for the workbench heat layout (0 disables)' },
+  { plane: 'env', key: 'PIER_FOCUS_POLL_MS', kind: 'number', defaultValue: 1500, min: 0, impact: 'Pane-focus sampling cadence for the workbench heat layout (0 disables). Default 1500ms on Herdr <0.9.1; 0 (event-first) on 0.9.1+' },
   { plane: 'env', key: 'PIER_TERMINAL_PROMPT', aliases: ['PI_HERDR_TERMINAL_PROMPT'], kind: 'string', impact: 'Terminal readiness prompt strategy: bash|zsh|powershell|pwsh (default: $SHELL)' },
   // B10: canonical names are `PIER_*`; the `PI_HERDR_*` spelling stays accepted (aliases).
   { plane: 'env', key: 'PIER_TODO_GRACE_MS', aliases: ['PI_HERDR_TODO_GRACE_MS'], kind: 'number', defaultValue: 30000, min: 1, impact: 'Delay before the unfinished-todo reminder fires (0/NaN falls back to the default)' },

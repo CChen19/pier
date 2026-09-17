@@ -154,6 +154,7 @@ test('composeDashboardLines: Herdr 0.9.1 terminal_title_stripped and foreground_
         workspace_id: 'w1',
         tab_id: 'w1:t1',
         agent: 'shell',
+        title: '⠋ npm test --watch',
         terminal_title_stripped: 'npm test --watch',
       },
       {
@@ -169,4 +170,5 @@ test('composeDashboardLines: Herdr 0.9.1 terminal_title_stripped and foreground_
   const text = lines.join('\n');
   assert.ok(text.includes('npm test --watch'));
   assert.ok(text.includes('cwd: core'));
+  assert.ok(!text.includes('⠋'), 'spinner-laden title must not win over terminal_title_stripped');
 });

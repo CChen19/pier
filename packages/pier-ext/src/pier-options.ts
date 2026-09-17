@@ -32,7 +32,7 @@ export const PIER_OPTIONS: readonly OptionSpec[] = [
   { name: 'PIER_OBSERVATION_WINDOW_MS', legacy: 'PI_HERDR_OBSERVATION_WINDOW_MS', fallback: '30000', description: 'observation window before a subagent is called settled' },
   { name: 'PIER_POLL_INTERVAL_MS', legacy: 'PI_HERDR_POLL_INTERVAL_MS', fallback: '30000', description: 'subagent poll cadence' },
   { name: 'PIER_GC_TICK_MS', legacy: 'PI_HERDR_GC_TICK_MS', fallback: '30000', description: 'idle GC sweep cadence (panes/worktrees)' },
-  { name: 'PIER_FOCUS_POLL_MS', fallback: '1500', description: 'pane-focus sampling cadence for the heat layout (0 disables)' },
+  { name: 'PIER_FOCUS_POLL_MS', fallback: '1500', description: 'pane-focus sampling cadence for the heat layout (0 disables; 0.9.1+ defaults to 0)' },
   { name: 'PIER_TERMINAL_PROMPT', legacy: 'PI_HERDR_TERMINAL_PROMPT', fallback: '(auto from $SHELL)', description: 'prompt strategy for terminal readiness: bash|zsh|powershell|pwsh' },
   { name: 'PIER_SLIM_FRAME', legacy: 'PI_HERDR_SLIM_FRAME', fallback: '1', description: 'mutation frame around todo-tool cards (0 disables)' },
   { name: 'PIER_TRACE', legacy: 'PI_HERDR_TRACE', fallback: '', description: 'write diagnostics (renderers, swallowed errors) to stderr' },

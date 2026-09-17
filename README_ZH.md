@@ -176,7 +176,7 @@ npm test          # node --test，588 项单测（规划器 / todo 重放 / 反�
 | `PIER_READY_TIMEOUT_MS` | `90000` | ms | 子代理 pane 管道就绪等待（指数退避；pane 已退出则立刻失败并附上它的最后输出） |
 | `PIER_SESSION_TTL_SECONDS` | `600` | 秒 | 子代理进程退出后会话保留 TTL（超时清理） |
 | `PIER_GIT_TIMEOUT_MS` | `10000` | ms | Git 命令超时（worktree 创建、diff 汇总、清理） |
-| `PIER_FOCUS_POLL_MS` | `1500` | ms | 焦点采样间隔（驱动 workbench 热力布局；`0` 关闭，见下） |
+| `PIER_FOCUS_POLL_MS` | `1500` / `0` | ms | 焦点采样间隔（`0` 关闭）。Herdr <0.9.1 默认 1500ms；0.9.1+ 默认 0（事件驱动） |
 | `PIER_TERM_READ_MAX` | `8000` | 字符 | 终端单次读取缓冲区字符上限 |
 | `PIER_TERM_IDLE_MS` | `1800000` | ms | 终端闲置多久后提醒一次 |
 | `PIER_TODO_GRACE_MS` | `30000` | ms | 未完成 todo 提醒前的静默宽限 |
@@ -187,10 +187,9 @@ npm test          # node --test，588 项单测（规划器 / todo 重放 / 反�
 `PI_HERDR_META_KEY`）——改名会让正在运行的 worker 与父进程对不上。
 `/pier-config doctor` 会列出每个选项的生效值与来源，以及本会话被有意吞掉的异常。
 
-**焦点热力（herdr 0.9）**：herdr 把鼠标焦点放在自己的客户端里解析，插件再也收不到 `pane.focused`，
-因此热力布局改为由每个 pane 采样自己 tab 的 `layout.export → focused_pane_id`，再重放 workbench
-已经认识的那个事件。改动之后**启动的** pi 进程生效（子代理 pane 天然都是新的）。
-`PIER_FOCUS_POLL_MS=0` 关闭，`PIER_WORKBENCH_ROOT` 指向迁移后的插件目录。
+**焦点热力**：herdr 0.9.0 把鼠标焦点放在客户端解析，插件收不到 `pane.focused`，因此每个 pane
+采样自己 tab 的 `layout.export → focused_pane_id` 再重放 workbench 事件。0.9.1+ 原生派发
+`pane.focused`，轮询默认关闭。`PIER_FOCUS_POLL_MS` 可覆盖；`PIER_WORKBENCH_ROOT` 指向迁移后的插件目录。
 
 ## 设计原则
 

@@ -14,6 +14,10 @@ test('executeSubagentList: shows [cwd: ...] when foregroundCwd differs from sub.
       background: true,
       status: 'running',
       createdAt: 1000,
+      tabId: 't-1',
+      tabName: '',
+      sessionFile: null,
+      launchCommand: [],
     },
     {
       taskId: 'task-2',
@@ -24,6 +28,10 @@ test('executeSubagentList: shows [cwd: ...] when foregroundCwd differs from sub.
       background: true,
       status: 'running',
       createdAt: 1000,
+      tabId: 't-2',
+      tabName: '',
+      sessionFile: null,
+      launchCommand: [],
     },
   ];
 

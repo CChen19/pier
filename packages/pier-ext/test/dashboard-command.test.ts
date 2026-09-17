@@ -51,11 +51,11 @@ test('formatStandaloneDashboard: handles empty state gracefully', () => {
 test('installDashboardCommand: Level 1 (Herdr 0.9.1 popup)', async () => {
   const client = new MockHerdrClient();
   const env: HerdrEnv = { socketPath: '/tmp/herdr.sock', paneId: 'p1', workspaceId: 'w1', tabId: 't1' };
-  let registeredHandler: ((args: unknown, ctx: unknown) => Promise<void>) | null = null;
+  const box: { handler: ((args: unknown, ctx: unknown) => Promise<void>) | null } = { handler: null };
 
   const mockPi = {
-    registerCommand: (name: string, options: { description: string; handler: (args: unknown, ctx: unknown) => Promise<void> }) => {
-      if (name === 'dashboard') registeredHandler = options.handler;
+    registerCommand: (_name: string, options: { description: string; handler: (args: unknown, ctx: unknown) => Promise<void> }) => {
+      box.handler = options.handler;
     },
   };
 
@@ -67,12 +67,13 @@ test('installDashboardCommand: Level 1 (Herdr 0.9.1 popup)', async () => {
     getHeldLocks: () => [],
   });
 
-  assert.ok(registeredHandler, 'should register /dashboard command');
+  const handler = box.handler;
+  if (!handler) throw new Error('should register /dashboard command');
 
   const notifications: Array<{ text: string; level?: string }> = [];
   const fakeCtx = { ui: { notify: (text: string, level?: string) => notifications.push({ text, level }) } };
 
-  await registeredHandler!(null, fakeCtx);
+  await handler(null, fakeCtx);
 
   assert.equal(client.lastOpenOpts?.pluginId, 'pier.workbench');
   assert.equal(client.lastOpenOpts?.entrypoint, 'dashboard');

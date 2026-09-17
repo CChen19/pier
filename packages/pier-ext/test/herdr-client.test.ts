@@ -413,22 +413,50 @@ test('HerdrClient: readPane unwraps read envelope; waitForOutput timeout → dis
   }
 }));
 
-test('HerdrClient (0.9.1): openPluginPane supports popup and fallback_tab on older server; closePopup and agentExplain', withCleanup(async (cleanup) => {
+test('HerdrClient (0.9.1): openPluginPane popup, nested agent.explain, ping version, 0.9.1 list fields', withCleanup(async (cleanup) => {
   const dir = cleanup.tempDir('herdr-091');
   const server = new FakeHerdrServer(join(dir.path, `s-${randomUUID().slice(0, 8)}.sock`));
   server.handler = (method, params) => {
     if (method === 'plugin.pane.open') {
-      if (params.placement === 'popup') return { type: 'ok' };
-      return { type: 'pane_info', pane: { pane_id: 'w1:p8', tab_id: 'w1:t3' } };
+      if (params.placement === 'popup') return { type: 'plugin_pane_opened', plugin_pane: { plugin_id: 'pier.workbench', entrypoint: 'dashboard', pane: { pane_id: 'w1:p8' } } };
+      return { type: 'plugin_pane_opened', plugin_pane: { pane: { pane_id: 'w1:p8', tab_id: 'w1:t3' } } };
     }
     if (method === 'popup.close') return { type: 'ok' };
-    if (method === 'agent.explain') return { type: 'agent_explain', matched_rule: 'pi-standard' };
+    if (method === 'agent.explain') {
+      return { type: 'agent_explain', explain: { matched_rule: 'pi-standard', skip_state_reason: 'process_crashed' } };
+    }
+    if (method === 'ping') return { type: 'pong', version: '0.9.1', protocol: 22 };
+    if (method === 'agent.list') {
+      return {
+        agents: [{
+          pane_id: 'p2',
+          agent: 'pi',
+          agent_status: 'working',
+          agent_session: { value: '/sess/a.jsonl', kind: 'path' },
+          state_labels: {},
+          tokens: {},
+          foreground_cwd: '/repo/sub',
+        }],
+      };
+    }
+    if (method === 'pane.list') {
+      return {
+        panes: [{
+          pane_id: 'p2',
+          tab_id: 't1',
+          workspace_id: 'w1',
+          agent_status: 'idle',
+          foreground_cwd: '/repo/sub',
+          terminal_title: '⠋ npm run dev',
+          terminal_title_stripped: 'npm run dev',
+        }],
+      };
+    }
     return {};
   };
   await server.listen();
   try {
     const client = clientFor(server);
-    // 1. popup success
     const popRes = await client.openPluginPane({
       pluginId: 'pier.workbench',
       entrypoint: 'dashboard',
@@ -436,25 +464,35 @@ test('HerdrClient (0.9.1): openPluginPane supports popup and fallback_tab on old
     });
     assert.deepEqual(popRes, { mode: 'popup', ok: true });
 
-    // 2. popup.close success
-    const closed = await client.closePopup();
-    assert.equal(closed, true);
+    assert.equal(await client.closePopup(), true);
 
-    // 3. agent.explain
     const explain = await client.agentExplain('w1:p1');
     assert.equal(explain?.matched_rule, 'pi-standard');
+    assert.equal(explain?.skip_state_reason, 'process_crashed');
+    assert.equal(explain?.type, undefined, 'unwraps {type, explain} envelope');
+
+    assert.equal(await client.getServerVersion(), '0.9.1');
+    assert.equal(await client.getServerVersion(), '0.9.1');
+    assert.equal(server.received.filter((r) => r.method === 'ping').length, 1);
+
+    const agents = await client.listAgents();
+    assert.equal(agents[0]?.foregroundCwd, '/repo/sub');
+
+    const panes = await client.listPanes();
+    assert.equal(panes[0]?.foregroundCwd, '/repo/sub');
+    assert.equal(panes[0]?.terminalTitle, '⠋ npm run dev');
+    assert.equal(panes[0]?.terminalTitleStripped, 'npm run dev');
   } finally {
     await server.close();
   }
 
-  // 4. Test fallback to tab if popup is rejected by older Herdr
   const oldServer = new FakeHerdrServer(join(dir.path, `s-${randomUUID().slice(0, 8)}.sock`));
   oldServer.handler = async (method, params) => {
     if (method === 'plugin.pane.open') {
       if (params.placement === 'popup') {
-        throw new Error('invalid_placement: placement popup not supported on this version');
+        throw new Error("unknown variant `popup`, expected one of `overlay`, `split`, `tab`, `zoomed`");
       }
-      return { type: 'pane_info', pane: { pane_id: 'w1:p9', tab_id: 'w1:t4' } };
+      return { type: 'plugin_pane_opened', plugin_pane: { pane: { pane_id: 'w1:p9', tab_id: 'w1:t4' } } };
     }
     if (method === 'popup.close') {
       throw new Error('popup_not_open');
@@ -470,11 +508,9 @@ test('HerdrClient (0.9.1): openPluginPane supports popup and fallback_tab on old
       placement: 'popup',
     });
     assert.equal(res.mode, 'fallback_tab');
-    assert.equal((res as { paneId?: string }).paneId, 'w1:p9');
-
-    // popup.close when not open returns false, doesn't throw
-    const closed = await client.closePopup();
-    assert.equal(closed, false);
+    if (res.mode !== 'fallback_tab') throw new Error('expected fallback_tab');
+    assert.equal(res.paneId, 'w1:p9');
+    assert.equal(await client.closePopup(), false);
   } finally {
     await oldServer.close();
   }

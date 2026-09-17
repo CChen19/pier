@@ -1,16 +1,10 @@
 /**
- * D-4: herdr 0.9 resolves mouse focus client-side, so `pane.focused` never reaches plugins and the
- * workbench heat layout stopped reacting to clicks (verified 2026-09-13: 9.7 h of hook logs with
- * zero pane.focused entries, while `pane.focus_direction` through the API drives the whole chain).
+ * D-4: herdr 0.9.0 resolved mouse focus client-side, so `pane.focused` never reached plugins.
+ * Each pier pane sampled `layout.export` and replayed `pane.focused` into heat-reflow.mjs.
  *
- * Why polling lives here: herdr plugin v1 has no daemon/UI runtime — plugin commands only run per
- * event — while every pier-managed pane's pi process is already long-lived. Each pane samples the
- * layout of its own tab and, the moment the focused pane becomes itself, replays the event the
- * workbench already understands (`pane.focused`) by invoking scripts/heat-reflow.mjs. No new
- * protocol and no duplicated planner: the workbench keeps owning heat decisions.
- *
- * Cost: one `layout.export` per tick per pi pane (a local socket round-trip, ~1 ms) and one node
- * process per focus change (the same cost the plugin pays for a real herdr event).
+ * Herdr 0.9.1 delivers `pane.focused` to the workbench hook. Default polling is therefore off
+ * (0 ms) on ≥0.9.1 so a click is not followed by a second reflow ~8s later. Herdr <0.9.1 keeps
+ * the 1500ms sampler. `PIER_FOCUS_POLL_MS` overrides either default; 0 disables.
  */
 import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
@@ -18,8 +12,8 @@ import { fileURLToPath } from 'node:url';
 
 /** Poll cadence for older Herdr (< 0.9.1). */
 export const FOCUS_POLL_DEFAULT_MS = 1500;
-/** Herdr 0.9.1+ adaptive cadence: native pane.focused events are authoritative; polling is just a low-frequency backup. */
-export const FOCUS_POLL_HERDR_091_MS = 8000;
+/** Herdr 0.9.1+: native pane.focused is authoritative; default poller off to avoid a delayed second reflow. */
+export const FOCUS_POLL_HERDR_091_MS = 0;
 
 /** Check if Herdr server version is 0.9.1 or later. */
 export function isHerdr091OrLater(version?: string | null): boolean {

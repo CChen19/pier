@@ -142,8 +142,8 @@ pier 采用主从插件分离架构：
 1. **Herdr 0.9.1 原生修复**：
    Herdr 0.9.1 规范了鼠标转义解码，并保证所有客户端手动窗格选择（鼠标/键盘）均会即时向 Socket API 派发权威的 `pane.focused` 事件。
 2. **自适应事件优先（Adaptive Event-First Polling）**：
-   - 当运行在 Herdr ≥ 0.9.1 环境下，`focus-poller` 的默认轮询周期由 **1500ms 大幅放宽至 8000ms**（仅作为防止极端丢包的低频兜底守卫），降幅超 80% 的空闲 Socket 调用。
-   - 用户支持通过环境变量 `PIER_FOCUS_POLL_MS=0` 彻底关闭轮询，纯享 `<50ms` 的瞬时事件驱动热力响应。
+   - 当运行在 Herdr ≥ 0.9.1 环境下，`focus-poller` **默认关闭**（`0` ms）：workbench 已订阅原生 `pane.focused`，再保留低频轮询会在点击后 ~N 秒打出第二次 reflow，把用户刚拖过的 split 拉回去。
+   - 用户仍可通过 `PIER_FOCUS_POLL_MS` 强制打开轮询（例如旧客户端误报版本时）。
    - 遇到 Herdr < 0.9.1 环境，自动平滑保持 1500ms 快速轮询，确保旧环境体验不倒退。
 
 ---

@@ -209,6 +209,6 @@ test('focusPollIntervalMs: 非法/缺失/零值', async () => {
   // (default cadence samples, 0 disables). Guard the env contract here so a rename is caught.
   const src = fs.readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
   assert.match(src, /PIER_FOCUS_POLL_MS/);
-  assert.match(src, /FOCUS_POLL_DEFAULT_MS/);
+  assert.match(src, /resolveDefaultFocusPollMs/);
   void os;
 });

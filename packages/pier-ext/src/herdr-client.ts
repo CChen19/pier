@@ -618,44 +618,42 @@ export class HerdrClient implements HerdrClientLike {
   }
 
   async openPluginPane(opts: OpenPluginPaneOptions): Promise<OpenPluginPaneResult> {
+    const params: Record<string, unknown> = {
+      plugin_id: opts.pluginId,
+      entrypoint: opts.entrypoint,
+      ...(opts.placement ? { placement: opts.placement } : {}),
+      ...(opts.width ? { width: opts.width } : {}),
+      ...(opts.height ? { height: opts.height } : {}),
+      ...(opts.focus !== undefined ? { focus: opts.focus } : {}),
+      ...(opts.cwd ? { cwd: opts.cwd } : {}),
+      ...(opts.env ? { env: opts.env } : {}),
+      ...(opts.targetPaneId ? { target_pane_id: opts.targetPaneId } : {}),
+      ...(opts.workspaceId ? { workspace_id: opts.workspaceId } : {}),
+    };
     try {
-      const result = (await this.request('plugin.pane.open', {
-        plugin_id: opts.pluginId,
-        entrypoint: opts.entrypoint,
-        ...(opts.placement ? { placement: opts.placement } : {}),
-        ...(opts.width ? { width: opts.width } : {}),
-        ...(opts.height ? { height: opts.height } : {}),
-        ...(opts.focus !== undefined ? { focus: opts.focus } : {}),
-        ...(opts.cwd ? { cwd: opts.cwd } : {}),
-        ...(opts.env ? { env: opts.env } : {}),
-        ...(opts.targetPaneId ? { target_pane_id: opts.targetPaneId } : {}),
-        ...(opts.workspaceId ? { workspace_id: opts.workspaceId } : {}),
-      })) as Record<string, unknown> | null;
+      const result = (await this.request('plugin.pane.open', params)) as Record<string, unknown> | null;
       if (opts.placement === 'popup') {
         return { mode: 'popup', ok: true };
       }
-      const paneId = findIdIn(result, 'pane_id') ?? '';
-      return { mode: 'pane', paneId };
+      return { mode: 'pane', paneId: findIdIn(result, 'pane_id') ?? '' };
     } catch (err) {
-      const msg = String((err as Error)?.message ?? err);
-      // Herdr < 0.9.1 fallback: if placement popup fails, retry with placement tab
-      if (opts.placement === 'popup' && /invalid_placement|unknown method|not supported|bad request/i.test(msg)) {
-        const fallbackRes = (await this.request('plugin.pane.open', {
-          plugin_id: opts.pluginId,
-          entrypoint: opts.entrypoint,
-          placement: 'tab',
-          ...(opts.focus !== undefined ? { focus: opts.focus } : {}),
-          ...(opts.cwd ? { cwd: opts.cwd } : {}),
-          ...(opts.env ? { env: opts.env } : {}),
-          ...(opts.workspaceId ? { workspace_id: opts.workspaceId } : {}),
-        })) as Record<string, unknown> | null;
-        return {
-          mode: 'fallback_tab',
-          paneId: findIdIn(fallbackRes, 'pane_id') ?? undefined,
-          tabId: findIdIn(fallbackRes, 'tab_id') ?? undefined,
-        };
-      }
-      throw err;
+      // 0.9.0 serde rejects unknown `popup` as "unknown variant" / invalid_params — not a dedicated
+      // invalid_placement code. Any popup failure retries as tab; tab failure surfaces to Level 3.
+      if (opts.placement !== 'popup') throw err;
+      const fallbackRes = (await this.request('plugin.pane.open', {
+        plugin_id: opts.pluginId,
+        entrypoint: opts.entrypoint,
+        placement: 'tab',
+        ...(opts.focus !== undefined ? { focus: opts.focus } : {}),
+        ...(opts.cwd ? { cwd: opts.cwd } : {}),
+        ...(opts.env ? { env: opts.env } : {}),
+        ...(opts.workspaceId ? { workspace_id: opts.workspaceId } : {}),
+      })) as Record<string, unknown> | null;
+      return {
+        mode: 'fallback_tab',
+        paneId: findIdIn(fallbackRes, 'pane_id') ?? undefined,
+        tabId: findIdIn(fallbackRes, 'tab_id') ?? undefined,
+      };
     }
   }
 
@@ -675,7 +673,12 @@ export class HerdrClient implements HerdrClientLike {
   async agentExplain(target: string): Promise<Record<string, unknown> | null> {
     try {
       const result = (await this.request('agent.explain', { target })) as Record<string, unknown> | null;
-      return result ?? null;
+      if (!result || typeof result !== 'object') return null;
+      const nested = result.explain;
+      if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+        return nested as Record<string, unknown>;
+      }
+      return result;
     } catch {
       return null;
     }

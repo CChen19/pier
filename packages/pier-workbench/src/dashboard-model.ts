@@ -200,8 +200,8 @@ export function composeDashboardLines(
       else if (status === 'idle') idleCount++;
     }
 
-    // Extract todo / title info (Herdr 0.9.1: prefer clean terminal_title_stripped over raw title)
-    let desc = p.tokens?.['pi-todo'] ?? p.title ?? p.terminal_title_stripped ?? p.terminal_title ?? '';
+    // Extract todo / title: pi-todo wins; else Herdr 0.9.1 stripped OSC title over raw title/spinner.
+    let desc = p.tokens?.['pi-todo'] ?? p.terminal_title_stripped ?? p.title ?? p.terminal_title ?? '';
     // Collect active locks if any
     const lockTokens = Object.keys(p.tokens ?? {}).filter((k) => k.startsWith('lock-'));
     if (lockTokens.length > 0) {
