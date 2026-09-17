@@ -109,6 +109,16 @@ test('A6 契约：pier 发出的请求体必须落在 herdr schema 内（无未�
     await client.focusPane('w1:p2');
     await client.listPanes();
     await client.waitForOutput('w1:p2', { type: 'substring', value: 'x' }, 50);
+    await client.openPluginPane({
+      pluginId: 'pier.workbench',
+      entrypoint: 'dashboard',
+      placement: 'popup',
+      width: '80%',
+      height: '80%',
+      focus: true,
+    });
+    await client.closePopup();
+    await client.agentExplain('w1:p1');
   } finally {
     await server.close();
   }

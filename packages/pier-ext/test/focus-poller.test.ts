@@ -12,6 +12,8 @@ import {
   reflowScriptPath,
   spawnReflow,
   startFocusPoller,
+  isHerdr091OrLater,
+  resolveDefaultFocusPollMs,
   type FocusPollerState,
   type FocusSample,
 } from '../src/focus-poller.ts';
@@ -173,4 +175,22 @@ test('spawnReflow: spawn 抛错/子进程 error 事件都不得冒泡（焦点�
   })) as unknown as typeof import('node:child_process').spawn;
   spawnReflow({ paneId: 'p', cause: null, env: {}, spawnFn: emitting });
   assert.ok(true);
+});
+
+test('Herdr 0.9.1 adaptive cadence: isHerdr091OrLater and resolveDefaultFocusPollMs', () => {
+  assert.equal(isHerdr091OrLater('0.9.1'), true);
+  assert.equal(isHerdr091OrLater('0.9.1-preview'), true);
+  assert.equal(isHerdr091OrLater('0.9.2'), true);
+  assert.equal(isHerdr091OrLater('0.10.0'), true);
+  assert.equal(isHerdr091OrLater('1.0.0'), true);
+
+  assert.equal(isHerdr091OrLater('0.9.0'), false);
+  assert.equal(isHerdr091OrLater('0.8.2'), false);
+  assert.equal(isHerdr091OrLater(''), false);
+  assert.equal(isHerdr091OrLater(null), false);
+  assert.equal(isHerdr091OrLater(undefined), false);
+
+  assert.equal(resolveDefaultFocusPollMs('0.9.1'), 8000);
+  assert.equal(resolveDefaultFocusPollMs('0.9.0'), 1500);
+  assert.equal(resolveDefaultFocusPollMs(null), 1500);
 });

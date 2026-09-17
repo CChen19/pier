@@ -143,3 +143,30 @@ test('composeDashboardLines: targetWorkspaceId option overrides focused workspac
   assert.ok(!text.includes('wD:p1'));
   assert.ok(text.includes('Summary: 1 pane(s) | Pier agents: 1 (0 working, 0 blocked, 1 idle)'));
 });
+
+test('composeDashboardLines: Herdr 0.9.1 terminal_title_stripped and foreground_cwd display', () => {
+  const snapshot = {
+    workspaces: [{ workspace_id: 'w1', label: 'test' }],
+    tabs: [{ tab_id: 'w1:t1', workspace_id: 'w1', number: 1, label: 'main' }],
+    panes: [
+      {
+        pane_id: 'w1:p1',
+        workspace_id: 'w1',
+        tab_id: 'w1:t1',
+        agent: 'shell',
+        terminal_title_stripped: 'npm test --watch',
+      },
+      {
+        pane_id: 'w1:p2',
+        workspace_id: 'w1',
+        tab_id: 'w1:t1',
+        agent: 'other',
+        foreground_cwd: '/repo/packages/core',
+      },
+    ],
+  };
+  const lines = composeDashboardLines(snapshot, { targetWorkspaceId: 'w1' });
+  const text = lines.join('\n');
+  assert.ok(text.includes('npm test --watch'));
+  assert.ok(text.includes('cwd: core'));
+});

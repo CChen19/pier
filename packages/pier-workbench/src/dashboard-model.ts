@@ -38,6 +38,8 @@ export interface SnapshotPane {
   cwd?: string | null;
   foreground_cwd?: string | null;
   title?: string | null;
+  terminal_title?: string | null;
+  terminal_title_stripped?: string | null;
   tokens?: Record<string, string>;
   state_labels?: Record<string, string>;
 }
@@ -198,15 +200,16 @@ export function composeDashboardLines(
       else if (status === 'idle') idleCount++;
     }
 
-    // Extract todo / title info
-    let desc = p.tokens?.['pi-todo'] ?? p.title ?? '';
+    // Extract todo / title info (Herdr 0.9.1: prefer clean terminal_title_stripped over raw title)
+    let desc = p.tokens?.['pi-todo'] ?? p.title ?? p.terminal_title_stripped ?? p.terminal_title ?? '';
     // Collect active locks if any
     const lockTokens = Object.keys(p.tokens ?? {}).filter((k) => k.startsWith('lock-'));
     if (lockTokens.length > 0) {
       desc += ` [${lockTokens.length} lock${lockTokens.length > 1 ? 's' : ''}]`;
     }
-    if (!desc && p.cwd) {
-      desc = `cwd: ${p.cwd.split('/').pop() || p.cwd}`;
+    if (!desc && (p.foreground_cwd || p.cwd)) {
+      const activeCwd = p.foreground_cwd || p.cwd || '';
+      desc = `cwd: ${activeCwd.split('/').pop() || activeCwd}`;
     }
 
     // Highlight blocked state with indicator

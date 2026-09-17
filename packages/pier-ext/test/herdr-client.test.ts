@@ -413,6 +413,73 @@ test('HerdrClient: readPane unwraps read envelope; waitForOutput timeout → dis
   }
 }));
 
+test('HerdrClient (0.9.1): openPluginPane supports popup and fallback_tab on older server; closePopup and agentExplain', withCleanup(async (cleanup) => {
+  const dir = cleanup.tempDir('herdr-091');
+  const server = new FakeHerdrServer(join(dir.path, `s-${randomUUID().slice(0, 8)}.sock`));
+  server.handler = (method, params) => {
+    if (method === 'plugin.pane.open') {
+      if (params.placement === 'popup') return { type: 'ok' };
+      return { type: 'pane_info', pane: { pane_id: 'w1:p8', tab_id: 'w1:t3' } };
+    }
+    if (method === 'popup.close') return { type: 'ok' };
+    if (method === 'agent.explain') return { type: 'agent_explain', matched_rule: 'pi-standard' };
+    return {};
+  };
+  await server.listen();
+  try {
+    const client = clientFor(server);
+    // 1. popup success
+    const popRes = await client.openPluginPane({
+      pluginId: 'pier.workbench',
+      entrypoint: 'dashboard',
+      placement: 'popup',
+    });
+    assert.deepEqual(popRes, { mode: 'popup', ok: true });
+
+    // 2. popup.close success
+    const closed = await client.closePopup();
+    assert.equal(closed, true);
+
+    // 3. agent.explain
+    const explain = await client.agentExplain('w1:p1');
+    assert.equal(explain?.matched_rule, 'pi-standard');
+  } finally {
+    await server.close();
+  }
+
+  // 4. Test fallback to tab if popup is rejected by older Herdr
+  const oldServer = new FakeHerdrServer(join(dir.path, `s-${randomUUID().slice(0, 8)}.sock`));
+  oldServer.handler = async (method, params) => {
+    if (method === 'plugin.pane.open') {
+      if (params.placement === 'popup') {
+        throw new Error('invalid_placement: placement popup not supported on this version');
+      }
+      return { type: 'pane_info', pane: { pane_id: 'w1:p9', tab_id: 'w1:t4' } };
+    }
+    if (method === 'popup.close') {
+      throw new Error('popup_not_open');
+    }
+    return {};
+  };
+  await oldServer.listen();
+  try {
+    const client = clientFor(oldServer);
+    const res = await client.openPluginPane({
+      pluginId: 'pier.workbench',
+      entrypoint: 'dashboard',
+      placement: 'popup',
+    });
+    assert.equal(res.mode, 'fallback_tab');
+    assert.equal((res as { paneId?: string }).paneId, 'w1:p9');
+
+    // popup.close when not open returns false, doesn't throw
+    const closed = await client.closePopup();
+    assert.equal(closed, false);
+  } finally {
+    await oldServer.close();
+  }
+}));
+
 test('herdrUnavailableHint (B5): 传输层失败给出可动作的一句话，其它错误返回 null', () => {
   assert.match(String(herdrUnavailableHint(new Error('connect ENOENT /tmp/herdr.sock'))), /herdr unreachable/);
   assert.match(String(herdrUnavailableHint(new Error('connect ECONNREFUSED 127.0.0.1:1'))), /HERDR_SOCKET_PATH/);

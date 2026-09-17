@@ -91,6 +91,8 @@ export interface AliveProbe {
   agentStatus: string | null;
   /** Why: Preserve the established compatibility and safety behavior. */
   lastActivityMs: number | null;
+  /** Herdr 0.9.1: foreground working directory of the PTY process. */
+  foregroundCwd?: string | null;
 }
 
 /** Why: Preserve the established compatibility and safety behavior. */

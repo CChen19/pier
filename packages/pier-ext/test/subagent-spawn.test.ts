@@ -400,3 +400,28 @@ test('waitSubReady (A14): 子 pane 已消失 → 立刻失败并附上它的最�
   assert.match(out.message, /TypeError: boom at footer\.render/);
   assert.ok(elapsed < 10_000, `pane-gone 必须快速失败，实际用了 ${elapsed}ms`);
 });
+
+test('waitSubReady (0.9.1): 子 pane 失败时附带 agentExplain 诊断信息', async () => {
+  const { createSpawner } = await import('../src/subagent-spawn.ts');
+  const spawner = createSpawner({
+    client: {
+      available: true,
+      listAgents: async () => [],
+      readPane: async () => ({ text: 'SyntaxError: unexpected token', revision: 1, truncated: false }),
+      agentExplain: async () => ({
+        matched_rule: 'pi-worker',
+        skip_state_reason: 'process_crashed',
+      }),
+    } as unknown as Parameters<typeof createSpawner>[0]['client'],
+    env: { paneId: 'p0', tabId: 't0', workspaceId: 'w1' },
+    runtime: { nodePath: '/usr/bin/node', cliPath: '/cli.js', extPath: '/ext.ts' },
+    git: { listWorktrees: async () => [] },
+  } as unknown as Parameters<typeof createSpawner>[0]);
+
+  const out = await spawner.waitSubReady('/tmp/pier-091-explain', 'wA14:p405');
+  assert.equal(out.ok, false);
+  if (out.ok) return;
+  assert.match(out.message, /Herdr detection diagnosis:/);
+  assert.match(out.message, /matched rule: pi-worker/);
+  assert.match(out.message, /skip reason: process_crashed/);
+});

@@ -376,3 +376,25 @@ test('B6：终端闲置提醒的噪音上限（一次/终端 + 硬封顶 + 不�
   assert.match(plan.content!, new RegExp(`nudge 1/${TERM_REMINDERS_MAX}`));
   assert.deepEqual(plan.ids, ['term-1']);
 });
+
+test('Herdr 0.9.1: terminal list incorporates terminalTitleStripped into listing', async () => {
+  const { client } = fakeClient({});
+  // Override listPanes to return terminalTitleStripped
+  client.listPanes = async () => [
+    {
+      paneId: 'pane-2',
+      tabId: 't1',
+      workspaceId: 'w1',
+      agentStatus: 'idle',
+      terminalTitleStripped: 'npm run dev',
+    },
+  ];
+  const { pi, ctx } = await mountTerminal(client);
+  const tool = pi.tools.get(TOOL_NAME);
+  // Open terminal
+  await tool?.execute?.(null, { action: 'open', cwd: '/test/cwd' });
+  // List terminals
+  const listRes = (await tool?.execute?.(null, { action: 'list' })) as { content: Array<{ text: string }> };
+  assert.match(listRes.content[0].text, /title="npm run dev"/);
+  await ctx.fiber.dispose();
+});

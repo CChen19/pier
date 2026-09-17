@@ -59,6 +59,7 @@ import { emptySubagentPortBox } from './subagent-port.ts';
 import { createNoticeBuffer } from './index-notices.ts';
 import { handlePipeRequest } from './index-pipe.ts';
 import { installWriteLocks } from './index-locks.ts';
+import { installDashboardCommand } from './dashboard-command.ts';
 import { registerObservationPack, createCompactionBatchPackHook } from './core/observation.ts';
 import { installConfigCommand } from './config-command.ts';
 import { CompactCoordinator } from './compact-coordinator.ts';
@@ -74,6 +75,7 @@ import {
 } from './efficiency-config-core.ts';
 import {
   FOCUS_POLL_DEFAULT_MS,
+  resolveDefaultFocusPollMs,
   parseFocusSample,
   spawnReflow,
   startFocusPoller,
@@ -83,12 +85,14 @@ import {
 /**
  * D-4: focus sampling cadence. `PIER_FOCUS_POLL_MS=0` disables the poller (heat layout then only
  * reacts to herdr events, i.e. today's degraded behaviour); invalid values fall back to the default.
+ * Herdr 0.9.1+ adapts to low-frequency polling (8000ms) as native pane.focused events are authoritative.
  */
-function focusPollIntervalMs(env: NodeJS.ProcessEnv = process.env): number {
+function focusPollIntervalMs(env: NodeJS.ProcessEnv = process.env, herdrVersion?: string | null): number {
+  const defaultMs = resolveDefaultFocusPollMs(herdrVersion);
   const raw = env.PIER_FOCUS_POLL_MS;
-  if (raw === undefined || raw.trim() === '') return FOCUS_POLL_DEFAULT_MS;
+  if (raw === undefined || raw.trim() === '') return defaultMs;
   const ms = Number(raw);
-  return Number.isFinite(ms) && ms >= 0 ? ms : FOCUS_POLL_DEFAULT_MS;
+  return Number.isFinite(ms) && ms >= 0 ? ms : defaultMs;
 }
 
 /**
@@ -284,8 +288,9 @@ export default async function (pi: ExtensionAPI) {
     });
   });
 
+  let locksHandle = { getHeldLocks: () => [] as readonly string[] };
   if (env) {
-    installWriteLocks(pi, {
+    locksHandle = installWriteLocks(pi, {
       client,
       env,
       hard: process.env[WRITE_LOCK_ENV] === '1',
@@ -612,6 +617,13 @@ export default async function (pi: ExtensionAPI) {
    * `show efficiency` lists every D100-D103 knob with its effective value and source. */
 
   installConfigCommand({ pi });
+  installDashboardCommand({
+    pi,
+    client,
+    env,
+    getTodoItems: () => todos.items,
+    getHeldLocks: () => locksHandle.getHeldLocks(),
+  });
 
   pi.registerTool({
     name: ASK_TOOL_NAME,
@@ -696,7 +708,8 @@ export default async function (pi: ExtensionAPI) {
       sessionFocusPoller.current.stop();
       sessionFocusPoller.current = null;
     }
-    const pollMs = focusPollIntervalMs();
+    const serverVer = await client.getServerVersion();
+    const pollMs = focusPollIntervalMs(process.env, serverVer);
     if (paneId && client.available && pollMs > 0) {
       sessionFocusPoller.current = startFocusPoller({
         myPaneId: paneId,

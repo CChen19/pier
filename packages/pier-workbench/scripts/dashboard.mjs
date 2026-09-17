@@ -78,20 +78,47 @@ async function renderOnce() {
   console.log(lines.join('\n'));
 }
 
+async function closePopupSafe() {
+  try {
+    await request('popup.close', {}, 1000);
+  } catch {
+    // Best effort, ignore if not a popup
+  }
+}
+
 async function runLoop() {
   let running = true;
-  const cleanup = () => {
+  const cleanup = async () => {
     if (!running) return;
     running = false;
+    await closePopupSafe();
     process.exit(0);
   };
   process.on('SIGINT', cleanup);
   process.on('SIGTERM', cleanup);
 
+  // Enable raw keyboard handling if in an interactive terminal / popup
+  if (process.stdin.isTTY) {
+    try {
+      process.stdin.setRawMode(true);
+      process.stdin.resume();
+      process.stdin.setEncoding('utf8');
+      process.stdin.on('data', (key) => {
+        // 'q', 'Q', Esc ('\u001b'), Ctrl+C ('\u0003'), Enter ('\r' / '\n')
+        if (key === 'q' || key === 'Q' || key === '\u001b' || key === '\u0003') {
+          void cleanup();
+        }
+      });
+    } catch {
+      // Non-critical fallback if raw mode fails
+    }
+  }
+
   async function tick() {
     if (!running) return;
     const snapshot = await fetchSnapshot();
     const lines = composeDashboardLines(snapshot, { targetWorkspaceId });
+    lines.push('Controls: [q / Esc] Close  [Ctrl+C] Exit');
     process.stdout.write('\x1b[2J\x1b[H' + lines.join('\n') + '\n');
   }
 

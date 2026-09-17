@@ -16,6 +16,10 @@ import {
 } from './lock-core.ts';
 import type { HerdrClientLike, HerdrEnv } from './herdr-client.ts';
 
+export interface WriteLocksHandle {
+  getHeldLocks: () => readonly string[];
+}
+
 export function installWriteLocks(
   pi: ExtensionAPI,
   opts: {
@@ -23,10 +27,14 @@ export function installWriteLocks(
     env: HerdrEnv | null;
     hard: boolean;
   },
-): void {
+): WriteLocksHandle {
   const { client, env, hard } = opts;
   const heldLocks = new Set<string>();
   const lockWarnByToolCall = new Map<string, string>();
+
+  if (!client.available || !env) {
+    return { getHeldLocks: () => [] };
+  }
 
   async function acquireLocks(paths: readonly string[]): Promise<void> {
     for (const p of paths) heldLocks.add(p);
@@ -37,17 +45,24 @@ export function installWriteLocks(
     if (!client.available || !env) return;
     const cwd = ctx?.cwd ?? process.cwd();
     let agents: LockAgentView[];
+    let ownForegroundCwd: string | null = null;
     try {
-      agents = (await client.listAgents()).map((a) => ({ paneId: a.paneId, tokens: a.tokens }));
+      const liveAgents = await client.listAgents();
+      agents = liveAgents.map((a) => ({ paneId: a.paneId, tokens: a.tokens }));
+      const me = liveAgents.find((a) => a.paneId === env.paneId);
+      if (me?.foregroundCwd) {
+        ownForegroundCwd = me.foregroundCwd;
+      }
     } catch {
       return;
     }
+    const effectiveCwd = ownForegroundCwd ?? cwd;
     const plan = planWriteGuard({
       toolName: event.toolName ?? '',
       input: event.input,
       agents,
       ownPaneId: env.paneId,
-      cwd,
+      cwd: effectiveCwd,
       hard,
     });
     if (plan.kind === 'skip') return;
@@ -103,4 +118,6 @@ export function installWriteLocks(
       ui?.notify?.(lines.join('\n'), 'info');
     },
   });
+
+  return { getHeldLocks: () => [...heldLocks] };
 }

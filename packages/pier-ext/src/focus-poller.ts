@@ -16,8 +16,29 @@ import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-/** Poll cadence. Fast enough to feel instant after a click, cheap enough for a local socket. */
+/** Poll cadence for older Herdr (< 0.9.1). */
 export const FOCUS_POLL_DEFAULT_MS = 1500;
+/** Herdr 0.9.1+ adaptive cadence: native pane.focused events are authoritative; polling is just a low-frequency backup. */
+export const FOCUS_POLL_HERDR_091_MS = 8000;
+
+/** Check if Herdr server version is 0.9.1 or later. */
+export function isHerdr091OrLater(version?: string | null): boolean {
+  if (!version) return false;
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(version.trim());
+  if (!m) return false;
+  const major = Number(m[1]);
+  const minor = Number(m[2]);
+  const patch = Number(m[3]);
+  if (major > 0) return true;
+  if (minor > 9) return true;
+  if (minor === 9 && patch >= 1) return true;
+  return false;
+}
+
+/** Determine default poll cadence based on Herdr server version. */
+export function resolveDefaultFocusPollMs(herdrVersion?: string | null): number {
+  return isHerdr091OrLater(herdrVersion) ? FOCUS_POLL_HERDR_091_MS : FOCUS_POLL_DEFAULT_MS;
+}
 /**
  * Minimum gap between two reflow triggers. Re-clicking the same pane quickly must not spawn a
  * process per click; the workbench debounces per tab (150 ms) on top of this.

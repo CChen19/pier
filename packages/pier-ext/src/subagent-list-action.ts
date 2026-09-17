@@ -1,3 +1,4 @@
+import { basename } from 'node:path';
 import { agoText, type AliveProbe, type SubEntry } from './subagent-core.ts';
 
 export interface ListActionResult {
@@ -58,7 +59,10 @@ export async function executeSubagentList(deps: ListActionDeps): Promise<ListAct
       const question = await deps.readAskFlag(sub.paneId);
       gateTag = question ? ` — AWAITING HUMAN: "${question}"` : ' — AWAITING HUMAN decision';
     }
-    lines.push(`${sub.paneId} [${state}${takeoverMark}${statusTag}${activityTag}${gateTag}] (${sub.kind})${tabTag}${wtTag} ${sub.description}`);
+    const cwdTag = probe?.foregroundCwd && probe.foregroundCwd !== sub.cwd
+      ? ` [cwd: ${basename(probe.foregroundCwd) || probe.foregroundCwd}]`
+      : '';
+    lines.push(`${sub.paneId} [${state}${takeoverMark}${statusTag}${activityTag}${gateTag}] (${sub.kind})${tabTag}${wtTag}${cwdTag} ${sub.description}`);
   }
 
   return { content: [{ type: 'text', text: lines.join('\n') }], details: {} };

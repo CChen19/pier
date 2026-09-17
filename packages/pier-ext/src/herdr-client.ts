@@ -1,7 +1,7 @@
 /**
  * Minimal herdr socket API client used inside the pi extension.
  *
- * Validated against herdr 0.9.0 (protocol 22, Windows named pipe; see WIRE.md). The request shapes
+ * Validated against herdr 0.9.1 (protocol 22, Windows named pipe; see WIRE.md). The request shapes
  * pier builds are pinned to herdr's own `api schema` by test/herdr-contract.test.ts — regenerate
  * test/fixtures/herdr-contract.json and bump HERDR_PROTOCOL_EXPECTED when the server moves on:
  *  - Transport is NDJSON: request {id, method, params} → response {id, result} | {id, error:{code,message}};
@@ -52,7 +52,37 @@ export interface AgentInfo {
   session: string | null;
   stateLabels: Record<string, string>;
   tokens: Record<string, string | null>;
+  /** Herdr 0.9.1: foreground cwd of the process currently controlling the PTY. */
+  foregroundCwd?: string | null;
 }
+
+export interface PaneListItem {
+  paneId: string;
+  tabId: string;
+  workspaceId: string;
+  agentStatus: string;
+  foregroundCwd?: string | null;
+  terminalTitle?: string | null;
+  terminalTitleStripped?: string | null;
+}
+
+export interface OpenPluginPaneOptions {
+  pluginId: string;
+  entrypoint: string;
+  placement?: 'popup' | 'overlay' | 'split' | 'tab' | 'zoomed';
+  width?: string;
+  height?: string;
+  focus?: boolean;
+  cwd?: string;
+  env?: Record<string, string>;
+  targetPaneId?: string;
+  workspaceId?: string;
+}
+
+export type OpenPluginPaneResult =
+  | { mode: 'popup'; ok: true }
+  | { mode: 'pane'; paneId: string }
+  | { mode: 'fallback_tab'; tabId?: string; paneId?: string };
 
 /** TabInfo projection; fields mirror the observed tab schema. */
 export interface TabInfo {
@@ -96,7 +126,7 @@ export function herdrUnavailableHint(err: unknown): string | null {
 }
 
 
-/** Wire protocol this client is written against (herdr 0.9.0). See test/fixtures/herdr-contract.json. */
+/** Wire protocol this client is written against (herdr 0.9.1). See test/fixtures/herdr-contract.json. */
 export const HERDR_PROTOCOL_EXPECTED = 22;
 
 export type WaitForOutputResult =
@@ -137,7 +167,7 @@ export interface HerdrClientLike {
   /** v1.2: Create a tab with a root shell pane, returning tabId/paneId for group-tab infrastructure. */
   createTab(opts: { workspaceId: string; label?: string; cwd?: string; env?: Record<string, string> }): Promise<{ tabId: string; paneId: string }>;
   /** v1.2: List all panes with tab ownership for group-tab additions. */
-  listPanes(): Promise<Array<{ paneId: string; tabId: string; workspaceId: string; agentStatus: string }>>;
+  listPanes(): Promise<PaneListItem[]>;
   /** D91: Export the tab layout tree, locating it by paneId or tabId; best effort returns null on failure. */
   exportLayout(opts?: { paneId?: string; tabId?: string }): Promise<{ tabId: string | null; zoomed: boolean; root: unknown; focusedPaneId: string | null } | null>;
   /** v1.3: List tabs (tab.list); fields follow the observed schema. */
@@ -146,6 +176,14 @@ export interface HerdrClientLike {
   tabGet(tabId: string): Promise<TabInfo | null>;
   /** v1.3: Close a tab (tab.close), cascading to its panes. */
   tabClose(tabId: string): Promise<void>;
+  /** 0.9.1: Launch a manifest pane entrypoint with placement (popup/tab/split/overlay/zoomed). */
+  openPluginPane(opts: OpenPluginPaneOptions): Promise<OpenPluginPaneResult>;
+  /** 0.9.1: Close active popup if open; returns false if no popup was open. */
+  closePopup(): Promise<boolean>;
+  /** 0.9.1: Query agent explain diagnostics. */
+  agentExplain(target: string): Promise<Record<string, unknown> | null>;
+  /** 0.9.1: Query server version via ping. Cached in memory. */
+  getServerVersion(): Promise<string | null>;
   /** M14: Send a key combination (pane.send_keys; Herdr key combos include ctrl+c, enter, and esc). */
   sendPaneKeys(paneId: string, keys: string[]): Promise<void>;
   /** M14: Read the pane output buffer; recent preserves ANSI data for T6 detection by default. */
@@ -209,7 +247,7 @@ export class NoopHerdrClient implements HerdrClientLike {
   async createTab(): Promise<{ tabId: string; paneId: string }> {
     throw new Error('subagent requires a herdr-managed pane');
   }
-  async listPanes(): Promise<Array<{ paneId: string; tabId: string; workspaceId: string; agentStatus: string }>> {
+  async listPanes(): Promise<PaneListItem[]> {
     return [];
   }
   async exportLayout(): Promise<null> {
@@ -222,6 +260,18 @@ export class NoopHerdrClient implements HerdrClientLike {
     return null;
   }
   async tabClose(): Promise<void> {}
+  async openPluginPane(): Promise<OpenPluginPaneResult> {
+    throw new Error('plugin pane requires a herdr-managed pane');
+  }
+  async closePopup(): Promise<boolean> {
+    return false;
+  }
+  async agentExplain(): Promise<null> {
+    return null;
+  }
+  async getServerVersion(): Promise<null> {
+    return null;
+  }
   async sendPaneKeys(): Promise<void> {}
   async readPane(): Promise<{ text: string; revision: number; truncated: boolean }> {
     return { text: '', revision: 0, truncated: false };
@@ -427,6 +477,7 @@ export class HerdrClient implements HerdrClientLike {
         session: session?.value != null ? String(session.value) : null,
         stateLabels: (a.state_labels ?? {}) as Record<string, string>,
         tokens: (a.tokens ?? {}) as Record<string, string | null>,
+        ...(a.foreground_cwd ? { foregroundCwd: String(a.foreground_cwd) } : {}),
       };
     });
   }
@@ -507,13 +558,16 @@ export class HerdrClient implements HerdrClientLike {
     return { tabId, paneId: paneId ?? '' };
   }
 
-  async listPanes(): Promise<Array<{ paneId: string; tabId: string; workspaceId: string; agentStatus: string }>> {
+  async listPanes(): Promise<PaneListItem[]> {
     const result = (await this.request('pane.list', {})) as { panes?: Array<Record<string, unknown>> } | null;
     return (result?.panes ?? []).map((p) => ({
       paneId: String(p.pane_id ?? ''),
       tabId: String(p.tab_id ?? ''),
       workspaceId: String(p.workspace_id ?? ''),
       agentStatus: String(p.agent_status ?? 'unknown'),
+      ...(p.foreground_cwd ? { foregroundCwd: String(p.foreground_cwd) } : {}),
+      ...(p.terminal_title ? { terminalTitle: String(p.terminal_title) } : {}),
+      ...(p.terminal_title_stripped ? { terminalTitleStripped: String(p.terminal_title_stripped) } : {}),
     }));
   }
 
@@ -561,6 +615,86 @@ export class HerdrClient implements HerdrClientLike {
 
   async tabClose(tabId: string): Promise<void> {
     await this.request('tab.close', { tab_id: tabId });
+  }
+
+  async openPluginPane(opts: OpenPluginPaneOptions): Promise<OpenPluginPaneResult> {
+    try {
+      const result = (await this.request('plugin.pane.open', {
+        plugin_id: opts.pluginId,
+        entrypoint: opts.entrypoint,
+        ...(opts.placement ? { placement: opts.placement } : {}),
+        ...(opts.width ? { width: opts.width } : {}),
+        ...(opts.height ? { height: opts.height } : {}),
+        ...(opts.focus !== undefined ? { focus: opts.focus } : {}),
+        ...(opts.cwd ? { cwd: opts.cwd } : {}),
+        ...(opts.env ? { env: opts.env } : {}),
+        ...(opts.targetPaneId ? { target_pane_id: opts.targetPaneId } : {}),
+        ...(opts.workspaceId ? { workspace_id: opts.workspaceId } : {}),
+      })) as Record<string, unknown> | null;
+      if (opts.placement === 'popup') {
+        return { mode: 'popup', ok: true };
+      }
+      const paneId = findIdIn(result, 'pane_id') ?? '';
+      return { mode: 'pane', paneId };
+    } catch (err) {
+      const msg = String((err as Error)?.message ?? err);
+      // Herdr < 0.9.1 fallback: if placement popup fails, retry with placement tab
+      if (opts.placement === 'popup' && /invalid_placement|unknown method|not supported|bad request/i.test(msg)) {
+        const fallbackRes = (await this.request('plugin.pane.open', {
+          plugin_id: opts.pluginId,
+          entrypoint: opts.entrypoint,
+          placement: 'tab',
+          ...(opts.focus !== undefined ? { focus: opts.focus } : {}),
+          ...(opts.cwd ? { cwd: opts.cwd } : {}),
+          ...(opts.env ? { env: opts.env } : {}),
+          ...(opts.workspaceId ? { workspace_id: opts.workspaceId } : {}),
+        })) as Record<string, unknown> | null;
+        return {
+          mode: 'fallback_tab',
+          paneId: findIdIn(fallbackRes, 'pane_id') ?? undefined,
+          tabId: findIdIn(fallbackRes, 'tab_id') ?? undefined,
+        };
+      }
+      throw err;
+    }
+  }
+
+  async closePopup(): Promise<boolean> {
+    try {
+      await this.request('popup.close', {});
+      return true;
+    } catch (err) {
+      const msg = String((err as Error)?.message ?? err);
+      if (/popup_not_open|not found|not supported|unknown method/i.test(msg)) {
+        return false;
+      }
+      throw err;
+    }
+  }
+
+  async agentExplain(target: string): Promise<Record<string, unknown> | null> {
+    try {
+      const result = (await this.request('agent.explain', { target })) as Record<string, unknown> | null;
+      return result ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  private cachedVersion: string | null = null;
+
+  async getServerVersion(): Promise<string | null> {
+    if (this.cachedVersion) return this.cachedVersion;
+    try {
+      const result = (await this.request('ping', {})) as { version?: unknown } | null;
+      if (typeof result?.version === 'string') {
+        this.cachedVersion = result.version;
+        return result.version;
+      }
+    } catch {
+      /* ignore */
+    }
+    return null;
   }
 
   async sendPaneKeys(paneId: string, keys: string[]): Promise<void> {

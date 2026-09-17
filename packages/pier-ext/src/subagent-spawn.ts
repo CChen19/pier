@@ -118,6 +118,27 @@ export function createSpawner(h: SpawnerHost): Spawner {
       const plan = planReadyAttempt({ elapsedMs, attempt, timeoutMs: readyTimeoutMs, alive, ready: pinged });
       if (plan.kind === 'ready') return { ok: true };
       if (plan.kind === 'give-up') {
+        let explainHint: string | null = null;
+        if (h.client.available) {
+          try {
+            const diag = await h.client.agentExplain(paneId);
+            if (diag && typeof diag === 'object') {
+              const explainObj = ((diag.explain ?? diag) as Record<string, unknown>);
+              const parts: string[] = [];
+              if (explainObj.skip_state_reason) parts.push(`skip reason: ${String(explainObj.skip_state_reason)}`);
+              if (explainObj.screen_detection_skip_reason) parts.push(`screen rule bypassed: ${String(explainObj.screen_detection_skip_reason)}`);
+              if (explainObj.matched_rule) parts.push(`matched rule: ${String(explainObj.matched_rule)}`);
+              if (explainObj.idle_fallback_reason) parts.push(`idle fallback: ${String(explainObj.idle_fallback_reason)}`);
+              if (parts.length > 0) explainHint = `Herdr detection diagnosis: ${parts.join('; ')}`;
+            }
+          } catch {
+            /* Best effort diagnostics; failures never mask the root error. */
+          }
+        }
+        const defaultHint = plan.reason === 'timeout' && lastStatus === 'working'
+          ? 'Tip: pass run_in_background to avoid blocking the master turn while the worker boots.'
+          : null;
+        const hint = [explainHint, defaultHint].filter(Boolean).join('\n') || null;
         const failure: ReadyFailure = {
           paneId,
           reason: plan.reason,
@@ -125,9 +146,7 @@ export function createSpawner(h: SpawnerHost): Spawner {
           timeoutMs: readyTimeoutMs,
           lastStatus,
           tail,
-          hint: plan.reason === 'timeout' && lastStatus === 'working'
-            ? 'Tip: pass run_in_background to avoid blocking the master turn while the worker boots.'
-            : null,
+          hint,
         };
         return { ok: false, failure, message: readyFailureText(failure) };
       }

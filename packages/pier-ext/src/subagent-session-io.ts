@@ -171,6 +171,7 @@ export function createSessionIo(h: SessionIoHost): SessionIo {
       const a = agents.find((x) => x.paneId === paneId);
       probe.paneExists = a != null;
       probe.agentStatus = a?.status ?? null;
+      if (a?.foregroundCwd) probe.foregroundCwd = a.foregroundCwd;
     } catch {
       /* Fall back to session activity when agent.list is unavailable. */
     }

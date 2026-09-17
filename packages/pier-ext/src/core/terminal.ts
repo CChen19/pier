@@ -509,11 +509,17 @@ export default function terminalPlugin(ctx: Context): void {
   }
 
   async function executeTerminalList() {
-    let livePaneIds: string[] = [];
+    let livePanes: import('../herdr-client.ts').PaneListItem[] = [];
     try {
-      livePaneIds = (await client.listPanes()).map((p) => p.paneId);
+      livePanes = await client.listPanes();
     } catch {
       /* Treat a failed query as unknown rather than closed, because an empty live set only affects stale detection. */
+    }
+    const livePaneIds = livePanes.map((p) => p.paneId);
+    const titleByPaneId = new Map<string, string>();
+    for (const p of livePanes) {
+      const cleanTitle = p.terminalTitleStripped ?? p.terminalTitle;
+      if (cleanTitle) titleByPaneId.set(p.paneId, cleanTitle);
     }
     const s = summarizeSessions(terminals, livePaneIds);
     // T6 check 3: record vanished panes as closed across restarts rather than reviving them; tell the user to persist state.
@@ -528,9 +534,11 @@ export default function terminalPlugin(ctx: Context): void {
     if (s.terminals.length === 0) {
       return { content: [{ type: 'text', text: 'no terminals (open one with action open)' }], details: { terminals: [] } };
     }
-    const lines = s.terminals.map((t) =>
-      `- ${t.terminalId} [${t.live ? 'open' : 'closed'}] pane=${t.paneId} cwd=${t.cwd}${t.label ? ` (${t.label})` : ''}`,
-    );
+    const lines = s.terminals.map((t) => {
+      const cleanTitle = titleByPaneId.get(t.paneId);
+      const titleTag = cleanTitle && cleanTitle !== t.label ? ` title="${cleanTitle}"` : '';
+      return `- ${t.terminalId} [${t.live ? 'open' : 'closed'}] pane=${t.paneId} cwd=${t.cwd}${t.label ? ` (${t.label})` : ''}${titleTag}`;
+    });
     const note = s.stalePaneIds.length > 0
       ? '\nnote: terminal sessions do not survive pane closure/restart — persist results to files.'
       : '';

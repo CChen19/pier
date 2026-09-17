@@ -1,17 +1,56 @@
 {
- "_source": "herdr 0.9.0, protocol 22 — extracted from `herdr api schema` (see cmd: herdr api schema --json)",
- "_generated": "2026-09-14",
+ "_source": "herdr 0.9.1, protocol 22 — extracted from `herdr api schema` (see cmd: herdr api schema --json)",
+ "_generated": "2026-09-17",
  "methods": {
+  "agent.explain": {
+   "def": "AgentTarget",
+   "required": [
+    "target"
+   ],
+   "allowed": [
+    "target"
+   ]
+  },
+  "agent.focus": {
+   "def": "AgentTarget",
+   "required": [
+    "target"
+   ],
+   "allowed": [
+    "target"
+   ]
+  },
+  "agent.get": {
+   "def": "AgentTarget",
+   "required": [
+    "target"
+   ],
+   "allowed": [
+    "target"
+   ]
+  },
   "agent.list": {
    "def": "EmptyParams",
    "required": [],
    "allowed": []
   },
+  "agent.prompt": {
+   "def": "AgentPromptParams",
+   "required": [
+    "target",
+    "text"
+   ],
+   "allowed": [
+    "target",
+    "text",
+    "wait"
+   ]
+  },
   "agent.read": {
    "def": "AgentReadParams",
    "required": [
-    "target",
-    "source"
+    "source",
+    "target"
    ],
    "allowed": [
     "format",
@@ -19,6 +58,61 @@
     "source",
     "strip_ansi",
     "target"
+   ]
+  },
+  "agent.rename": {
+   "def": "AgentRenameParams",
+   "required": [
+    "target"
+   ],
+   "allowed": [
+    "name",
+    "target"
+   ]
+  },
+  "agent.send_keys": {
+   "def": "AgentSendKeysParams",
+   "required": [
+    "keys",
+    "target"
+   ],
+   "allowed": [
+    "keys",
+    "target"
+   ]
+  },
+  "agent.start": {
+   "def": "AgentStartParams",
+   "required": [
+    "kind",
+    "name",
+    "pane_id"
+   ],
+   "allowed": [
+    "args",
+    "kind",
+    "name",
+    "pane_id",
+    "timeout_ms"
+   ]
+  },
+  "agent.view.clear": {
+   "def": "AgentViewClearParams",
+   "required": [],
+   "allowed": [
+    "source"
+   ]
+  },
+  "agent.view.set": {
+   "def": "AgentViewSetParams",
+   "required": [
+    "source"
+   ],
+   "allowed": [
+    "filter",
+    "label",
+    "sort",
+    "source"
    ]
   },
   "agent.wait": {
@@ -30,6 +124,84 @@
     "target",
     "timeout_ms",
     "until"
+   ]
+  },
+  "client.window_title.clear": {
+   "def": "EmptyParams",
+   "required": [],
+   "allowed": []
+  },
+  "client.window_title.set": {
+   "def": "ClientWindowTitleSetParams",
+   "required": [
+    "title"
+   ],
+   "allowed": [
+    "title"
+   ]
+  },
+  "client_shell.surface.set": {
+   "def": "ClientShellSurfaceSetParams",
+   "required": [
+    "active"
+   ],
+   "allowed": [
+    "active"
+   ]
+  },
+  "command.invoke": {
+   "def": "CommandInvokeParams",
+   "required": [
+    "command_id"
+   ],
+   "allowed": [
+    "command_id",
+    "pane_id",
+    "selection",
+    "tab_id",
+    "workspace_id"
+   ]
+  },
+  "events.subscribe": {
+   "def": "EventsSubscribeParams",
+   "required": [
+    "subscriptions"
+   ],
+   "allowed": [
+    "subscriptions"
+   ]
+  },
+  "events.wait": {
+   "def": "EventsWaitParams",
+   "required": [
+    "match_event"
+   ],
+   "allowed": [
+    "match_event",
+    "timeout_ms"
+   ]
+  },
+  "integration.install": {
+   "def": "IntegrationInstallParams",
+   "required": [
+    "target"
+   ],
+   "allowed": [
+    "target"
+   ]
+  },
+  "integration.list": {
+   "def": "EmptyParams",
+   "required": [],
+   "allowed": []
+  },
+  "integration.uninstall": {
+   "def": "IntegrationUninstallParams",
+   "required": [
+    "target"
+   ],
+   "allowed": [
+    "target"
    ]
   },
   "layout.apply": {
@@ -53,7 +225,98 @@
     "tab_id"
    ]
   },
+  "layout.set_split_ratio": {
+   "def": "LayoutSetSplitRatioParams",
+   "required": [
+    "path",
+    "ratio"
+   ],
+   "allowed": [
+    "pane_id",
+    "path",
+    "ratio",
+    "tab_id"
+   ]
+  },
+  "notification.show": {
+   "def": "NotificationShowParams",
+   "required": [
+    "title"
+   ],
+   "allowed": [
+    "body",
+    "position",
+    "sound",
+    "title"
+   ]
+  },
+  "pane.clear_agent_authority": {
+   "def": "PaneClearAgentAuthorityParams",
+   "required": [
+    "pane_id"
+   ],
+   "allowed": [
+    "pane_id",
+    "seq",
+    "source"
+   ]
+  },
   "pane.close": {
+   "def": "PaneTarget",
+   "required": [
+    "pane_id"
+   ],
+   "allowed": [
+    "pane_id"
+   ]
+  },
+  "pane.copy_motion": {
+   "def": "PaneCopyMotionParams",
+   "required": [
+    "cursor",
+    "motion",
+    "pane_id"
+   ],
+   "allowed": [
+    "content_revision",
+    "cursor",
+    "motion",
+    "pane_id"
+   ]
+  },
+  "pane.copy_search": {
+   "def": "PaneCopySearchParams",
+   "required": [
+    "content_revision",
+    "cursor",
+    "direction",
+    "pane_id",
+    "query"
+   ],
+   "allowed": [
+    "content_revision",
+    "cursor",
+    "direction",
+    "pane_id",
+    "previous",
+    "query"
+   ]
+  },
+  "pane.current": {
+   "def": "PaneCurrentParams",
+   "required": [],
+   "allowed": [
+    "caller_pane_id"
+   ]
+  },
+  "pane.edges": {
+   "def": "PaneEdgesParams",
+   "required": [],
+   "allowed": [
+    "pane_id"
+   ]
+  },
+  "pane.edit_scrollback": {
    "def": "PaneTarget",
    "required": [
     "pane_id"
@@ -71,11 +334,145 @@
     "pane_id"
    ]
   },
+  "pane.focus_direction": {
+   "def": "PaneFocusDirectionParams",
+   "required": [
+    "direction"
+   ],
+   "allowed": [
+    "direction",
+    "pane_id"
+   ]
+  },
+  "pane.get": {
+   "def": "PaneTarget",
+   "required": [
+    "pane_id"
+   ],
+   "allowed": [
+    "pane_id"
+   ]
+  },
+  "pane.graphics.clear": {
+   "def": "PaneGraphicsClearParams",
+   "required": [
+    "pane_id"
+   ],
+   "allowed": [
+    "layer_id",
+    "pane_id"
+   ]
+  },
+  "pane.graphics.info": {
+   "def": "PaneTarget",
+   "required": [
+    "pane_id"
+   ],
+   "allowed": [
+    "pane_id"
+   ]
+  },
+  "pane.graphics.set": {
+   "def": "PaneGraphicsSetParams",
+   "required": [
+    "format",
+    "image_height",
+    "image_width",
+    "pane_id"
+   ],
+   "allowed": [
+    "data_base64",
+    "format",
+    "image_height",
+    "image_width",
+    "layer_id",
+    "pane_id",
+    "placement",
+    "z_index"
+   ]
+  },
+  "pane.input.set": {
+   "def": "PaneInputSetParams",
+   "required": [
+    "pane_id",
+    "right_click"
+   ],
+   "allowed": [
+    "pane_id",
+    "right_click"
+   ]
+  },
+  "pane.layout": {
+   "def": "PaneLayoutParams",
+   "required": [],
+   "allowed": [
+    "pane_id"
+   ]
+  },
+  "pane.link.activate": {
+   "def": "PaneLinkActivateParams",
+   "required": [
+    "col",
+    "pane_id",
+    "viewport_row"
+   ],
+   "allowed": [
+    "col",
+    "content_revision",
+    "offset_from_bottom",
+    "pane_id",
+    "viewport_row"
+   ]
+  },
+  "pane.link.resolve": {
+   "def": "PaneLinkActivateParams",
+   "required": [
+    "col",
+    "pane_id",
+    "viewport_row"
+   ],
+   "allowed": [
+    "col",
+    "content_revision",
+    "offset_from_bottom",
+    "pane_id",
+    "viewport_row"
+   ]
+  },
   "pane.list": {
    "def": "PaneListParams",
    "required": [],
    "allowed": [
     "workspace_id"
+   ]
+  },
+  "pane.move": {
+   "def": "PaneMoveParams",
+   "required": [
+    "destination",
+    "pane_id"
+   ],
+   "allowed": [
+    "destination",
+    "focus",
+    "pane_id"
+   ]
+  },
+  "pane.neighbor": {
+   "def": "PaneNeighborParams",
+   "required": [
+    "direction"
+   ],
+   "allowed": [
+    "direction",
+    "pane_id"
+   ]
+  },
+  "pane.process_info": {
+   "def": "PaneProcessInfoParams",
+   "required": [],
+   "allowed": [
+    "pane_id"
    ]
   },
   "pane.read": {
@@ -92,12 +489,36 @@
     "strip_ansi"
    ]
   },
+  "pane.release_agent": {
+   "def": "PaneReleaseAgentParams",
+   "required": [
+    "agent",
+    "pane_id",
+    "source"
+   ],
+   "allowed": [
+    "agent",
+    "pane_id",
+    "seq",
+    "source"
+   ]
+  },
+  "pane.rename": {
+   "def": "PaneRenameParams",
+   "required": [
+    "pane_id"
+   ],
+   "allowed": [
+    "label",
+    "pane_id"
+   ]
+  },
   "pane.report_agent": {
    "def": "PaneReportAgentParams",
    "required": [
+    "agent",
     "pane_id",
     "source",
-    "agent",
     "state"
    ],
    "allowed": [
@@ -114,9 +535,9 @@
   "pane.report_agent_session": {
    "def": "PaneReportAgentSessionParams",
    "required": [
+    "agent",
     "pane_id",
-    "source",
-    "agent"
+    "source"
    ],
    "allowed": [
     "agent",
@@ -150,11 +571,58 @@
     "ttl_ms"
    ]
   },
+  "pane.resize": {
+   "def": "PaneResizeParams",
+   "required": [
+    "direction"
+   ],
+   "allowed": [
+    "amount",
+    "direction",
+    "pane_id"
+   ]
+  },
+  "pane.scroll": {
+   "def": "PaneScrollParams",
+   "required": [
+    "offset_from_bottom",
+    "pane_id"
+   ],
+   "allowed": [
+    "offset_from_bottom",
+    "pane_id"
+   ]
+  },
+  "pane.selection.read": {
+   "def": "PaneSelectionReadParams",
+   "required": [
+    "anchor",
+    "cursor",
+    "pane_id"
+   ],
+   "allowed": [
+    "anchor",
+    "content_revision",
+    "cursor",
+    "pane_id"
+   ]
+  },
+  "pane.send_input": {
+   "def": "PaneSendInputParams",
+   "required": [
+    "pane_id"
+   ],
+   "allowed": [
+    "keys",
+    "pane_id",
+    "text"
+   ]
+  },
   "pane.send_keys": {
    "def": "PaneSendKeysParams",
    "required": [
-    "pane_id",
-    "keys"
+    "keys",
+    "pane_id"
    ],
    "allowed": [
     "keys",
@@ -188,12 +656,22 @@
     "workspace_id"
    ]
   },
+  "pane.swap": {
+   "def": "PaneSwapParams",
+   "required": [],
+   "allowed": [
+    "direction",
+    "pane_id",
+    "source_pane_id",
+    "target_pane_id"
+   ]
+  },
   "pane.wait_for_output": {
    "def": "PaneWaitForOutputParams",
    "required": [
+    "match",
     "pane_id",
-    "source",
-    "match"
+    "source"
    ],
    "allowed": [
     "lines",
@@ -203,6 +681,187 @@
     "strip_ansi",
     "timeout_ms"
    ]
+  },
+  "pane.zoom": {
+   "def": "PaneZoomParams",
+   "required": [],
+   "allowed": [
+    "mode",
+    "pane_id"
+   ]
+  },
+  "ping": {
+   "def": "PingParams",
+   "required": [],
+   "allowed": []
+  },
+  "plugin.action.invoke": {
+   "def": "PluginActionInvokeParams",
+   "required": [
+    "action_id"
+   ],
+   "allowed": [
+    "action_id",
+    "context",
+    "plugin_id"
+   ]
+  },
+  "plugin.action.list": {
+   "def": "PluginActionListParams",
+   "required": [],
+   "allowed": [
+    "plugin_id"
+   ]
+  },
+  "plugin.disable": {
+   "def": "PluginSetEnabledParams",
+   "required": [
+    "plugin_id"
+   ],
+   "allowed": [
+    "plugin_id"
+   ]
+  },
+  "plugin.enable": {
+   "def": "PluginSetEnabledParams",
+   "required": [
+    "plugin_id"
+   ],
+   "allowed": [
+    "plugin_id"
+   ]
+  },
+  "plugin.link": {
+   "def": "PluginLinkParams",
+   "required": [
+    "path"
+   ],
+   "allowed": [
+    "enabled",
+    "path",
+    "source"
+   ]
+  },
+  "plugin.list": {
+   "def": "PluginListParams",
+   "required": [],
+   "allowed": [
+    "plugin_id"
+   ]
+  },
+  "plugin.log.list": {
+   "def": "PluginLogListParams",
+   "required": [],
+   "allowed": [
+    "limit",
+    "plugin_id"
+   ]
+  },
+  "plugin.pane.close": {
+   "def": "PluginPaneCloseParams",
+   "required": [
+    "pane_id"
+   ],
+   "allowed": [
+    "pane_id"
+   ]
+  },
+  "plugin.pane.focus": {
+   "def": "PluginPaneFocusParams",
+   "required": [
+    "pane_id"
+   ],
+   "allowed": [
+    "pane_id"
+   ]
+  },
+  "plugin.pane.open": {
+   "def": "PluginPaneOpenParams",
+   "required": [
+    "entrypoint",
+    "plugin_id"
+   ],
+   "allowed": [
+    "cwd",
+    "direction",
+    "entrypoint",
+    "env",
+    "focus",
+    "height",
+    "placement",
+    "plugin_id",
+    "target_pane_id",
+    "width",
+    "workspace_id"
+   ]
+  },
+  "plugin.unlink": {
+   "def": "PluginUnlinkParams",
+   "required": [
+    "plugin_id"
+   ],
+   "allowed": [
+    "plugin_id"
+   ]
+  },
+  "popup.close": {
+   "def": "EmptyParams",
+   "required": [],
+   "allowed": []
+  },
+  "product_announcement.dismiss": {
+   "def": "ProductAnnouncementDismissParams",
+   "required": [
+    "id",
+    "version"
+   ],
+   "allowed": [
+    "id",
+    "version"
+   ]
+  },
+  "release_notes.dismiss": {
+   "def": "ReleaseNotesDismissParams",
+   "required": [
+    "version"
+   ],
+   "allowed": [
+    "version"
+   ]
+  },
+  "server.agent_manifests": {
+   "def": "EmptyParams",
+   "required": [],
+   "allowed": []
+  },
+  "server.live_handoff": {
+   "def": "ServerLiveHandoffParams",
+   "required": [],
+   "allowed": [
+    "expected_protocol",
+    "expected_version",
+    "import_exe"
+   ]
+  },
+  "server.reload_agent_manifests": {
+   "def": "EmptyParams",
+   "required": [],
+   "allowed": []
+  },
+  "server.reload_config": {
+   "def": "EmptyParams",
+   "required": [],
+   "allowed": []
+  },
+  "server.stop": {
+   "def": "EmptyParams",
+   "required": [],
+   "allowed": []
+  },
+  "session.snapshot": {
+   "def": "EmptyParams",
+   "required": [],
+   "allowed": []
   },
   "tab.close": {
    "def": "TabTarget",
@@ -224,6 +883,15 @@
     "workspace_id"
    ]
   },
+  "tab.focus": {
+   "def": "TabTarget",
+   "required": [
+    "tab_id"
+   ],
+   "allowed": [
+    "tab_id"
+   ]
+  },
   "tab.get": {
    "def": "TabTarget",
    "required": [
@@ -237,6 +905,166 @@
    "def": "TabListParams",
    "required": [],
    "allowed": [
+    "workspace_id"
+   ]
+  },
+  "tab.move": {
+   "def": "TabMoveParams",
+   "required": [
+    "insert_index",
+    "tab_id"
+   ],
+   "allowed": [
+    "insert_index",
+    "tab_id"
+   ]
+  },
+  "tab.rename": {
+   "def": "TabRenameParams",
+   "required": [
+    "label",
+    "tab_id"
+   ],
+   "allowed": [
+    "label",
+    "tab_id"
+   ]
+  },
+  "workspace.close": {
+   "def": "WorkspaceCloseParams",
+   "required": [
+    "workspace_id"
+   ],
+   "allowed": [
+    "close_group",
+    "workspace_id"
+   ]
+  },
+  "workspace.create": {
+   "def": "WorkspaceCreateParams",
+   "required": [],
+   "allowed": [
+    "cwd",
+    "env",
+    "focus",
+    "label",
+    "source_workspace_id"
+   ]
+  },
+  "workspace.focus": {
+   "def": "WorkspaceTarget",
+   "required": [
+    "workspace_id"
+   ],
+   "allowed": [
+    "workspace_id"
+   ]
+  },
+  "workspace.get": {
+   "def": "WorkspaceTarget",
+   "required": [
+    "workspace_id"
+   ],
+   "allowed": [
+    "workspace_id"
+   ]
+  },
+  "workspace.list": {
+   "def": "EmptyParams",
+   "required": [],
+   "allowed": []
+  },
+  "workspace.move": {
+   "def": "WorkspaceMoveParams",
+   "required": [
+    "insert_index",
+    "workspace_id"
+   ],
+   "allowed": [
+    "insert_index",
+    "workspace_id"
+   ]
+  },
+  "workspace.move_block": {
+   "def": "WorkspaceMoveBlockParams",
+   "required": [
+    "workspace_ids"
+   ],
+   "allowed": [
+    "before_workspace_id",
+    "workspace_ids"
+   ]
+  },
+  "workspace.rename": {
+   "def": "WorkspaceRenameParams",
+   "required": [
+    "label",
+    "workspace_id"
+   ],
+   "allowed": [
+    "label",
+    "workspace_id"
+   ]
+  },
+  "workspace.report_metadata": {
+   "def": "WorkspaceReportMetadataParams",
+   "required": [
+    "source",
+    "tokens",
+    "workspace_id"
+   ],
+   "allowed": [
+    "seq",
+    "source",
+    "tokens",
+    "ttl_ms",
+    "workspace_id"
+   ]
+  },
+  "worktree.create": {
+   "def": "WorktreeCreateParams",
+   "required": [],
+   "allowed": [
+    "base",
+    "branch",
+    "cwd",
+    "focus",
+    "label",
+    "path",
+    "trust_repository",
+    "workspace_id"
+   ]
+  },
+  "worktree.list": {
+   "def": "WorktreeListParams",
+   "required": [],
+   "allowed": [
+    "cwd",
+    "trust_repository",
+    "workspace_id"
+   ]
+  },
+  "worktree.open": {
+   "def": "WorktreeOpenParams",
+   "required": [],
+   "allowed": [
+    "branch",
+    "cwd",
+    "focus",
+    "label",
+    "path",
+    "trust_repository",
+    "workspace_id"
+   ]
+  },
+  "worktree.remove": {
+   "def": "WorktreeRemoveParams",
+   "required": [
+    "workspace_id"
+   ],
+   "allowed": [
+    "force",
+    "trust_repository",
     "workspace_id"
    ]
   }
