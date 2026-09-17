@@ -15,6 +15,7 @@ import {
   decideCompaction,
   DEFAULT_COMPACTION_ECONOMICS,
   estimateRemainingRequests,
+  MAX_BOUNDARY_SAMPLES,
   nativeCompactionFeasible,
   resolveCacheRatioFromCost,
   type CompactionDecision,
@@ -99,6 +100,12 @@ export class CompactCoordinator {
     this.pendingBoundaryCompleted = true;
     if (this.state.currentBoundaryRequestCount > 0) {
       this.state.completedBoundaryRequestCounts.push(this.state.currentBoundaryRequestCount);
+      if (this.state.completedBoundaryRequestCounts.length > MAX_BOUNDARY_SAMPLES) {
+        this.state.completedBoundaryRequestCounts.splice(
+          0,
+          this.state.completedBoundaryRequestCounts.length - MAX_BOUNDARY_SAMPLES,
+        );
+      }
       this.state.currentBoundaryRequestCount = 0;
     }
   }
@@ -137,7 +144,11 @@ export class CompactCoordinator {
       this.selectedCompaction = null;
       this.intentionalAbort = false;
       this.pendingBoundaryCompleted = false;
-      this.state.completedBoundaryRequestCounts = [];
+      // completedBoundaryRequestCounts deliberately survives: it measures
+      // requests-per-boundary pacing, which holds across human turns. Clearing it
+      // zeroed the mean and pinned expectedRemainingRequests at 1 after every
+      // prompt, so OCC never saw a horizon worth compacting under (2026-09-17
+      // review: compact.jsonl epoch kept climbing 1→9 with zero compactions).
       this.state.carriedDebtTokens = 0;
       this.state.epoch++;
     }
@@ -175,10 +186,10 @@ export class CompactCoordinator {
       this.state.positiveContextDeltaCount > 0
         ? this.state.positiveContextDeltaTotal / this.state.positiveContextDeltaCount
         : null;
-
     const cacheRatio = resolveCacheRatioFromCost(
       opts.config.cacheWriteReadRatio,
       opts.ctx.model?.cost,
+      { provider: opts.ctx.model?.provider, modelId: opts.ctx.model?.id },
     );
 
     const decision = decideCompaction({
@@ -431,6 +442,13 @@ export class CompactCoordinator {
       archiveTokens: decision.archiveTokens,
       breakevenRequests: decision.breakevenRequests,
       expectedRemainingRequests: decision.expectedRemainingRequests,
+      // 2026-09-17: without resolvedRatio/model the 61x cache_ratio_unavailable
+      // run was un-diagnosable from logs alone (which price table? which family?).
+      resolvedRatio: decision.cacheWriteReadRatio,
+      incrementalCacheCostRatio: decision.incrementalCacheCostRatio,
+      remainingBoundaries: decision.remainingBoundaries,
+      model: ctx.model?.id ?? undefined,
+      provider: ctx.model?.provider ?? undefined,
     }).catch(() => {});
   }
 }

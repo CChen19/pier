@@ -34,6 +34,7 @@ import {
   type EfficiencyConfig,
   type ObservationPackConfig,
 } from '../efficiency-config-core.ts';
+import { resolveCacheRatioFromCost } from '../compact-economics-core.ts';
 import { planToolGate, type RuntimeRoleManifest } from '../tool-gate.ts';
 import { toolError } from '../tool-error.ts';
 
@@ -492,13 +493,19 @@ export function registerObservationPack(deps: ObservationPackDeps): void {
       const removedTokens = Math.max(0, originalTokens - placeholderTokens);
 
       const remainingHorizon = deps.getRemainingHorizon ? deps.getRemainingHorizon() : 4;
+      // Same resolution as OCC (provider family / token-account fallback); the old
+      // raw pass-through of 'auto' let shouldPackForCache hardcode 12.5 internally.
+      const cacheRatio = resolveCacheRatioFromCost(
+        effConfig.onlineContextCompact.cacheWriteReadRatio,
+        ctx.model?.cost,
+        { provider: ctx.model?.provider, modelId: ctx.model?.id },
+      );
       const canPack = shouldPackForCache({
         removedTokens,
         tailTokensAfter,
         expectedRemainingRequests: remainingHorizon,
-        cacheWriteReadRatio: effConfig.onlineContextCompact.cacheWriteReadRatio,
+        cacheWriteReadRatio: cacheRatio,
       });
-
       if (canPack) {
         const packed = await packOneMessage({
           sessionRoot,

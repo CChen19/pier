@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   containsLikelySecret,
+  extractLikelySecretMatch,
   formatReceiptText,
   fullOutputPathFromNotice,
   isDiagnosticCommand,
@@ -89,13 +90,53 @@ test('formatReceiptText: newline-separated lines and a placeholder for unknown l
   assert.ok(lines.every((l) => !l.includes('\r')), 'receipt stays LF-joined');
 });
 
-test('containsLikelySecret: detects credential patterns', () => {
+test('containsLikelySecret: detects credential-shaped values, ignores prose shapes', () => {
   assert.equal(containsLikelySecret('Authorization: Bearer secret_token_12345'), true);
   assert.equal(containsLikelySecret('const api_key = "sk-1234567890abcdef"'), true);
   assert.equal(containsLikelySecret('access_token: ghp_abcdef123456'), true);
+  // Quoted JSON forms: the opening quote must not shield the value shape.
+  assert.equal(containsLikelySecret('"api_key": "sk-1234567890abcdef123456"'), true);
+  assert.equal(containsLikelySecret('"Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"'), true);
+
 
   assert.equal(containsLikelySecret('Test failed at line 42: assert.equal(1, 2)'), false);
   assert.equal(containsLikelySecret('Standard compilation output ok'), false);
+
+  // 2026-09-17 trial false positives: value shape must gate, not the keyword.
+  assert.equal(containsLikelySecret('containsLikelySecret: detects credential patterns'), false);
+  assert.equal(containsLikelySecret('"Authorization":[]'), false);
+  assert.equal(containsLikelySecret('secret = require_app_credentials(settings)'), false);
+  assert.equal(containsLikelySecret('authorization": "/oauth/v1/device_authorization",'), false);
+  assert.equal(containsLikelySecret('AccessToken      string `json:"accessToken"`'), false);
+});
+test('extractLikelySecretMatch: masks the value, keeps the keyword shape and a sha8', () => {
+  const snippet = extractLikelySecretMatch('Error in run: api_key = "sk-supersecretkey1234567890"');
+  assert.ok(snippet);
+  assert.ok(snippet!.startsWith('api_key ='));
+  assert.ok(snippet!.includes('<redacted:'));
+  assert.ok(/sha8=[0-9a-f]{8}/.test(snippet!));
+  assert.ok(!snippet!.includes('supersecretkey'));
+  // Same secret → same sha8 (correlatable across runs), different → different.
+  const again = extractLikelySecretMatch('other line\napi_key = sk-supersecretkey1234567890 done');
+  assert.ok(again);
+  assert.equal(again!.slice(again!.indexOf('sha8=')), snippet!.slice(snippet!.indexOf('sha8=')));
+  assert.equal(extractLikelySecretMatch('nothing here'), undefined);
+});
+
+test('validateReceipt: accepts receipts wrapped in a Markdown json fence', () => {
+  const sourceLog = 'Error: boom\n1 failed, 0 passed';
+  const sourceHash = sha256Hex(sourceLog);
+  const receipt = JSON.stringify({
+    schema: REDUCER_RECEIPT_SCHEMA,
+    source_sha256: sourceHash,
+    status: 'failure',
+    uncertain: false,
+    evidence: [{ kind: 'fatal', quote: 'Error: boom' }],
+  });
+
+  // The 2026-09-17 trial lost 3/8 workbench attempts to fenced output.
+  const res = validateReceipt('```json\n' + receipt + '\n```', sourceHash, sourceLog, true);
+  assert.equal(res.ok, true);
 });
 
 test('validateReceipt: verifies exact byte-for-byte quotations', () => {

@@ -71,7 +71,7 @@ test('CompactCoordinator: tracks boundary completion only for tool source', () =
   assert.deepEqual(coordinator.state.completedBoundaryRequestCounts, [2]);
 });
 
-test('CompactCoordinator: user input acts as correction and clears pending plan; extension messages do not', () => {
+test('CompactCoordinator: user input resets the pending plan but keeps pacing samples; extension messages do neither', () => {
   const coordinator = new CompactCoordinator();
   coordinator.state.completedBoundaryRequestCounts = [5, 5];
   coordinator.state.carriedDebtTokens = 10000;
@@ -83,9 +83,13 @@ test('CompactCoordinator: user input acts as correction and clears pending plan;
   assert.equal(coordinator.state.carriedDebtTokens, 10000);
   assert.equal(coordinator.pendingBoundaryCompleted, true);
 
-  // 2. Human steer input (source: 'interactive', streamingBehavior: 'steer') MUST reset state (P1-2 fix)
+  // 2. Human steer input resets plan-level state (P1-2) but KEEPS
+  // completedBoundaryRequestCounts — the samples measure requests-per-boundary
+  // pacing, which survives human turns. Clearing them zeroed the mean and pinned
+  // expectedRemainingRequests at 1 after every prompt, so OCC never saw a horizon
+  // worth compacting under (2026-09-17 review: epoch climbed 1→9, zero compactions).
   coordinator.onInput({ text: 'Wait, change the direction', source: 'interactive', streamingBehavior: 'steer' });
-  assert.deepEqual(coordinator.state.completedBoundaryRequestCounts, []);
+  assert.deepEqual(coordinator.state.completedBoundaryRequestCounts, [5, 5]);
   assert.equal(coordinator.state.carriedDebtTokens, 0);
   assert.equal(coordinator.pendingBoundaryCompleted, false);
 });

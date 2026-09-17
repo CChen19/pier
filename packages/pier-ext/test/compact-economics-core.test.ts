@@ -177,17 +177,47 @@ test('decideCompaction: deferred_subsequent_margin requires 1.5x margin', () => 
   assert.equal(decisionMargin.reason, 'deferred_subsequent_margin');
 });
 
-test('resolveCacheRatioFromCost: calculates ratio correctly or defaults to 12.5', () => {
+test('resolveCacheRatioFromCost: explicit wins; auto derives from cost, family, then token account', () => {
   assert.equal(resolveCacheRatioFromCost(10), 10);
-  assert.equal(resolveCacheRatioFromCost('auto', null), 12.5);
   assert.equal(resolveCacheRatioFromCost('auto', { cacheRead: 0.1, cacheWrite: 1.25 }), 12.5);
   assert.equal(resolveCacheRatioFromCost('auto', { cacheRead: 0.25, cacheWrite: 1.0 }), 4.0);
-  // No cache capability at all
-  assert.equal(resolveCacheRatioFromCost('auto', { cacheRead: 0, cacheWrite: 0 }), null);
-  // Free cache writes with no read price → no cache capability
-  assert.equal(resolveCacheRatioFromCost('auto', { cacheRead: 0.003, cacheWrite: 0 }), null);
-  // Missing read price → cannot compute ratio
-  assert.equal(resolveCacheRatioFromCost('auto', { cacheRead: 0, cacheWrite: 0.5 }), null);
+  // Implicit cache: no write SKU, rewriting the prefix is billed at the input price
+  assert.equal(resolveCacheRatioFromCost('auto', { input: 0.3, cacheRead: 0.03, cacheWrite: 0 }), 10);
+  // Zero-price tables (cliproxy) resolve by provider family, never null —
+  // the old null disabled OCC for every model in actual use (2026-09-17 review)
+  assert.equal(resolveCacheRatioFromCost('auto', { input: 0, cacheRead: 0, cacheWrite: 0 }, { provider: 'cliproxy', modelId: 'gemini-3.8-flash-high' }), 4);
+  assert.equal(resolveCacheRatioFromCost('auto', { input: 0, cacheRead: 0, cacheWrite: 0 }, { provider: 'xai', modelId: 'grok-4.6' }), 10);
+  assert.equal(resolveCacheRatioFromCost('auto', { input: 0, cacheRead: 0, cacheWrite: 0 }, { provider: 'opencode-go', modelId: 'deepseek-v4.1-flash' }), 10);
+  // Unknown family / missing metadata → token account: a compaction re-reads
+  // writeTokens once, so breakeven = writeTokens/savingTokens ⇔ ratio 2
+  assert.equal(resolveCacheRatioFromCost('auto', null), 2);
+  assert.equal(resolveCacheRatioFromCost('auto', { cacheRead: 0, cacheWrite: 0 }), 2);
+  assert.equal(resolveCacheRatioFromCost('auto', { cacheRead: 0, cacheWrite: 0.5 }, { provider: 'other', modelId: 'm1' }), 2);
+});
+
+test('decideCompaction: last boundary (remainingBoundaries=0) gets no first-compaction relaxation', () => {
+  // ratio 2 → incremental 1 → breakeven = 40000 / 21000 ≈ 1.905
+  // horizon = 1 (no boundaries left); the old ×2.0 relaxation invented a horizon
+  // of 2 ≥ 1.905 and burned a summarization with zero remaining work to amortize.
+  const decision = decideCompaction({
+    writeTokens: 40000,
+    archiveTokens: 22000,
+    memoTokens: 1000,
+    contextTokens: 40000,
+    completedBoundaryRequestCounts: [10, 10],
+    remainingBoundaries: 0,
+    averageContextTokenIncrement: null,
+    contextWindowTokens: 1000000,
+    priorCompactionCount: 0,
+    carriedDebtTokens: 0,
+    cacheDebtRepaymentTokens: 0,
+    cacheWriteReadRatio: 2.0,
+  });
+
+  assert.equal(decision.compact, false);
+  assert.equal(decision.reason, 'deferred_economic');
+  assert.equal(decision.effectiveHorizonRequests, 1);
+  assert.equal(decision.remainingBoundaries, 0);
 });
 
 test('nativeCompactionFeasible: returns false for empty or small session branch', () => {

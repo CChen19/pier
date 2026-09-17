@@ -45,7 +45,7 @@ PI_HERDR_COMPACT_ENABLE=1 PI_HERDR_COMPACT_LOG=1 PI_HERDR_CACHE_RATIO=auto pi
 | `PI_HERDR_REDUCER_MODEL` | `provider/model` | 继承当前模型 | 专用轻量提炼模型 |
 | `PI_HERDR_COMPACT_ENABLE` | `0`/`1` | `0` | OCC 压缩总开关（会覆盖 pi 的 `compaction.enabled=false`） |
 | `PI_HERDR_COMPACT_LOG` | `0`/`1` | `0` | 写 `compact.jsonl` |
-| `PI_HERDR_CACHE_RATIO` | 数字 / `auto` | `auto` | KV 缓存写/读成本比；`auto` 时从模型 `cost.cacheWrite/cacheRead` 推导 |
+| `PI_HERDR_CACHE_RATIO` | 数字 / `auto` | `auto` | KV 缓存写/读成本比。`auto` 依次：模型 `cost.cacheWrite/cacheRead` → 隐式缓存 `input/cacheRead` → provider 族回退（gemini≈4、grok/deepseek≈10）→ **token 账 2.0**（压缩请求要把当前上下文再读一遍）。`auto` 永不返回 null；显式数字仍优先 |
 
 > 环境变量优先级最高，便于临时试用与 A/B。想彻底关掉就删掉变量或置 `0`。
 

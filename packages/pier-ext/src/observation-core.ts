@@ -7,8 +7,8 @@
  *
  * No I/O in this core; storage I/O lives in efficiency-store.ts.
  */
-
 import { createHash } from 'node:crypto';
+import { TOKEN_ACCOUNT_CACHE_RATIO } from './compact-economics-core.ts';
 
 export const DEFAULT_THRESHOLD_BYTES = 10 * 1024; // 10KB
 export const DEFAULT_FULL_SENDS = 2;
@@ -187,19 +187,22 @@ export function sliceBufferChunk(
 
 /**
  * Evaluates whether replacing an earlier message with a placeholder is profitable
- * under rolling prefix cache models (Anthropic, etc.).
+ * under rolling prefix cache models.
+ *
+ * `cacheWriteReadRatio` must already be resolved by the caller via
+ * `resolveCacheRatioFromCost` (same value OCC uses). It used to coerce
+ * `'auto'|null` to a hardcoded 12.5 here, which silently diverged from OCC's
+ * resolution and made OBS under-pack on implicit-cache models (2026-09-17
+ * review: 20/72 packs deferred to sendCount 3–175).
  */
 export function shouldPackForCache(opts: {
   removedTokens: number;
   tailTokensAfter: number;
   expectedRemainingRequests: number;
-  cacheWriteReadRatio: number | 'auto' | null;
+  cacheWriteReadRatio: number | null;
 }): boolean {
   if (opts.removedTokens <= 0) return false;
-  const ratio =
-    opts.cacheWriteReadRatio === 'auto' || opts.cacheWriteReadRatio === null
-      ? 12.5
-      : opts.cacheWriteReadRatio;
+  const ratio = opts.cacheWriteReadRatio ?? TOKEN_ACCOUNT_CACHE_RATIO;
 
   if (ratio <= 1.0) {
     return true; // No incremental write cost over reads

@@ -27,13 +27,23 @@ export const DEFAULT_TIMEOUT_MS = 5000;
  * after the keyword (`makefile`, `coqtop`, `npm run test`) must NOT match.
  */
 export const DIAGNOSTIC_COMMAND =
-  /(?:^|[;&|()\s])(?:lake\s+build|lake\s+env\s+lean|lean|coq|cargo(?:\s+(?:build|test|check))?|zig\s+build|pytest|python(?:3)?\s+-m\s+(?:pytest|unittest|py_compile)|ctest|cmake\s+--build|ninja|make|npm\s+test|pnpm\s+test|yarn\s+test|go\s+test|bazel\s+test|node\s+--test|vitest|jest)(?:[;&|()\s]|$)/i;
+  /(?:^|[;&|()\s])(?:lake\s+build|lake\s+env\s+lean|lean|coq|cargo(?:\s+(?:build|test|check))?|zig\s+build|pytest|python(?:3)?\s+-m\s+(?:pytest|unittest|py_compile)|ctest|cmake\s+--build|ninja|make|npm\s+test|pnpm\s+test|yarn\s+test|go\s+test|bazel\s+test|node\s+--test|npx\s+tsx\s+--test|vitest|jest|mvn|mvnw|gradle|gradlew)(?:[;&|()\s]|$)/i;
 
 export const FAILURE_SIGNAL =
   /error|failed|failure|fatal|exception|panic|timeout|unsolved|type mismatch|assert/i;
 
+/**
+ * Credential heuristics for the EPR fail-open gate.
+ *
+ * Precision comes from the VALUE shape, not the keyword: after the separator the
+ * text must contain a token-looking run — a known credential prefix (sk-, ghp_,
+ * github_pat_, xox*, AKIA, eyJ) or >= 15 contiguous token characters containing
+ * a digit. Keywords alone matched test names (`containsLikelySecret: detects …`),
+ * JSON keys (`"Authorization":[]`), URL paths and function calls, which blocked
+ * pier's own `npm test` output 7/7 times during the 2026-09-17 trial.
+ */
 export const LIKELY_SECRET =
-  /(?:api[_-]?key|authorization|bearer|access[_-]?token|secret)[^\n]{0,32}[=:][^\n]+/i;
+  /(?:api[_-]?key|api[_-]?secret|access[_-]?token|refresh[_-]?token|secret[_-]?key|client[_-]?secret|authorization|bearer|password|passwd|secret)[^\n]{0,40}[=:][\s"']*(?:bearer\s+|basic\s+)?[\s"']*(?:(?:sk-|ghp_|github_pat_|xox[baprs]-|AKIA|eyJ)[A-Za-z0-9_-]{10,}|(?=[A-Za-z0-9_\-.+~]*[0-9])[A-Za-z0-9_\-.+~]{15,})/i;
 
 export type EvidenceKind = 'fatal' | 'failure' | 'warning' | 'target' | 'summary';
 
@@ -90,6 +100,35 @@ export function fullOutputPathFromNotice(text: string): string | undefined {
 
 export function containsLikelySecret(text: string): boolean {
   return LIKELY_SECRET.test(text);
+}
+
+/**
+ * First matched credential-shaped snippet for reducer.jsonl fallback rows, with
+ * the VALUE masked to its length — the keyword and separator are not secret and
+ * identify the false-positive shape (test name vs JSON key vs real credential);
+ * the value never enters telemetry (contract pinned by reducer-integration test).
+ */
+export function extractLikelySecretMatch(text: string): string | undefined {
+  const match = LIKELY_SECRET.exec(text);
+  if (!match) return undefined;
+  const snippet = match[0];
+  const sep = Math.max(snippet.indexOf(':'), snippet.indexOf('='));
+  if (sep < 0) return `<unparsed:${snippet.length} chars>`;
+  const value = snippet.slice(sep + 1).trim().replace(/^["']+|["']+$/g, '');
+  // Correlatable without being reversible: same secret recurring across runs
+  // yields the same sha8, while the value itself never enters telemetry.
+  return `${snippet.slice(0, sep + 1)} <redacted:${value.length} chars,sha8=${sha256Hex(value).slice(0, 8)}>`;
+}
+
+/**
+ * Reducer models frequently wrap their JSON in a Markdown fence even when told
+ * not to; strip it before parsing (2026-09-17 trial: 3/8 workbench attempts
+ * failed as invalid-json, same command as successes).
+ */
+export function stripReceiptJsonFences(raw: string): string {
+  const trimmed = raw.trim();
+  const fenced = /^```[a-zA-Z0-9_-]*\s*\n([\s\S]*?)\n?```$/.exec(trimmed);
+  return fenced?.[1]?.trim() ?? trimmed;
 }
 
 export function isRecord(v: unknown): v is Record<string, unknown> {
@@ -154,7 +193,7 @@ export function validateReceipt(
 ): ReceiptValidation {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(rawJson);
+    parsed = JSON.parse(stripReceiptJsonFences(rawJson));
   } catch {
     return { ok: false, reason: 'invalid-json' };
   }

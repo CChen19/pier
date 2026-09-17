@@ -20,6 +20,7 @@ import {
   DEFAULT_MAX_OUTPUT_TOKENS,
   DEFAULT_MIN_BYTES,
   DEFAULT_TIMEOUT_MS,
+  extractLikelySecretMatch,
   formatReceiptText,
   fullOutputPathFromNotice,
   isDiagnosticCommand,
@@ -155,6 +156,9 @@ export async function handleReducerToolResult(
         verificationOk: false,
         reason: 'likely-secret',
         action: 'fallback_full_text',
+        // Which shape tripped the gate — the 2026-09-17 trial had 10 fallbacks
+        // with zero evidence of what matched (test names vs real credentials).
+        secretSnippet: extractLikelySecretMatch(body),
       });
     }
     return undefined; // Fail-open on sensitive data
@@ -175,20 +179,34 @@ export async function handleReducerToolResult(
 
   // If localOnly mode, archival is complete; leave content unmodified
   if (config.localOnly) return undefined;
-
-  // 7. Resolve model
+  // 7. Resolve model: configured cheap reducer first, session model as fallback
+  //    (2026-09-17: user directive — gemini-3.8-flash-high stays the reducer;
+  //    unavailability must degrade to the session model, not skip reduction).
   let targetModel: any = undefined;
+  let reducerModelSource: 'configured' | 'session-fallback' = 'configured';
   if (config.model && typeof config.model === 'string' && config.model.includes('/')) {
     const [provider, ...rest] = config.model.split('/');
     const modelId = rest.join('/');
-    targetModel = ctx.modelRegistry?.find?.(provider, modelId);
+    try {
+      targetModel = ctx.modelRegistry?.find?.(provider, modelId);
+    } catch {
+      targetModel = undefined;
+    }
   }
   if (!targetModel) {
     targetModel = ctx.model;
+    reducerModelSource = 'session-fallback';
   }
   if (!targetModel || typeof ctx.modelRegistry?.complete !== 'function') {
     return undefined;
   }
+  // Unified provider/id label: the 2026-09-17 logs split one session into
+  // "cliproxy/gemini-3.8-flash-high" (fallback rows) and "gemini-3.8-flash-high"
+  // (applied rows), fragmenting per-model grouping.
+  const reducerModelLabel =
+    typeof targetModel.provider === 'string' && typeof targetModel.id === 'string'
+      ? `${targetModel.provider}/${targetModel.id}`
+      : (config.model ?? 'unknown');
 
   // 8. Invoke model in-process with timeout
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -222,7 +240,22 @@ export async function handleReducerToolResult(
         signal,
       },
     );
-  } catch {
+  } catch (err) {
+    // Fail-open, but no longer silent: the 2026-09-17 trial lost 3+ attempts
+    // (timeout / provider error) with no jsonl trace at all.
+    if (config.logEnabled) {
+      await logReducerAttempt(sessionRoot, sessionId ?? 'unknown', epoch, {
+        commandSha256: sha256Hex(command),
+        sourceBytes,
+        model: reducerModelLabel,
+        reducerModelSource,
+        verificationOk: false,
+        reason: 'invoke-failed',
+        action: 'fallback_full_text',
+        error: err instanceof Error ? err.message : String(err),
+        durationMs: Date.now() - startMs,
+      });
+    }
     return undefined; // Fail-open on timeout or provider error
   }
 
@@ -238,13 +271,18 @@ export async function handleReducerToolResult(
   const validated = validateReceipt(modelOutput, sourceHash, body, event.isError);
   if (!validated.ok) {
     if (config.logEnabled) {
+      const failReason = validated.reason;
       await logReducerAttempt(sessionRoot, sessionId ?? 'unknown', epoch, {
         commandSha256: sha256Hex(command),
         sourceBytes,
-        model: targetModel.id ?? config.model ?? 'unknown',
+        model: reducerModelLabel,
+        reducerModelSource,
         verificationOk: false,
-        reason: (validated as { ok: false; reason: string }).reason,
+        reason: failReason,
         action: 'fallback_full_text',
+        // invalid-json rows carried no evidence of what the model actually
+        // returned (fences? truncation? prose?) — keep a sanitized head.
+        ...(failReason === 'invalid-json' ? { rawOutputHead: JSON.stringify(modelOutput.slice(0, 200)) } : {}),
         durationMs: Date.now() - startMs,
       });
     }
@@ -289,7 +327,8 @@ export async function handleReducerToolResult(
       receiptBytes,
       grossSavedBytes: sourceBytes - receiptBytes,
       compressionRatio: Number((receiptBytes / sourceBytes).toFixed(3)),
-      model: modelName,
+      model: reducerModelLabel,
+      reducerModelSource,
       verificationOk: true,
       action: 'applied',
       fullOutputSource,

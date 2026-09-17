@@ -29,6 +29,22 @@ export const DEFAULT_COMPACTION_ECONOMICS: CompactionEconomics = Object.freeze({
   subsequentCompactionMargin: 1.5,
 });
 
+/**
+ * Token-account cache ratio: a compaction request re-reads the whole current
+ * context once (writeTokens), so breakeven = writeTokens / savingTokens ⇔ ratio 2.
+ * `auto` fallback when no usable cache pricing exists (2026-09-17 review: every
+ * model actually in use reports zero cacheWrite; the old `null` disabled OCC
+ * for all of them — 61/61 decisions `cache_ratio_unavailable`, zero compactions).
+ */
+export const TOKEN_ACCOUNT_CACHE_RATIO = 2.0;
+
+/** Provider-family `auto` fallbacks (implicit-cache families without a write SKU). */
+const PROVIDER_FAMILY_CACHE_RATIOS: Readonly<Record<string, number>> = Object.freeze({
+  gemini: 4,
+  grok: 10,
+  deepseek: 10,
+});
+
 export type CompactionReason =
   | 'economic'
   | 'window_protection'
@@ -65,6 +81,7 @@ export interface CompactionDecision {
   readonly breakevenRequests: number | null;
   readonly combinedBreakevenRequests: number | null;
   readonly effectiveHorizonRequests: number | null;
+  readonly remainingBoundaries: number;
   readonly cacheWriteReadRatio: number | null;
   readonly incrementalCacheCostRatio: number | null;
   readonly priorCompactionCount: number;
@@ -76,6 +93,8 @@ export interface CompactionDecision {
 
 const MINIMUM_VARIANCE_SAMPLES = 3;
 const SMALL_SAMPLE_SCALE = 0.5;
+/** Retained boundary-request sample cap so the mean tracks recent pacing. */
+export const MAX_BOUNDARY_SAMPLES = 16;
 
 export function estimateRemainingRequests(input: {
   readonly completedBoundaryRequestCounts: readonly number[];
@@ -169,12 +188,16 @@ export function decideCompaction(input: {
     savingTokens > 0 && incrementalCacheCostRatio !== null
       ? (input.carriedDebtTokens + input.writeTokens * incrementalCacheCostRatio) / savingTokens
       : null;
-
   const firstCompaction = input.priorCompactionCount === 0;
+  // The first-compaction relaxation survives cold-start sample noise when real work
+  // remains. With zero remaining boundaries the horizon is 1 (nothing left to amortize
+  // over); scaling it by firstCompactionRequestScale would "discover" a horizon of 2
+  // and burn a full-context summarization for zero future benefit (2026-09-17 review).
+  const relaxFirstCompaction = firstCompaction && input.remainingBoundaries > 0;
   const effectiveHorizonRequests =
     horizon === null
       ? null
-      : firstCompaction
+      : relaxFirstCompaction
         ? Math.min(
             horizon.expectedRemainingRequests * economics.firstCompactionRequestScale,
             horizon.windowRequestUpperBound ?? Number.POSITIVE_INFINITY,
@@ -231,6 +254,7 @@ export function decideCompaction(input: {
     breakevenRequests,
     combinedBreakevenRequests,
     effectiveHorizonRequests,
+    remainingBoundaries: input.remainingBoundaries,
     cacheWriteReadRatio: input.cacheWriteReadRatio,
     incrementalCacheCostRatio,
     priorCompactionCount: input.priorCompactionCount,
@@ -256,50 +280,55 @@ export function decideCompaction(input: {
 }
 
 /**
- * Resolve cache write/read cost ratio for economic compaction decisions.
+ * Resolve the cache write/read cost ratio for economic compaction decisions.
  *
  * Priority:
- *  1. Explicit numeric config → use as-is (e.g., 12.5 for Anthropic models)
- *  2. Model cost metadata → derive ratio from cacheWrite/cacheRead
- *  3. Fallback → 12.5 (standard Anthropic-like pricing)
+ *  1. Explicit numeric config → use as-is (e.g. 12.5 for Anthropic-style pricing)
+ *  2. Model cost metadata:
+ *     a. cacheWrite > 0 && cacheRead > 0 → write/read (explicit cache SKU)
+ *     b. cacheWrite == 0 && cacheRead > 0 && input > 0 → input/cacheRead
+ *        (implicit cache: rewriting the prefix is billed at the input price)
+ *  3. Provider-family fallback (gemini≈4, grok/deepseek≈10 — implicit-cache
+ *     families without a local cacheWrite SKU)
+ *  4. Token-account fallback 2.0: a compaction re-reads writeTokens once,
+ *     so breakeven = writeTokens/savingTokens ⇔ ratio 2
  *
- * Returns null to disable economic decisions when:
- *  - Model has no cache capability (both read=0, write=0)
- *  - Model has free cache writes but no read price (write=0 while read exists)
- *    → Indicates no cache feature, not truly free writes
- *  - Missing cacheRead price → cannot compute valid ratio
+ * Returns null only for an explicitly invalid numeric config.
  *
- * Rationale for write=0 → null (P0-1 fix):
- *  DeepSeek/Gemini report cacheWrite=0 not because writes are free,
- *  but because they don't support KV cache at all. Treating 0 as "free"
- *  would trigger spurious compactions with infinite breakeven horizon.
+ * History (P0-1): `auto` used to return null when cacheWrite==0, reading that
+ * as "no KV cache at all". The 2026-09-17 trial disproved it on this machine:
+ * grok/deepseek/gemini sessions all show non-zero cacheRead usage while
+ * cacheWrite stays 0 — there is no separate write SKU, not "no cache". null
+ * disabled OCC for every model actually used (61/61 decisions
+ * `cache_ratio_unavailable`, zero compactions). The floor matters as much as
+ * the fix: never implicitly fall back below 2.0, because ratio <= 1 zeroes the
+ * incremental cost and would compact even on the last boundary with nothing
+ * left to amortize (the original P0-1 failure mode).
  */
 export function resolveCacheRatioFromCost(
   ratioConfig: number | 'auto',
-  cost?: { cacheRead?: number; cacheWrite?: number } | null,
+  cost?: { input?: number; cacheRead?: number; cacheWrite?: number } | null,
+  identity?: { provider?: string; modelId?: string } | null,
 ): number | null {
   // Explicit config takes absolute precedence
   if (typeof ratioConfig === 'number') {
     return Number.isFinite(ratioConfig) && ratioConfig >= 0 ? ratioConfig : null;
   }
 
-  // No model cost metadata → conservative fallback
-  if (!cost) return 12.5;
+  if (cost) {
+    const read = cost.cacheRead ?? 0;
+    const write = cost.cacheWrite ?? 0;
+    const input = cost.input ?? 0;
 
-  const read = cost.cacheRead ?? 0;
-  const write = cost.cacheWrite ?? 0;
+    if (read > 0 && write > 0) return write / read;
+    if (read > 0 && write === 0 && input > 0) return input / read;
+  }
 
-  // No cache capability at all
-  if (read === 0 && write === 0) return null;
-
-  // Missing read price → cannot compute ratio
-  if (read === 0) return null;
-
-  // Zero write cost → indicates no cache support, not free writes
-  // (DeepSeek/Gemini/GLM report write=0 when cache is unavailable)
-  if (write === 0) return null;
-
-  return write / read;
+  const familyKey = `${identity?.provider ?? ''}/${identity?.modelId ?? ''}`.toLowerCase();
+  for (const [family, ratio] of Object.entries(PROVIDER_FAMILY_CACHE_RATIOS)) {
+    if (familyKey.includes(family)) return ratio;
+  }
+  return TOKEN_ACCOUNT_CACHE_RATIO;
 }
 
 function compactionMessageCount(entries: readonly SessionEntry[], startIndex: number, endIndex: number): number {
