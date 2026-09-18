@@ -315,3 +315,52 @@ test('loadEfficiencyConfigFromDisk: respects Pi native compaction settings and i
   }
 });
 
+// ---------------------------------------------------------------------------
+// jev 决策层段（RFC docs/rfc-jev-integration.md §6）
+// ---------------------------------------------------------------------------
+
+test('validateEfficiencyConfig: jev 段校验与 fail-open', () => {
+  const bad = validateEfficiencyConfig({ version: 1, jev: { enabled: true, timeoutMs: 100 } });
+  assert.equal(bad.ok, false);
+  assert.equal(bad.config.jev.enabled, false, 'section issues force enabled=false');
+  assert.ok(bad.issues.some((i) => i.includes('jev.timeoutMs')));
+  assert.ok(validateEfficiencyConfig({ version: 1, jev: { unknownKey: 1 } }).issues.some((i) => i.includes('jev 未知配置项')));
+
+  const good = validateEfficiencyConfig({ version: 1, jev: { enabled: true, apiKey: ' k ', minConfidence: 0.75 } });
+  assert.equal(good.ok, true);
+  assert.equal(good.config.jev.apiKey, 'k', 'key is trimmed');
+  assert.equal(good.config.jev.minConfidence, 0.75);
+  assert.equal(good.config.jev.model, 'jev-1.13.0', 'pinned versioned id');
+});
+
+test('resolveEfficiencyConfig: PIER_JEV_* env 覆盖 > 配置 apiKey > TYPESAFE_API_KEY 兜底', () => {
+  const byEnv = resolveEfficiencyConfig({
+    env: {
+      PIER_JEV_ENABLE: '1',
+      PIER_JEV_MODEL: 'jev-1.13.1',
+      PIER_JEV_TIMEOUT_MS: '1500',
+      PIER_JEV_MIN_CONFIDENCE: '0.8',
+      PIER_JEV_API_KEY: 'pk',
+    },
+  });
+  assert.equal(byEnv.jev.enabled, true);
+  assert.equal(byEnv.jev.model, 'jev-1.13.1');
+  assert.equal(byEnv.jev.timeoutMs, 1500);
+  assert.equal(byEnv.jev.minConfidence, 0.8);
+  assert.equal(byEnv.jev.apiKey, 'pk');
+
+  const byForeignEnv = resolveEfficiencyConfig({ env: { PIER_JEV_ENABLE: '1', TYPESAFE_API_KEY: 'fk' } });
+  assert.equal(byForeignEnv.jev.apiKey, 'fk', 'SDK-convention env fills a missing key');
+
+  const byConfig = resolveEfficiencyConfig({ userConfig: { jev: { apiKey: 'ck' } }, env: {} });
+  assert.equal(byConfig.jev.apiKey, 'ck');
+  assert.equal(byConfig.jev.enabled, false, 'key alone does not enable the layer');
+
+  const none = resolveEfficiencyConfig({ env: {} });
+  assert.equal(none.jev.apiKey, undefined);
+  assert.equal(none.jev.enabled, false);
+
+  const badEnv = resolveEfficiencyConfig({ env: { PIER_JEV_TIMEOUT_MS: '100' } });
+  assert.equal(badEnv.jev.timeoutMs, 2000, 'invalid env falls back to default');
+});
+

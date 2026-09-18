@@ -6,13 +6,18 @@
  */
 import {
   REFLOW_DEBOUNCE_MS,
+  applyHeatOps,
   countPanes,
   firstPaneId,
+  layoutFingerprint,
   planGridHeat,
   shouldAcceptFocus,
   shouldFireDebounced,
+  shouldHoldHeat,
   unwrapLayout,
   type AgentStatusMap,
+  type LayoutNode,
+  type SplitFingerprint,
 } from './heat-layout.ts';
 
 export interface ReflowEvent {
@@ -42,9 +47,19 @@ export interface ReflowDeps {
   piTabIds?: () => Promise<Set<string>>;
 }
 
-/** Whether the tab belongs to pier (contains pi panes). Passes through if dep omitted; snapshot failure treated as not in set (conservative no-op). */
+/**
+ * Whether the tab belongs to pier (contains pi panes). Passes through if dep omitted; snapshot failure
+ * treated as not in set (conservative no-op).
+ *
+ * Sticky war-room tabs: `state.tabs[tabId]` is written only after a pi-gated apply succeeded, so a
+ * recorded tab stays in the set after every pi process exits back to shell — an all-shell main tab
+ * keeps focus zoom instead of being reclassified as a foreign (Scenario B) tab. Escape hatch:
+ * per-tab `enabled: false` still opts out (applyTiered skips before any state write).
+ */
 async function isPiTab(deps: ReflowDeps, tabId: string): Promise<boolean> {
   if (!deps.piTabIds) return true;
+  const recorded = ((deps.loadState() as ReflowState).tabs ?? {}) as Record<string, unknown>;
+  if (recorded[tabId]) return true;
   try { return (await deps.piTabIds()).has(tabId); } catch { return false; }
 }
 type ReflowState = Record<string, any>;
@@ -91,35 +106,64 @@ async function onCountChanged(deps: ReflowDeps): Promise<void> {
     ? (tabCfg as { lastFocusPaneId: string }).lastFocusPaneId
     : null;
   const focusPaneId = lastFocus && flattenIn(root, lastFocus) ? lastFocus : firstPaneId(root);
-  const applied = await applyTiered(deps, { root, tabId, focusPaneId, zoomed, tabCfg });
+  const applied = await applyTiered(deps, { root, tabId, focusPaneId, zoomed, tabCfg, mode: 'count' });
   if (!applied) return;
   latest.tabs = latest.tabs ?? {};
-  latest.tabs[tabId] = { ...tabCfg, lastFocusPaneId: focusPaneId, lastApplyAt: Date.now() };
+  latest.tabs[tabId] = { ...tabCfg, lastFocusPaneId: focusPaneId, lastApplyAt: Date.now(), lastFingerprint: applied };
   deps.saveState(latest);
 }
 
-/** Tier 3 shared core: fetch status snapshot -> in-place grid planning -> apply -> record tab state. */
+/** Tier 3 shared core. Returns fingerprint after apply; false when skipped. */
 async function applyTiered(
   deps: ReflowDeps,
-  opts: { root: ReturnType<typeof unwrapLayout>['root']; tabId: string; focusPaneId: string; zoomed: boolean; tabCfg: Record<string, unknown> },
-): Promise<boolean> {
+  opts: {
+    root: LayoutNode;
+    tabId: string;
+    focusPaneId: string;
+    zoomed: boolean;
+    tabCfg: Record<string, unknown>;
+    mode: 'focus' | 'count' | 'status';
+  },
+): Promise<SplitFingerprint | false> {
+  if (opts.mode === 'status') {
+    const decision = shouldHoldHeat({
+      prior: opts.tabCfg.lastFingerprint as SplitFingerprint | undefined,
+      current: layoutFingerprint(opts.root),
+      acceptedFocus: false,
+    });
+    if (decision.hold) return false;
+  }
   const statuses = await (deps.listAgentStatuses?.() ?? Promise.resolve({}));
   const askFlags = await (deps.listAskFlags?.() ?? Promise.resolve({}));
   const plan = planGridHeat({
-    root: opts.root!,
+    root: opts.root,
     focusPaneId: opts.focusPaneId,
-    paneCount: countPanes(opts.root!),
+    paneCount: countPanes(opts.root),
     zoomed: opts.zoomed,
     enabled: (opts.tabCfg as { enabled?: boolean }).enabled !== false,
     statuses,
     askFlags,
   });
   if (plan.type !== 'apply') return false;
-  // D91 in-place grid heat: only emits ratio ops (zero swaps — pane positions stay fixed, focused cell expands in place)
   for (const op of plan.ops) {
     await deps.request('layout.set_split_ratio', { tab_id: opts.tabId, path: op.path, ratio: op.ratio });
   }
-  return true;
+  return layoutFingerprint(applyHeatOps(opts.root, plan.ops));
+}
+
+export function askFlagsFromListResult(result: unknown): Record<string, boolean> {
+  const rec = result && typeof result === 'object' ? result as Record<string, unknown> : {};
+  const rows = Array.isArray(rec.agents) ? rec.agents : Array.isArray(rec.panes) ? rec.panes : [];
+  const map: Record<string, boolean> = {};
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') continue;
+    const o = row as Record<string, unknown>;
+    const id = typeof o.pane_id === 'string' ? o.pane_id : null;
+    const tokens = o.tokens && typeof o.tokens === 'object' ? o.tokens as Record<string, unknown> : {};
+    const v = tokens['pi-ask'];
+    if (id && typeof v === 'string' && v.length > 0) map[id] = true;
+  }
+  return map;
 }
 
 async function onFocused(deps: ReflowDeps): Promise<void> {
@@ -150,10 +194,10 @@ async function onFocused(deps: ReflowDeps): Promise<void> {
   if (!root || !tabId) return;
   if (!(await isPiTab(deps, tabId))) return;
   const tabCfg = latest.tabs?.[tabId] ?? { enabled: true };
-  const applied = await applyTiered(deps, { root, tabId, focusPaneId: paneId, zoomed, tabCfg });
+  const applied = await applyTiered(deps, { root, tabId, focusPaneId: paneId, zoomed, tabCfg, mode: 'focus' });
   if (!applied) return;
   latest.tabs = latest.tabs ?? {};
-  latest.tabs[tabId] = { ...tabCfg, lastFocusPaneId: paneId, lastApplyAt: Date.now() };
+  latest.tabs[tabId] = { ...tabCfg, lastFocusPaneId: paneId, lastApplyAt: Date.now(), lastFingerprint: applied };
   deps.saveState(latest);
 }
 
@@ -186,10 +230,10 @@ async function onAgentStatusChanged(deps: ReflowDeps): Promise<void> {
     ? (tabCfg as { lastFocusPaneId: string }).lastFocusPaneId
     : null;
   const focusPaneId = lastFocus && flattenIn(root, lastFocus) ? lastFocus : firstPaneId(root);
-  const applied = await applyTiered(deps, { root, tabId, focusPaneId, zoomed, tabCfg });
+  const applied = await applyTiered(deps, { root, tabId, focusPaneId, zoomed, tabCfg, mode: 'status' });
   if (!applied) return;
   latest.tabs = latest.tabs ?? {};
-  latest.tabs[tabId] = { ...tabCfg, lastFocusPaneId: focusPaneId, lastApplyAt: Date.now() };
+  latest.tabs[tabId] = { ...tabCfg, lastFocusPaneId: focusPaneId, lastApplyAt: Date.now(), lastFingerprint: applied };
   deps.saveState(latest);
 }
 

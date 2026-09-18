@@ -54,6 +54,8 @@ interface FakeHostFixture {
   sleepCalls: number[];
   client: {
     agents: Array<{ paneId: string; status: string }>;
+    /** null → mirror `agents`. Set explicitly to pin pane.list ≠ agent.list. */
+    panes: Array<{ paneId: string; agentStatus: string }> | null;
     listAgentsCalls: number;
     waitAgentQueue: Array<HerdrAgentState | null | Error>;
     throwOnListAgents: boolean;
@@ -90,6 +92,7 @@ function createFakeHost(options?: {
 
   const clientMock: FakeHostFixture['client'] = {
     agents: [{ paneId: options?.entry?.paneId ?? 'p1', status: 'idle' }],
+    panes: null,
     listAgentsCalls: 0,
     waitAgentQueue: [],
     throwOnListAgents: false,
@@ -110,7 +113,19 @@ function createFakeHost(options?: {
   const fakeClient: HerdrClientLike = {
     available: true,
     tabList: async () => [],
-    listPanes: async () => [],
+    listPanes: async () => {
+      if (clientMock.throwOnListAgents) throw new Error('simulated listAgents failure');
+      const src = clientMock.panes ?? clientMock.agents.map((a) => ({
+        paneId: a.paneId,
+        agentStatus: a.status,
+      }));
+      return src.map((p) => ({
+        paneId: p.paneId,
+        tabId: 't0',
+        workspaceId: 'w1',
+        agentStatus: p.agentStatus,
+      }));
+    },
     listAgents: async () => {
       clientMock.listAgentsCalls++;
       if (clientMock.throwOnListAgents) throw new Error('simulated listAgents failure');
@@ -635,14 +650,14 @@ test('pollLoop: settles with no closing message when the turn ENDED without text
 
 /* ──────────────── Vacuum Branches ──────────────── */
 
-test('pollLoop: vacuum triggers pane-closed when agent is not alive in listAgents', async () => {
+test('pollLoop: vacuum triggers pane-closed when pane is missing from pane.list', async () => {
   const entry = makeEntry('p-dead');
   const f = createFakeHost({ entry });
   f.client.waitAgentQueue = ['done'];
-  // subSessionState has no text and no activity -> falls through to vacuum
   f.sessionIo.subSessionResponses = [{ text: null, pendingTool: true, activity: false }];
-  // pane is not in listAgents
-  f.client.agents = [];
+  // agent.list still has it; pane.list is the existence authority
+  f.client.agents = [{ paneId: 'p-dead', status: 'idle' }];
+  f.client.panes = [];
 
   const poller = createPoller(f.host);
   await poller.startPoller('p-dead', '/tmp', 0, 0, 'desc', 'req-1');
@@ -653,6 +668,27 @@ test('pollLoop: vacuum triggers pane-closed when agent is not alive in listAgent
   assert.equal(f.historyWrites[0]?.patch?.outcome, 'pane closed before settling');
   assert.match(f.injectedNotices[0]!, /stopped before settling \(its pane closed\)\./);
   assert.equal(f.reconcileCalls[0]?.outcome, 'failed');
+});
+
+test('pollLoop: vacuum must not close a pane.list shell that agent.list omits', async () => {
+  const entry = makeEntry('p-shell');
+  const f = createFakeHost({ initialTime: 10_000, entry });
+  f.client.waitAgentQueue = ['idle'];
+  f.sessionIo.subSessionResponses = [{ text: null, pendingTool: true, activity: false }];
+  f.client.agents = [];
+  f.client.panes = [{ paneId: 'p-shell', agentStatus: 'unknown' }];
+
+  let loop = 0;
+  f.host.client.waitAgent = async () => {
+    loop += 1;
+    if (loop >= 1) entry.status = 'settled';
+    return 'idle';
+  };
+
+  const poller = createPoller(f.host);
+  await poller.startPoller('p-shell', '/tmp', 0, 0, 'desc', 'req-1');
+
+  assert.equal(f.historyWrites.length, 0);
 });
 
 test('pollLoop: vacuum triggers timeout when subagent shows no progress past timeoutMs', async () => {

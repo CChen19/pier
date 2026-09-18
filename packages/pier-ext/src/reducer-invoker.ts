@@ -41,6 +41,14 @@ import {
   storeContentAddressedObject,
 } from './efficiency-store.ts';
 import type { EvidencePreservingReducerConfig } from './efficiency-config-core.ts';
+import { diagnosticGateRequest, evaluateDiagnosticGate } from './jev-core.ts';
+import type { JevRuntime } from './jev-client.ts';
+
+/** P0-1 seam: the runtime plus a live confidence gate (config can reload mid-session). */
+export interface JevEprGateDependency {
+  ask: JevRuntime['ask'];
+  getMinConfidence: () => number;
+}
 
 export interface ToolResultEventLike {
   toolName: string;
@@ -65,7 +73,7 @@ export async function handleReducerToolResult(
   event: ToolResultEventLike,
   ctx: ExtensionContext,
   config: EvidencePreservingReducerConfig,
-  opts?: { epoch?: number },
+  opts?: { epoch?: number; jev?: JevEprGateDependency },
 ): Promise<ReducerInvocationResult | undefined> {
   if (!config.enabled) return undefined;
   const epoch = opts?.epoch ?? 0;
@@ -73,7 +81,27 @@ export async function handleReducerToolResult(
   // 1. Candidate command & tool gate: strictly bash only
   if (event.toolName !== 'bash') return undefined;
   const command = typeof event.input?.command === 'string' ? event.input.command.trim() : '';
-  if (!command || !isDiagnosticCommand(command)) return undefined;
+  if (!command) return undefined;
+  if (!isDiagnosticCommand(command)) {
+    // P0-1 (RFC docs/rfc-jev-integration.md §3): the regex missed — widen the
+    // funnel through jev before giving up. The regex fast path stays
+    // authoritative; any jev failure keeps the "not diagnostic" verdict.
+    const gate = opts?.jev;
+    if (!gate) return undefined;
+    const result = await gate.ask(diagnosticGateRequest(command), {
+      questionId: 'epr-diagnostic-gate',
+      timeoutMs: 1000, // tool-result path; only regex-missed commands reach here
+      sessionId: ctx.sessionManager?.getSessionId?.(),
+      extra: { site: 'epr-gate', commandSha256: sha256Hex(command) },
+      enrich: ({ answers }) => {
+        if (!answers) return {};
+        const verdict = evaluateDiagnosticGate(answers, gate.getMinConfidence());
+        return { verdict: verdict.hit ? 'hit' : verdict.reason, choice: verdict.choice, noul: verdict.noul, confidence: verdict.confidence };
+      },
+    });
+    if (!result.ok) return undefined;
+    if (!evaluateDiagnosticGate(result.answers, gate.getMinConfidence()).hit) return undefined;
+  }
 
   // 2. Project trust boundary check
   const isTrusted =

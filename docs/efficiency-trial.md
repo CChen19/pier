@@ -1,4 +1,4 @@
-# 能效机制试用指南 —— OCC / ObservationPack / EPR (D100–D103)
+# 能效机制试用指南 —— OCC / ObservationPack / EPR + jev 决策层
 
 > **面向对象**：第一次给 pier 开启能效机制的使用者。
 > **本文只讲四件事**：怎么开、看什么、怎么判断划不划算、怎么反馈/关掉。
@@ -13,9 +13,9 @@
 |---|---|---|---|
 | **ObservationPack (OBS)** | 大工具输出（默认 >10KB）发满 `fullSends` 轮后，在**投影层**替换为占位符 + `obs_recall` 分页取回（会话 JSONL 不变） | 不再每轮重放巨型输出 | 长测试/构建日志反复出现时 |
 | **EPR (Evidence-Preserving Reducer)** | `bash` 诊断命令（test/build/lint 类）的长日志在进程内用轻量模型提炼成"收据"，**原文强制落盘可回读** | 一轮省掉整段日志重放 | 经常跑 `npm test`/`pytest`/`cargo test` 且日志很长 |
-| **OCC (Online Context Compact)** | `todo_write` 每次完成一个边界后，按 KV-Cache 增量成本决定是否触发 pi 原生压缩并续跑 | 避免"缓存反复整段重写"的净亏，保留未完成任务记忆 | 多轮次、长任务、todo 驱动的工作流 |
+| **jev 决策层** | 可选的 TypeSafe "System One" 分类调用,给下面三机制补判断:EPR 诊断命令门(正则漏判时)、结算通知按相关性排序、OBS 摘录选中段 | 清单外工具链不再漏提炼;关键失败不被折叠;少一次 recall | 愿意配一个 Typesafe API key 时 |
 
-三者互相独立，可单独开；互斥规则（EPR 收据不再打包、`obs_recall` 输出不提炼等）已内置。
+四者互相独立，可单独开；互斥规则（EPR 收据不再打包、`obs_recall` 输出不提炼等）已内置。
 
 ---
 
@@ -45,7 +45,9 @@ PI_HERDR_COMPACT_ENABLE=1 PI_HERDR_COMPACT_LOG=1 PI_HERDR_CACHE_RATIO=auto pi
 | `PI_HERDR_REDUCER_MODEL` | `provider/model` | 继承当前模型 | 专用轻量提炼模型 |
 | `PI_HERDR_COMPACT_ENABLE` | `0`/`1` | `0` | OCC 压缩总开关（会覆盖 pi 的 `compaction.enabled=false`） |
 | `PI_HERDR_COMPACT_LOG` | `0`/`1` | `0` | 写 `compact.jsonl` |
-| `PI_HERDR_CACHE_RATIO` | 数字 / `auto` | `auto` | KV 缓存写/读成本比。`auto` 依次：模型 `cost.cacheWrite/cacheRead` → 隐式缓存 `input/cacheRead` → provider 族回退（gemini≈4、grok/deepseek≈10）→ **token 账 2.0**（压缩请求要把当前上下文再读一遍）。`auto` 永不返回 null；显式数字仍优先 |
+| `PIER_JEV_ENABLE` | `0`/`1` | `0` | jev 决策层总开关(还需 key,见 §8) |
+| `PIER_JEV_LOG` | `0`/`1` | `0` | 写 `jev.jsonl`(不含任何请求/响应明文) |
+| `PIER_JEV_API_KEY` | 字符串 | – | API key;优先级 `PIER_JEV_API_KEY` > 配置文件 `jev.apiKey` > `TYPESAFE_API_KEY` |
 
 > 环境变量优先级最高，便于临时试用与 A/B。想彻底关掉就删掉变量或置 `0`。
 
@@ -82,6 +84,14 @@ PI_HERDR_COMPACT_ENABLE=1 PI_HERDR_COMPACT_LOG=1 PI_HERDR_CACHE_RATIO=auto pi
     "maxOutputTokens": 2048,
     "timeoutMs": 5000,
     "localOnly": false
+  },
+  "jev": {
+    "enabled": true,
+    "logEnabled": true,
+    "apiKey": "sk-...(console.typesafe.ai/settings/keys 申请)",
+    "model": "jev-1.13.0",
+    "timeoutMs": 2000,
+    "minConfidence": 0.6
   }
 }
 ```
@@ -176,3 +186,31 @@ PI_HERDR_COMPACT_ENABLE=1 PI_HERDR_COMPACT_LOG=1 PI_HERDR_CACHE_RATIO=auto pi
 - `keepRecentTokens` 若在效率配置中显式给出，则以效率配置为准（不继承 pi）。
 - 纯核的变异测试证据：`compact-economics-core.ts` 为全量测试集 77.46%；其余 3 个核心为“单元 + 集成 spec 子集”下的**下界**（`observation-core` 66.82% / `efficiency-config-core` 59.80% / `reducer-core` 52.52%，后者经一轮补测从 48.52% 提升）。完整清单见 RFC §9 与 ADR `Known residuals`。
 - EPR 的命令识别（`DIAGNOSTIC_COMMAND`）两侧边界都接受 shell 分隔符：`(npm test)`、`npm test&&echo ok`、`pytest;` 可识别；`makefile`、`coqtop`、`npm run test` 不会误判。
+
+---
+
+## 8. jev 决策层(P0-1/2/3,2026-09-18)
+
+设计全文见 `docs/rfc-jev-integration.md`。与上面三机制同住一个配置平面,
+但性质不同:它**不做任何 I/O 语义**,只给三处手写判断补一个"第二意见",
+且**逐点 fail-open**——关掉、没 key、超时、429、低置信度,行为都与从前逐字节一致。
+
+| 接入点 | 触发条件 | jev 问什么 | 回退 |
+|---|---|---|---|
+| EPR 诊断命令门 | 正则清单**未命中**的 bash 命令(命中即短路不调 API) | 命令类型 Choice + 是否诊断输出 Noul,1s 预算 | 维持"非诊断命令"(不提炼) |
+| 结算通知排序 | 折叠批量 **>3 条**时(≤3 不调) | 每条一个相关性 Score + 失败 Noul,一次调用;阈值 0.7(CJK 折扣) | 到达序前 3(现行为) |
+| OBS 摘录选窗 | 大输出含**失败信号行**且 jev 可用(否则不调) | 头/尾/首信号窗/最密窗 哪个最有信息量 Choice | 头尾对半劈半(现行为) |
+
+**开始试用**:把上面配置示例的 `jev` 段写进 `~/.pi/agent/herdr-pi/config.json`
+(用户级)或 `<repo>/.pi-herdr/config.json`(受信工作区,整体覆盖不深合并),
+填上 `apiKey`,重开 pi 会话即可;`PIER_JEV_ENABLE=1` 可临时开。
+
+**看什么**:`/pier-config show efficiency` 会列出 `jev.*` 全部键的生效值与来源;
+日志在 `<sessionDir>/herdr-pi/<sessionId>/efficiency-logs/jev.jsonl`
+(`questionId`/`latencyMs`/`usage`/`verdict`/`fallback` 原因;`stateHash`/`stateBytes`
+代替明文——排查时对不上内容属预期)。
+
+**隐私边界**:发给 TypeSafe 的 state 只有——命令行字符串(P0-1)、
+结算摘要 + master 当前 in_progress todo 文本(P0-2,D1 决策:直接发送,不设开关)、
+候选摘录窗文本(P0-3)。官方声明不用客户数据训练(企业版 ZDR,见 Legal)。
+日志原文与凭据形字符串不会出现在任何 jev 请求里(EPR 的 LIKELY_SECRET 门在其自身路径上)。

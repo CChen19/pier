@@ -96,7 +96,8 @@ test('A6 契约：pier 发出的请求体必须落在 herdr schema 内（无未�
     await client.reportMetadata({ session: 'label', items: [{ content: 'x', status: 'in_progress' }] });
     await client.listAgents();
     await client.waitAgent('w1:p2', ['idle'], 50);
-    await client.splitPane({ direction: 'right', cwd: '/tmp', focus: false, targetPaneId: 'w1:p1' });
+    await client.splitPane({ direction: 'right', cwd: '/tmp', focus: false, targetPaneId: 'w1:p1', ratio: 0.3 });
+    await client.paneLayout({ paneId: 'w1:p1' });
     await client.createTab({ workspaceId: 'w1', label: 'task' });
     await client.readPane('w1:p2', { stripAnsi: true });
     await client.sendPaneText('w1:p2', 'echo hi');

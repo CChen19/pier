@@ -7,7 +7,7 @@ import * as net from 'node:net';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { parseEventEnv, runReflow } from '../src/reflow.ts';
+import { parseEventEnv, runReflow, askFlagsFromListResult } from '../src/reflow.ts';
 import { readJsonSafe, writeJsonAtomic } from '../src/state-file.ts';
 
 const SOCKET = process.env.HERDR_SOCKET_PATH;
@@ -84,6 +84,17 @@ async function main() {
         const map = {};
         for (const p of panes) if (p?.pane_id && p?.agent_status) map[p.pane_id] = p.agent_status;
         return map;
+      } catch {
+        return {};
+      }
+    },
+    listAskFlags: async () => {
+      try {
+        const fromAgents = askFlagsFromListResult(await request('agent.list', {}));
+        if (Object.keys(fromAgents).length > 0) return fromAgents;
+      } catch { /* agent.list optional */ }
+      try {
+        return askFlagsFromListResult(await request('pane.list', {}));
       } catch {
         return {};
       }

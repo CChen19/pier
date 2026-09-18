@@ -221,6 +221,42 @@ test('HerdrClient: splitPane / spawnSubPane extract nested pane_id via findIdIn'
   }
 }));
 
+test('HerdrClient: splitPane 转发 ratio；pane.layout 解析真矩形', withCleanup(async (cleanup) => {
+  const dir = cleanup.tempDir('herdr-ratio');
+  const server = new FakeHerdrServer(join(dir.path, `s-${randomUUID().slice(0, 8)}.sock`));
+  server.handler = (method) => {
+    if (method === 'pane.split') return { pane: { pane_id: 'p-r' } };
+    if (method === 'pane.layout') {
+      return {
+        type: 'pane_layout',
+        layout: {
+          tab_id: 't1',
+          zoomed: false,
+          focused_pane_id: 'p1',
+          panes: [
+            { pane_id: 'p1', focused: true, rect: { x: 0, y: 0, width: 80, height: 12 } },
+            { pane_id: 'p2', focused: false, rect: { x: 0, y: 12, width: 80, height: 28 } },
+          ],
+        },
+      };
+    }
+    return {};
+  };
+  await server.listen();
+  try {
+    const c = clientFor(server);
+    assert.equal(await c.splitPane({ direction: 'down', focus: false, ratio: 0.3, targetPaneId: 'p1' }), 'p-r');
+    assert.equal(server.received[0]?.params.ratio, 0.3);
+    assert.equal(server.received[0]?.params.focus, false);
+    const live = await c.paneLayout({ paneId: 'p1' });
+    assert.equal(live?.focusedPaneId, 'p1');
+    assert.equal(live?.panes[1]?.h, 28);
+    assert.equal(live?.panes[1]?.paneId, 'p2');
+  } finally {
+    await server.close();
+  }
+}));
+
 test('HerdrClient: splitPane throws when response has no pane_id', withCleanup(async (cleanup) => {
   const dir = cleanup.tempDir('herdr');
   const server = new FakeHerdrServer(join(dir.path, `s-${randomUUID().slice(0, 8)}.sock`));

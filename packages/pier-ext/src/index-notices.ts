@@ -5,7 +5,7 @@
  * tool calls — a long master run queues every settlement and floods at the
  * end. Buffer while busy; flush at turn_end (steer) / agent_settled (followUp).
  */
-import { collapseNotices } from './notice-buffer.ts';
+import { NOTICE_MAX_SHOWN, collapseNotices } from './notice-buffer.ts';
 
 export type NoticeSendMode = 'steer' | 'followUp';
 
@@ -19,6 +19,12 @@ export function createNoticeBuffer(opts: {
   /** True while the agent is in a turn, or after an abort that must not wake a new run. */
   isBusy: () => boolean;
   send: (content: string, mode: NoticeSendMode) => Promise<void>;
+  /**
+   * P0-2 (RFC docs/rfc-jev-integration.md §3): relevance reorder of a collapsed
+   * batch before truncation. Only consulted above the show cap; returning null
+   * (or omitting the hook) keeps arrival order. Implementations must not throw.
+   */
+  rank?: (contents: readonly string[]) => Promise<readonly string[] | null>;
 }): NoticeBuffer {
   const pending: string[] = [];
   const pendingPaneIds = new Set<string>();
@@ -35,8 +41,13 @@ export function createNoticeBuffer(opts: {
     noticePending: () => pendingPaneIds,
     async flush(mode) {
       if (pending.length === 0) return;
-      const collapsed = collapseNotices(pending.splice(0));
+      const batch = pending.splice(0);
+      let ordered: readonly string[] = batch;
+      if (opts.rank && batch.length > NOTICE_MAX_SHOWN) {
+        ordered = (await opts.rank(batch)) ?? batch;
+      }
       pendingPaneIds.clear();
+      const collapsed = collapseNotices(ordered);
       if (collapsed) await opts.send(collapsed, mode);
     },
   };

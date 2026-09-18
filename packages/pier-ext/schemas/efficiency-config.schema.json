@@ -57,6 +57,20 @@
         "localOnly": { "type": "boolean", "default": false, "description": "仅本地归档长日志并跳过模型提炼" }
       },
       "additionalProperties": false
+    },
+    "jev": {
+      "type": "object",
+      "description": "jev 决策层（RFC docs/rfc-jev-integration.md）：可选的 System One 分类调用，逐点 fail-open",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false, "description": "是否启用 jev 决策层（还需配置 apiKey 才会真正发起调用）" },
+        "logEnabled": { "type": "boolean", "default": false, "description": "是否写 efficiency-logs/jev.jsonl（不记录请求/响应 body）" },
+        "baseUrl": { "type": "string", "description": "API 根地址覆盖（中转/网关）；缺省 https://api.typesafe.ai" },
+        "model": { "type": "string", "default": "jev-1.13.0", "description": "钉住的版本化模型 id；别名会静默漂移导致校准阈值失真" },
+        "timeoutMs": { "type": "integer", "default": 2000, "minimum": 500, "description": "单次调用总预算（AbortController 硬杀，SDK 无总预算模式）" },
+        "minConfidence": { "type": "number", "default": 0.6, "minimum": 0, "maximum": 1, "description": "Choice/Score 答案被采纳的最低置信度，低于则按未回答处理" },
+        "apiKey": { "type": "string", "description": "API key。解析优先级：PIER_JEV_API_KEY 环境变量 > 此处 > TYPESAFE_API_KEY 环境变量" }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

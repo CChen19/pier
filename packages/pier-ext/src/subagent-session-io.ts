@@ -166,14 +166,25 @@ export function createSessionIo(h: SessionIoHost): SessionIo {
 
   async function probeAlive(paneId: string, cwd: string): Promise<AliveProbe> {
     const probe: AliveProbe = { paneExists: false, agentStatus: null, lastActivityMs: null };
+    let listed = false;
     try {
-      const agents = await h.client.listAgents();
-      const a = agents.find((x) => x.paneId === paneId);
-      probe.paneExists = a != null;
-      probe.agentStatus = a?.status ?? null;
-      if (a?.foregroundCwd) probe.foregroundCwd = a.foregroundCwd;
+      const pane = (await h.client.listPanes()).find((p) => p.paneId === paneId);
+      listed = true;
+      probe.paneExists = pane != null;
+      probe.agentStatus = pane?.agentStatus ?? null;
+      if (pane?.foregroundCwd) probe.foregroundCwd = pane.foregroundCwd;
     } catch {
-      /* Fall back to session activity when agent.list is unavailable. */
+      /* pane.list unavailable — agent.list is a degraded fallback, not a death signal */
+    }
+    try {
+      const a = (await h.client.listAgents()).find((x) => x.paneId === paneId);
+      if (a) {
+        if (!listed) probe.paneExists = true;
+        probe.agentStatus = a.status ?? probe.agentStatus;
+        if (a.foregroundCwd) probe.foregroundCwd = a.foregroundCwd;
+      }
+    } catch {
+      /* agent.list is status-only; absence is not death */
     }
     for (const file of await resolveSessionFileCandidates(paneId, cwd)) {
       const stamp = stampOf(file);

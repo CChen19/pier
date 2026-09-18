@@ -4,7 +4,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createWorkbenchApp } from '../src/app.ts';
-import reflowPlugin, { parseEventEnv, runReflow, type ReflowDeps } from '../src/reflow.ts';
+import reflowPlugin, { askFlagsFromListResult, parseEventEnv, runReflow, type ReflowDeps } from '../src/reflow.ts';
+import { layoutFingerprint, unwrapLayout } from '../src/heat-layout.ts';
 
 const LAYOUT = {
   layout: {
@@ -222,7 +223,8 @@ test('runReflow：收紧闸同样作用于 status/count 路径', async () => {
   // agent_status_changed 路径
   const st = makeDeps({ piTabIds: async () => new Set(['tab-other']) });
   st.deps.ev = { ...st.deps.ev, hook: 'pane.agent_status_changed', type: 'pane.agent_status_changed', paneId: 'pane-c', cause: null };
-  let state = { tabs: { 'tab-1': { enabled: true, lastFocusPaneId: 'pane-a', lastApplyAt: 1 } }, panes: {}, debounce: null };
+  // 粘性门：不预置 tab-1 记账（有记账 = 曾是 pi tab，会放行）
+  let state = { tabs: { 'tab-old': { enabled: true, lastFocusPaneId: 'pane-a', lastApplyAt: 1 } }, panes: {}, debounce: null };
   st.deps.loadState = () => state;
   st.deps.saveState = (s) => { state = s; };
   st.deps.listAgentStatuses = async () => ({ 'pane-c': 'blocked' });
@@ -237,4 +239,94 @@ test('runReflow：收紧闸同样作用于 status/count 路径', async () => {
   cr.deps.saveState = (s) => { st2 = s; };
   await runReflow(cr.deps);
   assert.ok(!cr.calls.some(([m]) => m === 'layout.set_split_ratio'), '非 pi tab 的数量变化不触发重排');
+});
+
+test('runReflow：粘性 pi tab——全部 pi 退回 shell 后记账 tab 仍 reflow（用户退出命令行仍可焦点放大）', async () => {
+  let liveSet = new Set(['tab-1']); // pi 还在跑：live 扫描可见
+  let state = { tabs: {}, panes: { 'pane-b': { createdAt: Date.now() - 60_000 } }, debounce: null };
+  const holder = makeDeps({
+    piTabIds: async () => liveSet,
+    loadState: () => state,
+    saveState: (s) => { state = s; },
+  });
+  await runReflow(holder.deps);
+  assert.ok(holder.calls.some(([m]) => m === 'layout.set_split_ratio'), 'live pi tab 照常应用');
+  assert.ok(state.tabs['tab-1'], '成功 apply 写入记账（粘性来源）');
+
+  // 两个 pane 都退出 pi：live 快照为空，但 tab 已记账 → 粘性放行
+  liveSet = new Set();
+  const after = makeDeps({
+    piTabIds: async () => liveSet,
+    loadState: () => state,
+    saveState: (s) => { state = s; },
+  });
+  after.deps.ev = { ...after.deps.ev, paneId: 'pane-c' };
+  await runReflow(after.deps);
+  assert.ok(after.calls.some(([m]) => m === 'layout.set_split_ratio'), '全 shell 的记账 tab 仍焦点放大');
+  assert.equal(state.tabs['tab-1'].lastFocusPaneId, 'pane-c', '焦点切换生效');
+
+  // 记账 + enabled:false → 逃逸闸仍关（applyTiered 在写状态前跳过）
+  state.tabs['tab-1'] = { ...state.tabs['tab-1'], enabled: false };
+  const opted = makeDeps({
+    piTabIds: async () => liveSet,
+    loadState: () => state,
+    saveState: (s) => { state = s; },
+  });
+  await runReflow(opted.deps);
+  assert.ok(!opted.calls.some(([m]) => m === 'layout.set_split_ratio'), 'enabled:false 不再自动重排');
+});
+
+test('askFlagsFromListResult：非空 pi-ask 为 true', () => {
+  assert.deepEqual(askFlagsFromListResult({
+    agents: [
+      { pane_id: 'p1', tokens: { 'pi-ask': 'q?' } },
+      { pane_id: 'p2', tokens: { 'pi-ask': '' } },
+      { pane_id: 'p3' },
+    ],
+  }), { p1: true });
+});
+
+test('runReflow：status 在同 pane 集合上手拖 hold；created 重建基线', async () => {
+  const { root } = unwrapLayout(LAYOUT);
+  assert.ok(root);
+  const prior = layoutFingerprint(root);
+  const dragged = {
+    layout: {
+      ...LAYOUT.layout,
+      root: { ...LAYOUT.layout.root, ratio: 0.2 },
+    },
+  };
+  const st = makeDeps();
+  st.deps.request = async (method, params = {}) => {
+    st.calls.push([method, params]);
+    if (method === 'layout.export') return dragged;
+    return {};
+  };
+  st.deps.ev = { ...st.deps.ev, hook: 'pane.agent_status_changed', type: 'pane.agent_status_changed', paneId: 'pane-c', cause: null };
+  let state: Record<string, unknown> = {
+    tabs: { 'tab-1': { enabled: true, lastFocusPaneId: 'pane-a', lastApplyAt: 1, lastFingerprint: prior } },
+    panes: {},
+    debounce: null,
+  };
+  st.deps.loadState = () => state;
+  st.deps.saveState = (s) => { state = s; };
+  await runReflow(st.deps);
+  assert.ok(!st.calls.some(([m]) => m === 'layout.set_split_ratio'), '手拖不被 status 拉回');
+
+  const cr = makeDeps();
+  cr.deps.request = async (method, params = {}) => {
+    cr.calls.push([method, params]);
+    if (method === 'layout.export') return dragged;
+    return {};
+  };
+  cr.deps.ev = { ...cr.deps.ev, hook: 'pane.created', type: 'pane.created', paneId: 'pane-new', tabId: 'tab-1' };
+  let st2: Record<string, unknown> = {
+    tabs: { 'tab-1': { enabled: true, lastFocusPaneId: 'pane-a', lastFingerprint: prior } },
+    panes: {},
+    debounce: null,
+  };
+  cr.deps.loadState = () => st2;
+  cr.deps.saveState = (s) => { st2 = s; };
+  await runReflow(cr.deps);
+  assert.ok(cr.calls.some(([m]) => m === 'layout.set_split_ratio'), 'created 即使比例偏离也重建基线');
 });

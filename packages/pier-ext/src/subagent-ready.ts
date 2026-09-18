@@ -13,11 +13,11 @@
 export const READY_BASE_INTERVAL_MS = 500;
 export const READY_MAX_INTERVAL_MS = 4000;
 
-/** Wait this long between two samples of the child pane's liveness (agent.list + pane read). */
+/** Wait this long between two samples of the child pane's liveness (pane.list + pane read). */
 export const READY_LIVENESS_SAMPLE_MS = 2500;
 
 export interface ReadyProbe {
-  /** The pane still exists and its agent is not gone. */
+  /** The pane still exists in pane.list (unknown shells count as alive). */
   readonly paneAlive: boolean;
   /** Tail of the pane's screen, used only to explain a failure. */
   readonly tail?: string | null;

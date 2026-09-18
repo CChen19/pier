@@ -99,3 +99,41 @@ test('collectFinalText: 首次未读到收尾文本，追加后重试必须读�
   }) + '\n', { flag: 'a' });
   assert.equal(await session.collectFinalText('wC:p4', sessionsDir, ts, 1), 'late result');
 });
+
+test('probeAlive: pane.list unknown shell exists even when agent.list omits it', async () => {
+  const sessionsDir = mkdtempSync(join(tmpdir(), 'pier-session-io-'));
+  const session = createSessionIo({
+    client: {
+      getAgentSessionPath: async () => null,
+      listPanes: async () => [{
+        paneId: 'wH:p3',
+        tabId: 'wH:t1',
+        workspaceId: 'wH',
+        agentStatus: 'unknown',
+        foregroundCwd: '/tmp/work',
+      }],
+      listAgents: async () => [],
+    } as unknown as HerdrClientLike,
+    getSessionId: () => '',
+    sessionsDir: () => sessionsDir,
+  });
+  const probe = await session.probeAlive('wH:p3', sessionsDir);
+  assert.equal(probe.paneExists, true);
+  assert.equal(probe.agentStatus, 'unknown');
+  assert.equal(probe.foregroundCwd, '/tmp/work');
+});
+
+test('probeAlive: pane.list miss is death; agent.list cannot resurrect it', async () => {
+  const sessionsDir = mkdtempSync(join(tmpdir(), 'pier-session-io-'));
+  const session = createSessionIo({
+    client: {
+      getAgentSessionPath: async () => null,
+      listPanes: async () => [],
+      listAgents: async () => [{ paneId: 'wH:p3', status: 'working' }],
+    } as unknown as HerdrClientLike,
+    getSessionId: () => '',
+    sessionsDir: () => sessionsDir,
+  });
+  const probe = await session.probeAlive('wH:p3', sessionsDir);
+  assert.equal(probe.paneExists, false);
+});

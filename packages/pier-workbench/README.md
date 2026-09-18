@@ -7,7 +7,7 @@
 - `herdr-plugin.toml`：插件清单（blocked 通知 + workspace 引导 + 会话恢复 + 热力重排钩子）。
 - `scripts/notify-agent-state.mjs`：`pane.agent_status_changed` → blocked 通知。
 - `scripts/bootstrap.mjs` / `restore-layout.mjs`：主 tab 引导与恢复。
-- `scripts/heat-reflow.mjs` + `src/heat-layout.ts`：焦点热力布局（`pane.focused` / `agent_status_changed` / `pane.created` / `pane.closed` → 原地 ratio 重排）。
+- `scripts/heat-reflow.mjs` + `src/heat-layout.ts`：焦点热力布局（`pane.focused` / `agent_status_changed` / `pane.created` / `pane.closed` → 原地 ratio 重排；pi-tab 判定粘性化：成功 reflow 过的 tab 在全部 pi 退回 shell 后仍保留焦点放大，`enabled:false` 可按 tab 关闭）。
 - `scripts/dashboard.mjs` + `src/dashboard-model.ts`：运维观察面板（herdr 0.9.0 原生 plugin pane，通过 `session.snapshot` 实时展示 workspace / tab / agent 状态）。
 - `scripts/agent-view.mjs` + `src/agent-view.ts`：侧边栏 agent 视图注册（herdr 0.9.0 `agent.view.set`，不过滤 harness——任何 agent 都显示——只把 attention 高的排前面）。
 - `scripts/boot-config.example.json`：本机引导配置模板（真实的 `boot-config.json` 不入库，含个人路径）。

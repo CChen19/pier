@@ -226,7 +226,7 @@ export function createPoller(h: PollerHost): Poller {
         }
         let alive = false;
         try {
-          alive = (await h.client.listAgents()).some((a) => a.paneId === paneId);
+          alive = (await h.client.listPanes()).some((p) => p.paneId === paneId);
         } catch {
           alive = true;
         }

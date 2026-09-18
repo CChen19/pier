@@ -24,7 +24,8 @@ import {
   type TabPlacementPlan,
   type WorktreeZone,
 } from './subagent-core.ts';
-import { parseShapeTree, pickGridSplit } from './core/grid-shape.ts';
+import { parseShapeTree, pickGridSplit, type PaneCell } from './core/grid-shape.ts';
+import { fromShapeTree, planSpawnSplitRatio, type LayoutNode } from './core/heat-plan.ts';
 import type { GitIo } from './subagent-git-io.ts';
 
 export interface SpawnEnv {
@@ -44,6 +45,8 @@ export interface SpawnerHost {
   env: SpawnEnv | null;
   runtime: SpawnRuntime;
   git: GitIo;
+  /** Test override. Production reads `runtimePolicy.readinessTimeoutMs`. */
+  readinessTimeoutMs?: number;
 }
 
 /** A14: readiness outcome — failures explain themselves instead of collapsing into `false`. */
@@ -67,7 +70,7 @@ export interface Spawner {
 
 export function createSpawner(h: SpawnerHost): Spawner {
   const tabMutex = new Semaphore(1);
-  const readyTimeoutMs = runtimePolicy.readinessTimeoutMs;
+  const readyTimeoutMs = h.readinessTimeoutMs ?? runtimePolicy.readinessTimeoutMs;
 
   async function liveTabs(): Promise<Array<{ tabName: string; tabId: string }>> {
     try {
@@ -91,8 +94,9 @@ export function createSpawner(h: SpawnerHost): Spawner {
   }
 
   /**
-   * A14: wait for the child's pipe with backoff, and give up early when the pane itself is gone
-   * (a crashed child never opens a pipe). Failures carry the pane tail so the reason is visible.
+   * A14: wait for the child's pipe with backoff, and give up early when the pane
+   * itself is gone from pane.list. Screen tail is sampled while the pane exists
+   * so a crash that leaves a shell still explains itself on timeout.
    */
   async function waitSubReady(cwd: string, paneId: string): Promise<ReadyOutcome> {
     const names = pipeNameCandidates(cwd, paneId);
@@ -168,27 +172,26 @@ export function createSpawner(h: SpawnerHost): Spawner {
     return false;
   }
 
-  /** Pane liveness + last visible output; all failures degrade to "unknown" rather than "dead". */
+  /** Pane liveness + last visible output; socket failures degrade to "unknown" rather than "dead". */
   async function probeChildPane(paneId: string): Promise<{ alive: boolean | null; status: string | null; tail: string | null }> {
     let alive: boolean | null = null;
     let status: string | null = null;
     try {
-      const agents = await h.client.listAgents();
-      const agent = agents.find((a) => a.paneId === paneId);
-      alive = agent != null;
-      status = agent?.status ?? null;
+      // pane.list includes unknown shells; agent.list does not (herdr 0.9.1 live probe).
+      // A fresh split is absent from agent.list until pi is identified — that is boot, not death.
+      const panes = await h.client.listPanes();
+      const pane = panes.find((p) => p.paneId === paneId);
+      alive = pane != null;
+      status = pane?.agentStatus ?? null;
     } catch {
       /* keep null: an unreachable socket must not be read as a dead child */
     }
     let tail: string | null = null;
-    if (alive === false) {
-      // Only worth reading when we are about to report a crash: capture what the child printed.
-      try {
-        const read = await h.client.readPane(paneId, { stripAnsi: true });
-        tail = read.text ? read.text.slice(-READY_TAIL_CHARS) : null;
-      } catch {
-        /* the pane may already be recycled */
-      }
+    try {
+      const read = await h.client.readPane(paneId, { stripAnsi: true });
+      if (read.text) tail = read.text.slice(-READY_TAIL_CHARS);
+    } catch {
+      /* recycled pane or socket blip — caller keeps the last cached tail */
     }
     return { alive, status, tail };
   }
@@ -216,20 +219,51 @@ export function createSpawner(h: SpawnerHost): Spawner {
           allPanes.filter((p) => p.tabId === plan.tabId && p.agentStatus === 'unknown').map((p) => p.paneId),
         );
         let pick: { targetPaneId: string; direction: 'right' | 'down' } | null = null;
+        let heatRoot: LayoutNode | null = null;
+        let focusPaneId: string | null = null;
+        let zoomed = false;
         try {
           const snapshot = await h.client.exportLayout({ tabId: plan.tabId });
           const tree = snapshot?.root ? parseShapeTree(snapshot.root) : null;
-          if (tree) pick = pickGridSplit(tree, { exclude });
+          if (tree) {
+            heatRoot = fromShapeTree(tree);
+            focusPaneId = snapshot?.focusedPaneId ?? null;
+            zoomed = snapshot?.zoomed === true;
+            let cells: PaneCell[] | undefined;
+            try {
+              const live = await h.client.paneLayout({ paneId: allPanes.find((p) => p.tabId === plan.tabId)?.paneId });
+              if (live?.panes.length) {
+                cells = live.panes.map((p) => ({ id: p.paneId, x: p.x, y: p.y, w: p.w, h: p.h }));
+              }
+            } catch { /* pane.layout missing → 200×50 model */ }
+            pick = pickGridSplit(tree, { exclude, cells });
+          }
         } catch { /* layout export failure → legacy anchor split */ }
         const anchorPaneId = pick?.targetPaneId
           ?? allPanes.find((p) => p.tabId === plan.tabId && p.agentStatus !== 'unknown')?.paneId
           ?? allPanes.find((p) => p.tabId === plan.tabId)?.paneId;
         if (anchorPaneId) {
+          const direction = pick?.direction ?? 'down';
+          const statuses: Record<string, string> = {};
+          for (const p of allPanes) {
+            if (p.tabId === plan.tabId) statuses[p.paneId] = p.agentStatus;
+          }
+          const ratio = heatRoot && !zoomed
+            ? planSpawnSplitRatio({
+              root: heatRoot,
+              targetPaneId: anchorPaneId,
+              focusPaneId: focusPaneId ?? anchorPaneId,
+              direction,
+              statuses,
+            })
+            : null;
           const paneId = await h.client.splitPane({
-            direction: pick?.direction ?? 'down',
+            direction,
             cwd,
             env: envOver,
             targetPaneId: anchorPaneId,
+            focus: false,
+            ...(ratio != null ? { ratio } : {}),
           });
           await h.client.sendPaneText(paneId, launch);
           return { tabId: plan.tabId, paneId, tabName: plan.tabName };

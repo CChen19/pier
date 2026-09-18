@@ -20,6 +20,7 @@ import {
   type HeatOp,
   type LayoutNode,
 } from '../src/heat-layout.ts';
+import { planSpawnSplitRatio, simulateSplit, SPAWN_PLACEHOLDER_ID } from '../../pier-ext/src/core/heat-plan.ts';
 
 const R2 = Math.sqrt(FOCUS_SHARE); // 0.72^(1/2)
 const RB2 = Math.sqrt(FOCUS_SHARE_BLOCKED); // 0.60^(1/2)
@@ -166,6 +167,49 @@ test('D95 窄条衰减：非焦点 pane ≥ SLIM_THRESHOLD 时 idle/working 权�
   const s2 = paneAreaShares(applied(slimTree(), unslimmed.ops));
   // 窄条模式下同权重的 working pane 占比更低
   assert.ok(s1.a < s2.a, `slim working a=${s1.a} 应小于未衰减 a=${s2.a}`);
+});
+
+test('planSpawnSplitRatio 与 planGridHeat 新节点 op 锁步', () => {
+  const cases: Array<{ name: string; root: LayoutNode; target: string; focus: string }> = [
+    { name: '拆焦点格', root: pane('a'), target: 'a', focus: 'a' },
+    { name: 'off-path idle', root: split('right', pane('f'), pane('s')), target: 's', focus: 'f' },
+    { name: 'off-path blocked', root: split('right', pane('f'), pane('s')), target: 's', focus: 'f' },
+  ];
+  const statusesFor = (name: string): Record<string, string> => name.includes('blocked') ? { s: 'blocked' } : {};
+  for (const c of cases) {
+    const statuses = statusesFor(c.name);
+    const ratio = planSpawnSplitRatio({
+      root: c.root,
+      targetPaneId: c.target,
+      focusPaneId: c.focus,
+      direction: 'down',
+      statuses,
+    });
+    const simulated = simulateSplit(c.root, c.target, SPAWN_PLACEHOLDER_ID, 'down');
+    assert.ok(simulated, c.name);
+    const plan = planGridHeat({
+      root: simulated,
+      focusPaneId: c.focus,
+      paneCount: countPanes(simulated),
+      statuses,
+    });
+    assert.equal(plan.type, 'apply', c.name);
+    const newPath: boolean[] = [];
+    const walk = (n: LayoutNode, path: boolean[]): void => {
+      if (n.type === 'pane') return;
+      const hit = (child: LayoutNode) => child.type === 'pane' && child.pane_id === SPAWN_PLACEHOLDER_ID;
+      if (hit(n.first) || hit(n.second)) {
+        newPath.splice(0, newPath.length, ...path);
+        return;
+      }
+      walk(n.first, [...path, false]);
+      walk(n.second, [...path, true]);
+    };
+    walk(simulated, []);
+    const op = plan.ops.find((o) => o.path.length === newPath.length && o.path.every((b, i) => b === newPath[i]));
+    assert.ok(op, c.name);
+    assert.equal(op!.ratio, ratio, c.name);
+  }
 });
 
 /** 7 pane 树：root=right(focus, rest)；rest=down(A,B)；A=down(a,b)；B=down(c,d)；c=down(e,f)。 */

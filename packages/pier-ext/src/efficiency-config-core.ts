@@ -46,11 +46,32 @@ export interface EvidencePreservingReducerConfig {
   localOnly: boolean;
 }
 
+/**
+ * Jev decision layer (RFC docs/rfc-jev-integration.md). Optional System One
+ * classification calls that upgrade hand-written heuristics; every call site
+ * fails open to the existing heuristic on any error, timeout, or low confidence.
+ */
+export interface JevConfig {
+  enabled: boolean;
+  logEnabled: boolean;
+  /** API root override (relay/gateway); default https://api.typesafe.ai. */
+  baseUrl?: string;
+  /** Pinned versioned model id — aliases (jev-latest) move silently and would skew tuned thresholds. */
+  model: string;
+  /** Total per-call budget in ms (AbortController hard kill; the SDK has no total-budget mode). */
+  timeoutMs: number;
+  /** Minimum Choice/Score confidence to accept an answer; below = treat the question as unanswered. */
+  minConfidence: number;
+  /** Resolution: PIER_JEV_API_KEY env > this value > TYPESAFE_API_KEY env (SDK convention). */
+  apiKey?: string;
+}
+
 export interface EfficiencyConfig {
   version: 1;
   onlineContextCompact: OnlineContextCompactConfig;
   observationPack: ObservationPackConfig;
   evidencePreservingReducer: EvidencePreservingReducerConfig;
+  jev: JevConfig;
 }
 
 export const DEFAULT_EFFICIENCY_CONFIG: EfficiencyConfig = Object.freeze({
@@ -80,6 +101,13 @@ export const DEFAULT_EFFICIENCY_CONFIG: EfficiencyConfig = Object.freeze({
     timeoutMs: 5000,
     localOnly: false,
   }),
+  jev: Object.freeze({
+    enabled: false,
+    logEnabled: false,
+    model: 'jev-1.13.0',
+    timeoutMs: 2000,
+    minConfidence: 0.6,
+  }),
 });
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -91,6 +119,7 @@ const TOP_LEVEL_KEYS = new Set([
   'onlineContextCompact',
   'observationPack',
   'evidencePreservingReducer',
+  'jev',
 ]);
 
 const OCC_KEYS = new Set([
@@ -122,6 +151,16 @@ const EPR_KEYS = new Set([
   'localOnly',
 ]);
 
+const JEV_KEYS: Record<string, true> = {
+  enabled: true,
+  logEnabled: true,
+  baseUrl: true,
+  model: true,
+  timeoutMs: true,
+  minConfidence: true,
+  apiKey: true,
+};
+
 export interface ValidateConfigResult {
   ok: boolean;
   config: EfficiencyConfig;
@@ -137,6 +176,7 @@ export function validateEfficiencyConfig(raw: unknown): ValidateConfigResult {
         onlineContextCompact: { ...DEFAULT_EFFICIENCY_CONFIG.onlineContextCompact, enabled: false },
         observationPack: { ...DEFAULT_EFFICIENCY_CONFIG.observationPack, enabled: false },
         evidencePreservingReducer: { ...DEFAULT_EFFICIENCY_CONFIG.evidencePreservingReducer, enabled: false },
+        jev: { ...DEFAULT_EFFICIENCY_CONFIG.jev, enabled: false },
       },
       issues: ['efficiency config 必须是 JSON 对象'],
     };
@@ -146,6 +186,7 @@ export function validateEfficiencyConfig(raw: unknown): ValidateConfigResult {
   const occIssues: string[] = [];
   const obsIssues: string[] = [];
   const eprIssues: string[] = [];
+  const jevIssues: string[] = [];
 
   for (const k of Object.keys(raw)) {
     if (!TOP_LEVEL_KEYS.has(k)) {
@@ -319,11 +360,72 @@ export function validateEfficiencyConfig(raw: unknown): ValidateConfigResult {
     }
   }
 
+  // Section 4: jev decision layer
+  let jev: JevConfig = { ...DEFAULT_EFFICIENCY_CONFIG.jev };
+  if (raw.jev !== undefined) {
+    if (!isPlainObject(raw.jev)) {
+      jevIssues.push('jev 必须是 JSON 对象');
+    } else {
+      const o = raw.jev;
+      for (const k of Object.keys(o)) {
+        if (JEV_KEYS[k] !== true) jevIssues.push(`jev 未知配置项: "${k}"`);
+      }
+      if (o.enabled !== undefined) {
+        if (typeof o.enabled !== 'boolean') jevIssues.push('jev.enabled 必须是 boolean');
+        else jev.enabled = o.enabled;
+      }
+      if (o.logEnabled !== undefined) {
+        if (typeof o.logEnabled !== 'boolean') jevIssues.push('jev.logEnabled 必须是 boolean');
+        else jev.logEnabled = o.logEnabled;
+      }
+      if (o.baseUrl !== undefined) {
+        if (typeof o.baseUrl === 'string' && o.baseUrl.trim()) {
+          jev.baseUrl = o.baseUrl.trim();
+        } else if (o.baseUrl === '' || o.baseUrl === null) {
+          jev.baseUrl = undefined;
+        } else {
+          jevIssues.push('jev.baseUrl 必须是非空字符串');
+        }
+      }
+      if (o.model !== undefined) {
+        if (typeof o.model === 'string' && o.model.trim()) {
+          jev.model = o.model.trim();
+        } else {
+          jevIssues.push('jev.model 必须是非空字符串');
+        }
+      }
+      if (o.timeoutMs !== undefined) {
+        if (typeof o.timeoutMs === 'number' && Number.isInteger(o.timeoutMs) && o.timeoutMs >= 500) {
+          jev.timeoutMs = o.timeoutMs;
+        } else {
+          jevIssues.push('jev.timeoutMs 必须是 >= 500 的整数');
+        }
+      }
+      if (o.minConfidence !== undefined) {
+        if (typeof o.minConfidence === 'number' && Number.isFinite(o.minConfidence) && o.minConfidence >= 0 && o.minConfidence <= 1) {
+          jev.minConfidence = o.minConfidence;
+        } else {
+          jevIssues.push('jev.minConfidence 必须是 0 到 1 之间的数字');
+        }
+      }
+      if (o.apiKey !== undefined) {
+        if (typeof o.apiKey === 'string' && o.apiKey.trim()) {
+          jev.apiKey = o.apiKey.trim();
+        } else if (o.apiKey === '' || o.apiKey === null) {
+          jev.apiKey = undefined;
+        } else {
+          jevIssues.push('jev.apiKey 必须是非空字符串');
+        }
+      }
+    }
+  }
+
   // Fail-open: any section with validation issues has its enabled flag forced to false
   if (topIssues.length > 0) {
     occ.enabled = false;
     obs.enabled = false;
     epr.enabled = false;
+    jev.enabled = false;
   }
   if (occIssues.length > 0) {
     occ.enabled = false;
@@ -334,8 +436,11 @@ export function validateEfficiencyConfig(raw: unknown): ValidateConfigResult {
   if (eprIssues.length > 0) {
     epr.enabled = false;
   }
+  if (jevIssues.length > 0) {
+    jev.enabled = false;
+  }
 
-  const issues = [...topIssues, ...occIssues, ...obsIssues, ...eprIssues];
+  const issues = [...topIssues, ...occIssues, ...obsIssues, ...eprIssues, ...jevIssues];
 
   return {
     ok: issues.length === 0,
@@ -344,6 +449,7 @@ export function validateEfficiencyConfig(raw: unknown): ValidateConfigResult {
       onlineContextCompact: occ,
       observationPack: obs,
       evidencePreservingReducer: epr,
+      jev,
     },
     issues,
   };
@@ -396,6 +502,7 @@ export function resolveEfficiencyConfig(opts: ResolveConfigOptions = {}): Effici
       onlineContextCompact: { ...DEFAULT_EFFICIENCY_CONFIG.onlineContextCompact },
       observationPack: { ...DEFAULT_EFFICIENCY_CONFIG.observationPack },
       evidencePreservingReducer: { ...DEFAULT_EFFICIENCY_CONFIG.evidencePreservingReducer },
+      jev: { ...DEFAULT_EFFICIENCY_CONFIG.jev },
     };
   }
 
@@ -435,6 +542,53 @@ export function resolveEfficiencyConfig(opts: ResolveConfigOptions = {}): Effici
   const redModel = env.PI_HERDR_REDUCER_MODEL;
   if (redModel !== undefined && redModel.trim()) {
     resolved.evidencePreservingReducer.model = redModel.trim();
+  }
+
+  // jev decision layer (new mechanism: canonical PIER_JEV_* only, no legacy spelling exists).
+  // TYPESAFE_API_KEY is a foreign-convention fallback (TypeSafe SDK reads it), so it ranks
+  // below pier's own env and below an explicit config-file key.
+  const jevEnabled = parseEnvBool(env.PIER_JEV_ENABLE);
+  if (jevEnabled !== undefined) resolved.jev.enabled = jevEnabled;
+
+  const jevLog = parseEnvBool(env.PIER_JEV_LOG);
+  if (jevLog !== undefined) resolved.jev.logEnabled = jevLog;
+
+  const jevModel = env.PIER_JEV_MODEL;
+  if (jevModel !== undefined && jevModel.trim()) {
+    resolved.jev.model = jevModel.trim();
+  }
+
+  const jevBase = env.PIER_JEV_BASE_URL;
+  if (jevBase !== undefined && jevBase.trim()) {
+    resolved.jev.baseUrl = jevBase.trim();
+  }
+
+  const jevTimeoutRaw = env.PIER_JEV_TIMEOUT_MS;
+  if (jevTimeoutRaw !== undefined) {
+    const num = Number(jevTimeoutRaw);
+    if (Number.isInteger(num) && num >= 500) {
+      resolved.jev.timeoutMs = num;
+    } else {
+      warn(`无效环境变量 PIER_JEV_TIMEOUT_MS="${jevTimeoutRaw}"（需 >= 500 的整数），忽略`);
+    }
+  }
+
+  const jevMinConfRaw = env.PIER_JEV_MIN_CONFIDENCE;
+  if (jevMinConfRaw !== undefined) {
+    const num = Number(jevMinConfRaw);
+    if (Number.isFinite(num) && num >= 0 && num <= 1) {
+      resolved.jev.minConfidence = num;
+    } else {
+      warn(`无效环境变量 PIER_JEV_MIN_CONFIDENCE="${jevMinConfRaw}"（需 0 到 1），忽略`);
+    }
+  }
+
+  const jevKey = env.PIER_JEV_API_KEY;
+  if (jevKey !== undefined && jevKey.trim()) {
+    resolved.jev.apiKey = jevKey.trim();
+  }
+  if (!resolved.jev.apiKey && env.TYPESAFE_API_KEY && env.TYPESAFE_API_KEY.trim()) {
+    resolved.jev.apiKey = env.TYPESAFE_API_KEY.trim();
   }
 
   return resolved;

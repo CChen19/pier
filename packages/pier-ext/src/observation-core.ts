@@ -9,6 +9,7 @@
  */
 import { createHash } from 'node:crypto';
 import { TOKEN_ACCOUNT_CACHE_RATIO } from './compact-economics-core.ts';
+import { FAILURE_SIGNAL } from './reducer-core.ts';
 
 export const DEFAULT_THRESHOLD_BYTES = 10 * 1024; // 10KB
 export const DEFAULT_FULL_SENDS = 2;
@@ -102,6 +103,22 @@ export interface ObservationPlaceholderInput {
   text: string;
   fullSends?: number;
   excerptBudget?: number;
+  /**
+   * P0-3 (RFC docs/rfc-jev-integration.md §3): a selected middle window that
+   * replaces whichever head/tail half carries fewer failure-signal lines.
+   * Absent (jev off / low confidence / no signal lines) -> byte-identical
+   * legacy head+tail layout.
+   */
+  middle?: { text: string; label: string };
+}
+
+function signalLineCount(text: string): number {
+  if (text.length === 0) return 0;
+  let count = 0;
+  for (const line of text.split('\n')) {
+    if (FAILURE_SIGNAL.test(line)) count++;
+  }
+  return count;
 }
 
 export function formatObservationPlaceholder(input: ObservationPlaceholderInput): string {
@@ -110,8 +127,22 @@ export function formatObservationPlaceholder(input: ObservationPlaceholderInput)
   const headBudget = Math.floor(excerptBudget / 2);
   const tailBudget = excerptBudget - headBudget;
 
-  const head = completeLineExcerpt(input.text, headBudget, false);
-  const tail = completeLineExcerpt(input.text, tailBudget, true);
+  let head = completeLineExcerpt(input.text, headBudget, false);
+  let tail = completeLineExcerpt(input.text, tailBudget, true);
+  let headLabel = `[first complete lines, up to ${headBudget} bytes]`;
+  let tailLabel = `[middle omitted; last complete lines, up to ${tailBudget} bytes]`;
+
+  if (input.middle) {
+    // Fewer signal lines loses its slot; ties replace head because the tail
+    // half usually carries the log's final summary.
+    if (signalLineCount(tail) < signalLineCount(head)) {
+      tail = completeLineExcerpt(input.middle.text, tailBudget, false);
+      tailLabel = `[middle omitted; selected excerpt — ${input.middle.label}, up to ${tailBudget} bytes]`;
+    } else {
+      head = completeLineExcerpt(input.middle.text, headBudget, false);
+      headLabel = `[selected excerpt — ${input.middle.label}, up to ${headBudget} bytes]`;
+    }
+  }
 
   return [
     `[large tool result replaced after its first ${fullSends} provider requests]`,
@@ -121,9 +152,9 @@ export function formatObservationPlaceholder(input: ObservationPlaceholderInput)
     `original_lines: ${input.lines}`,
     `estimated_tokens: ${input.tokens}`,
     `retrieve: call obs_recall with {"id":"${input.id}","offset":0}; continue with returned next_offset`,
-    `[first complete lines, up to ${headBudget} bytes]`,
+    headLabel,
     head,
-    `[middle omitted; last complete lines, up to ${tailBudget} bytes]`,
+    tailLabel,
     tail,
     `[${input.bytes} original bytes omitted; recall via obs_recall]`,
   ].join('\n');

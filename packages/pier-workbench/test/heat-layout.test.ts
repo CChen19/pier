@@ -12,9 +12,11 @@ import {
   PANE_MIN_AGE_MS,
   REFLOW_DEBOUNCE_MS,
   FOCUS_SHARE,
+  layoutFingerprint,
   planGridHeat,
   shouldAcceptFocus,
   shouldFireDebounced,
+  shouldHoldHeat,
   unwrapLayout,
   type LayoutNode,
 } from '../src/heat-layout.ts';
@@ -119,4 +121,14 @@ test('heat-reflow.mjs 不依赖 cordis（user-mode GitHub checkout 无 node_modu
   const src = readFileSync(fileURLToPath(new URL('../scripts/heat-reflow.mjs', import.meta.url)), 'utf8');
   assert.doesNotMatch(src, /from ['"]@deepseek-ai\/cordis['"]|createWorkbenchApp/);
   assert.match(src, /runReflow/);
+});
+
+test('指纹：同 pane 集合 ratio 偏差 → hold；集合增减 → 不 hold', () => {
+  const a = split('right', pane('p1'), pane('p2'), 0.72);
+  const dragged = split('right', pane('p1'), pane('p2'), 0.2);
+  const grown = split('right', pane('p1'), split('down', pane('p2'), pane('p3')), 0.72);
+  const prior = layoutFingerprint(a);
+  assert.equal(shouldHoldHeat({ prior, current: layoutFingerprint(dragged), acceptedFocus: false }).hold, true);
+  assert.equal(shouldHoldHeat({ prior, current: layoutFingerprint(grown), acceptedFocus: false }).reason, 'pane-set-changed');
+  assert.equal(shouldHoldHeat({ prior, current: layoutFingerprint(dragged), acceptedFocus: true }).hold, false);
 });

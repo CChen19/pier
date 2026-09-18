@@ -77,9 +77,11 @@ export function paneCells(root: ShapeNode, width = 200, height = 50): PaneCell[]
  */
 export function pickGridSplit(
   root: ShapeNode,
-  opts: { exclude?: ReadonlySet<string>; width?: number; height?: number } = {},
+  opts: { exclude?: ReadonlySet<string>; width?: number; height?: number; cells?: PaneCell[] } = {},
 ): { targetPaneId: string; direction: 'right' | 'down' } | null {
-  const cells = paneCells(root, opts.width ?? 200, opts.height ?? 50)
+  const cells = (opts.cells && opts.cells.length > 0
+    ? opts.cells
+    : paneCells(root, opts.width ?? 200, opts.height ?? 50))
     .filter((c) => !opts.exclude?.has(c.id));
   if (cells.length === 0) return null;
   let best = cells[0];

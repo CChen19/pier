@@ -56,6 +56,17 @@ test('pickGridSplit：exclude 把 board（无 agent 常驻 shell）摘出候选'
   assert.equal(pick.direction, 'down'); // D97：一律上下拆（横条）
 });
 
+test('pickGridSplit：cells 覆盖假 200×50，选真面积最大格', () => {
+  const tree = S('right', P('narrow'), P('wide'));
+  const pick = pickGridSplit(tree, {
+    cells: [
+      { id: 'narrow', x: 0, y: 0, w: 10, h: 50 },
+      { id: 'wide', x: 10, y: 0, w: 190, h: 50 },
+    ],
+  });
+  assert.deepEqual(pick, { targetPaneId: 'wide', direction: 'down' });
+});
+
 test('pickGridSplit：全被 exclude / 单 pane', () => {
   const tree = S('right', P('a'), P('b'));
   assert.equal(pickGridSplit(tree, { exclude: new Set(['a', 'b']) }), null);

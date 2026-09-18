@@ -52,7 +52,7 @@ function schemaPropertyPaths(file: string): string[] {
 
 test('catalog covers every schema key for the efficiency and role planes (drift guard)', () => {
   const efficiencySchema = schemaPropertyPaths('efficiency-config.schema.json').filter(
-    (k) => k !== 'version' && !/^onlineContextCompact$|^observationPack$|^evidencePreservingReducer$/.test(k),
+    (k) => k !== 'version' && !/^onlineContextCompact$|^observationPack$|^evidencePreservingReducer$|^jev$/.test(k),
   );
   const efficiencyCatalog = new Set(catalogKeysForPlane('efficiency'));
   for (const key of efficiencySchema) {

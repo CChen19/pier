@@ -60,7 +60,17 @@ import { createNoticeBuffer } from './index-notices.ts';
 import { handlePipeRequest } from './index-pipe.ts';
 import { installWriteLocks } from './index-locks.ts';
 import { installDashboardCommand } from './dashboard-command.ts';
-import { registerObservationPack, createCompactionBatchPackHook } from './core/observation.ts';
+import { registerObservationPack, createCompactionBatchPackHook, type PickMiddleExcerpt } from './core/observation.ts';
+import { createJevRuntime } from './jev-client.ts';
+import {
+  NOTICE_RANK_MIN_CONFIDENCE,
+  buildExcerptWindows,
+  composeNoticeRanking,
+  evaluateExcerptPick,
+  excerptPickRequest,
+  noticeRankRequest,
+} from './jev-core.ts';
+import { completeLineExcerpt } from './observation-core.ts';
 import { installConfigCommand } from './config-command.ts';
 import { CompactCoordinator } from './compact-coordinator.ts';
 import { handleReducerToolResult, type ToolResultEventLike } from './reducer-invoker.ts';
@@ -134,6 +144,37 @@ export default async function (pi: ExtensionAPI) {
   const coordinator = new CompactCoordinator();
   let sessionRoot: string | null = null;
 
+  /* ── Jev decision layer (RFC docs/rfc-jev-integration.md): direct HTTP, total-budget abort,
+   * fail-open at every site. Disabled or keyless => behavior is byte-identical to before. ── */
+  const jevRuntime = createJevRuntime(() => effConfig.jev, {
+    getSessionRoot: () => sessionRoot,
+  });
+  const jevMinConfidence = (): number => effConfig.jev.minConfidence;
+  /** P0-3: candidate windows are generated in code; jev only picks (rerank pattern). */
+  const pickMiddleExcerpt: PickMiddleExcerpt = async (text, excerptBudgetBytes) => {
+    if (!jevRuntime.available) return null;
+    const halfBudget = Math.floor(excerptBudgetBytes / 2);
+    const windows = buildExcerptWindows(text, halfBudget);
+    if (windows.length === 0) return null; // no failure-signal lines -> keep halves, no API call
+    const request = excerptPickRequest(
+      windows,
+      completeLineExcerpt(text, halfBudget, false),
+      completeLineExcerpt(text, excerptBudgetBytes - halfBudget, true),
+    );
+    if (!request) return null;
+    const result = await jevRuntime.ask(request, {
+      questionId: 'obs-excerpt-window',
+      extra: { site: 'obs-excerpt', candidates: windows.map((w) => w.id) },
+      enrich: ({ answers }) => {
+        if (!answers || answers.window === undefined || answers.window.type !== 'choice') return {};
+        return { picked: answers.window.choice, confidence: answers.window.confidence };
+      },
+    });
+    if (!result.ok) return null;
+    const picked = evaluateExcerptPick(result.answers, jevMinConfidence());
+    const window = picked === null ? undefined : windows.find((w) => w.id === picked);
+    return window ? { text: window.text, label: window.label } : null;
+  };
   // Transcript polish for pier's own custom entries and reminder messages; display-only and
   // best-effort (older pi builds without the renderer API simply keep the raw rows).
   const rendererTypes = installRenderers(pi);
@@ -284,6 +325,7 @@ export default async function (pi: ExtensionAPI) {
     if (!event || typeof event !== 'object') return;
     return handleReducerToolResult(event as unknown as ToolResultEventLike, ctx, effConfig.evidencePreservingReducer, {
       epoch: coordinator.state.epoch,
+      jev: { ask: jevRuntime.ask, getMinConfidence: jevMinConfidence },
     });
   });
 
@@ -497,6 +539,7 @@ export default async function (pi: ExtensionAPI) {
           getObsConfig: () => effConfig.observationPack,
           getManifest: () => runtimeManifest,
           getSessionId: () => sessionId,
+          pickMiddleExcerpt,
         }),
       });
     }
@@ -605,6 +648,7 @@ export default async function (pi: ExtensionAPI) {
     pi,
     getConfig: () => effConfig,
     getRuntimeManifest: () => runtimeManifest,
+    pickMiddleExcerpt,
     getRemainingHorizon: () => {
       const usage = (latestCtx as { getContextUsage?: () => { contextWindow?: number } })?.getContextUsage?.();
       return coordinator.getRemainingHorizon(3, usage?.contextWindow ?? null);
@@ -687,6 +731,40 @@ export default async function (pi: ExtensionAPI) {
   const notices = createNoticeBuffer({
     isBusy: () => agentActive || lastStopReason === ABORT_STOP_REASON,
     send: sendUserMessageAs,
+    // P0-2: rank collapsed batches by relevance to the master's in-progress work
+    rank: async (contents) => {
+      if (!jevRuntime.available) return null;
+      const inProgressTodos = todos.items
+        .filter((item) => item.status === 'in_progress')
+        .map((item) => item.content);
+      let rankedOrder: number[] | null | undefined;
+      const result = await jevRuntime.ask(
+        noticeRankRequest({ inProgressTodos, notices: [...contents] }),
+        {
+          questionId: 'notice-rank',
+          sessionId,
+          extra: { site: 'notice-rank', noticeCount: contents.length },
+          enrich: ({ answers }) => {
+            if (!answers) return {};
+            rankedOrder = composeNoticeRanking(
+              contents.length,
+              answers,
+              Math.max(effConfig.jev.minConfidence, NOTICE_RANK_MIN_CONFIDENCE),
+            );
+            const values = Array.from({ length: contents.length }, (_, i) => {
+              const rank = answers[`notice_${i}_rank`];
+              const fail = answers[`notice_${i}_fail`];
+              return rank !== undefined && fail !== undefined && rank.type === 'score' && fail.type === 'noul'
+                ? `${rank.score.toFixed(2)}:${rank.confidence.toFixed(2)}:${fail.noul.toFixed(2)}`
+                : '?';
+            });
+            return { order: rankedOrder === null ? 'fallback' : rankedOrder.join(','), values };
+          },
+        },
+      );
+      if (!result.ok) return null;
+      return rankedOrder === undefined || rankedOrder === null ? null : rankedOrder.map((index) => contents[index]!);
+    },
   });
   const deliverNotice = notices.deliverNotice;
   pi.on('turn_end', () => {

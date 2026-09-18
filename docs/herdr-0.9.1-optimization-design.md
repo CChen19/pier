@@ -146,6 +146,11 @@ pier 采用主从插件分离架构：
    - 用户仍可通过 `PIER_FOCUS_POLL_MS` 强制打开轮询（例如旧客户端误报版本时）。
    - 遇到 Herdr < 0.9.1 环境，自动平滑保持 1500ms 快速轮询，确保旧环境体验不倒退。
 
+
+### 5.3 粘性 pi-tab 门（2026-09-18 修正）
+实测缺陷：两个 pane 的 pi 都退出回到 shell 后，herdr 将 pane 的 `agent` 清为 `None`，`pane.list` 快照里该 tab 不再含 `agent === 'pi'` 的 pane —— 场景 B 隔离闸把战争室 tab 误判为外来 tab（与 claude code / codex / 纯 shell 同类），`pane.focused` 全部静默早退，焦点放大消失。
+修正（`packages/pier-workbench/src/reflow.ts` `isPiTab`）：`state.tabs[tabId]` 仅在通过 pi 门的成功 apply 后写入，因此"有记账"本身就等价"曾是 pi tab"。判定改为 **live 快照 ∪ 记账集合** 的粘性语义：全部 pi 退回 shell 的 tab 仍保留焦点放大；从未 apply 过的外来 tab 依旧隔离；按 tab 的 `enabled: false` 逃逸闸不变。旧状态文件无需迁移（记账字段天然存在）。
+
 ---
 
 ## 6. 后续方案规划

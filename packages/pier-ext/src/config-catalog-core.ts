@@ -105,6 +105,13 @@ const EFFICIENCY_KNOBS: readonly ConfigKnob[] = [
   { plane: 'efficiency', key: 'evidencePreservingReducer.maxOutputTokens', kind: 'number', defaultValue: 2048, min: 128, impact: 'Reduction output token budget', docRef: 'docs/efficiency-trial.md' },
   { plane: 'efficiency', key: 'evidencePreservingReducer.timeoutMs', kind: 'number', defaultValue: 5000, min: 500, impact: 'Synchronous reduction budget; timeout falls back to the full log', docRef: 'docs/efficiency-trial.md' },
   { plane: 'efficiency', key: 'evidencePreservingReducer.localOnly', kind: 'boolean', defaultValue: false, impact: 'Archive the raw log but never call a model', docRef: 'docs/efficiency-trial.md' },
+  { plane: 'efficiency', key: 'jev.enabled', kind: 'boolean', defaultValue: false, envVar: 'PIER_JEV_ENABLE', impact: 'Jev decision layer (System One classification) master switch; every call site fails open', docRef: 'docs/rfc-jev-integration.md' },
+  { plane: 'efficiency', key: 'jev.logEnabled', kind: 'boolean', defaultValue: false, envVar: 'PIER_JEV_LOG', impact: 'Write jev.jsonl question outcomes (no request/response bodies)', docRef: 'docs/rfc-jev-integration.md' },
+  { plane: 'efficiency', key: 'jev.baseUrl', kind: 'string', envVar: 'PIER_JEV_BASE_URL', impact: 'API root override (relay/gateway); default https://api.typesafe.ai', docRef: 'docs/rfc-jev-integration.md' },
+  { plane: 'efficiency', key: 'jev.model', kind: 'string', defaultValue: 'jev-1.13.0', envVar: 'PIER_JEV_MODEL', impact: 'Pinned versioned model id; aliases drift silently and skew tuned thresholds', docRef: 'docs/rfc-jev-integration.md' },
+  { plane: 'efficiency', key: 'jev.timeoutMs', kind: 'number', defaultValue: 2000, min: 500, envVar: 'PIER_JEV_TIMEOUT_MS', impact: 'Total per-call budget via AbortController hard kill', docRef: 'docs/rfc-jev-integration.md' },
+  { plane: 'efficiency', key: 'jev.minConfidence', kind: 'number', defaultValue: 0.6, min: 0, envVar: 'PIER_JEV_MIN_CONFIDENCE', impact: 'Minimum Choice/Score confidence to adopt an answer; below counts as unanswered', docRef: 'docs/rfc-jev-integration.md' },
+  { plane: 'efficiency', key: 'jev.apiKey', kind: 'string', envVar: 'PIER_JEV_API_KEY', impact: 'API key; PIER_JEV_API_KEY env > config value > TYPESAFE_API_KEY env', docRef: 'docs/rfc-jev-integration.md' },
 ];
 
 /** Role-manifest keys (mirrors schemas/role-manifest.schema.json). Roles are per-file, so these are inventory keys. */

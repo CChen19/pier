@@ -381,7 +381,7 @@ test('waitSubReady (A14): 子 pane 已消失 → 立刻失败并附上它的最�
   const { createSpawner } = await import('../src/subagent-spawn.ts');
   const spawner = createSpawner({
     client: {
-      listAgents: async () => [], // pane 不在 → 视为子进程已退出
+      listPanes: async () => [], // pane.list miss → 子进程已退出；agent.list 会漏掉 unknown shell
       readPane: async () => ({ text: 'TypeError: boom at footer.render', revision: 1, truncated: false }),
     } as unknown as Parameters<typeof createSpawner>[0]['client'],
     env: { paneId: 'p0', tabId: 't0', workspaceId: 'w1' },
@@ -406,7 +406,7 @@ test('waitSubReady (0.9.1): 子 pane 失败时附带 agentExplain 诊断信息',
   const spawner = createSpawner({
     client: {
       available: true,
-      listAgents: async () => [],
+      listPanes: async () => [],
       readPane: async () => ({ text: 'SyntaxError: unexpected token', revision: 1, truncated: false }),
       agentExplain: async () => ({
         matched_rule: 'pi-worker',
@@ -424,4 +424,36 @@ test('waitSubReady (0.9.1): 子 pane 失败时附带 agentExplain 诊断信息',
   assert.match(out.message, /Herdr detection diagnosis:/);
   assert.match(out.message, /matched rule: pi-worker/);
   assert.match(out.message, /skip reason: process_crashed/);
+});
+
+test('waitSubReady: pane.list unknown shell is not pane-gone (agent.list 会漏掉它)', async () => {
+  const { createSpawner } = await import('../src/subagent-spawn.ts');
+  const paneId = 'wH:p3';
+  let readCalls = 0;
+  const spawner = createSpawner({
+    client: {
+      listPanes: async () => [{ paneId, tabId: 'wH:t1', workspaceId: 'wH', agentStatus: 'unknown' }],
+      listAgents: async () => [],
+      readPane: async () => {
+        readCalls += 1;
+        return { text: 'TypeError: boom at footer.render', revision: 1, truncated: false };
+      },
+    },
+    env: { paneId: 'p0', tabId: 't0', workspaceId: 'w1' },
+    runtime: { nodePath: '/usr/bin/node', cliPath: '/cli.js', extPath: '/ext.ts' },
+    git: { listWorktrees: async () => [] },
+    readinessTimeoutMs: 1000,
+  } as unknown as Parameters<typeof createSpawner>[0]);
+
+  const started = Date.now();
+  const out = await spawner.waitSubReady('/tmp/pier-a14-unknown-shell', paneId);
+  const elapsed = Date.now() - started;
+
+  assert.equal(out.ok, false);
+  if (out.ok) return;
+  assert.equal(out.failure.reason, 'timeout', 'revert to agent.list 会在 0s 报 pane-gone');
+  assert.match(out.message, /boom at footer.render/);
+  assert.ok(readCalls >= 1, 'alive 时也要采 tail，timeout 才能带上崩溃栈');
+  assert.ok(elapsed >= 900, `应等到 short timeout，实际 ${elapsed}ms`);
+  assert.ok(elapsed < 10_000, `不得落到 90s 默认上限，实际 ${elapsed}ms`);
 });

@@ -5,6 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { NOTICE_MAX_SHOWN, collapseNotices } from '../src/notice-buffer.ts';
+import { createNoticeBuffer } from '../src/index-notices.ts';
 
 test('空 → null（不注入）', () => {
   assert.equal(collapseNotices([]), null);
@@ -36,4 +37,57 @@ test('超 3 条 → 前 3 条原文 + 尾行计数 + 全量指引', () => {
 test('自定义 max', () => {
   const out = collapseNotices(['x', 'y'], 1)!;
   assert.equal(out, 'x\n\n…另有 1 条结算未逐条展示。全量结果看 history 台账（路径公式见 subagent resume 工具描述）；在跑代理用 subagent list 查看。');
+});
+
+// ---------------------------------------------------------------------------
+// P0-2 rank 钩子（index-notices）：>3 才触发；null → 到达序；结果重排后折叠
+// ---------------------------------------------------------------------------
+
+test('rank 钩子：≤3 条不触发 rank', async () => {
+  const sent: string[] = [];
+  let rankCalls = 0;
+  const buffer = createNoticeBuffer({
+    isBusy: () => true,
+    send: async (content) => {
+      sent.push(content);
+    },
+    rank: async (contents) => {
+      rankCalls++;
+      return [...contents].reverse();
+    },
+  });
+  for (const n of ['a', 'b', 'c']) await buffer.deliverNotice(n);
+  await buffer.flush('steer');
+  assert.equal(rankCalls, 0);
+  assert.equal(sent[0], 'a\n\nb\n\nc');
+});
+
+test('rank 钩子：>3 条按重排结果折叠展示前 3', async () => {
+  const sent: string[] = [];
+  const buffer = createNoticeBuffer({
+    isBusy: () => true,
+    send: async (content) => {
+      sent.push(content);
+    },
+    rank: async (contents) => [...contents].reverse(),
+  });
+  for (const n of ['a', 'b', 'c', 'd']) await buffer.deliverNotice(n);
+  await buffer.flush('steer');
+  const out = sent[0]!;
+  assert.ok(out.startsWith('d\n\nc\n\nb\n\n'));
+  assert.match(out, /另有 1 条结算未逐条展示/);
+});
+
+test('rank 钩子：返回 null → 保持到达序（fail-open）', async () => {
+  const sent: string[] = [];
+  const buffer = createNoticeBuffer({
+    isBusy: () => true,
+    send: async (content) => {
+      sent.push(content);
+    },
+    rank: async () => null,
+  });
+  for (const n of ['a', 'b', 'c', 'd']) await buffer.deliverNotice(n);
+  await buffer.flush('steer');
+  assert.ok(sent[0]!.startsWith('a\n\nb\n\nc\n\n'));
 });

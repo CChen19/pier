@@ -161,7 +161,7 @@ docs/              # install guide, configuration overview, role profile docs, s
 
 ```sh
 npm install --ignore-scripts
-npm test          # node --test, 588 unit tests (planner / todo replay / anti-freeze staleness / session tail / GC / lifecycle / renderers / ask picker / subagent output)
+npm test          # node --test, 809 unit tests (planner / todo replay / anti-freeze staleness / session tail / GC / lifecycle / renderers / ask picker / subagent output / jev decision layer: diagnostic gate, notice ranking, excerpt windows)
 ```
 
 ## Configuration
@@ -184,6 +184,13 @@ Runtime policies and operational limits are centralized in `runtime-policy.ts` (
 | `PIER_TERM_IDLE_MS` | `1800000` | ms | Idle time before pier nudges about an open terminal |
 | `PIER_TODO_GRACE_MS` | `30000` | ms | Settle grace before the unfinished-todo reminder |
 | `PIER_TRACE` | – | flag | Write diagnostics (tool renderers, swallowed errors) to stderr |
+| `PIER_JEV_ENABLE` | `0` | flag | Jev decision layer (TypeSafe System One classification) master switch; every call site fails open — see `docs/rfc-jev-integration.md` |
+| `PIER_JEV_LOG` | `0` | flag | Write `efficiency-logs/jev.jsonl` (metadata + hashes only, never bodies) |
+| `PIER_JEV_API_KEY` | – | – | API key; precedence env > config `jev.apiKey` > `TYPESAFE_API_KEY` |
+| `PIER_JEV_MODEL` | `jev-1.13.0` | – | Pinned versioned model id (aliases drift silently and skew tuned thresholds) |
+| `PIER_JEV_TIMEOUT_MS` | `2000` | ms | Total per-call budget (AbortController hard kill) |
+| `PIER_JEV_MIN_CONFIDENCE` | `0.6` | – | Minimum Choice/Score confidence to adopt an answer |
+| `PIER_JEV_BASE_URL` | – | – | API root override (relay/gateway) |
 
 **Naming:** `PIER_*` is the canonical namespace for pier options; the historical `PI_HERDR_*` spelling
 of the same knob is still read as an alias (an empty value counts as unset). Names handed to child

@@ -233,3 +233,67 @@ export function paneAreaShares(root: LayoutNode): Record<string, number> {
   walk(root, 1);
   return shares;
 }
+
+export const HEAT_HOLD_EPSILON = 0.03;
+
+/** Stable split identity: first-child leaf set. Boolean path re-numbers on created/closed. */
+export type SplitFingerprint = {
+  paneIds: string[];
+  splits: Array<{ firstKey: string; ratio: number }>;
+};
+
+function firstKey(ids: string[]): string {
+  return [...ids].sort().join('\0');
+}
+
+export function layoutFingerprint(root: LayoutNode): SplitFingerprint {
+  const paneIds = flattenPanes(root).slice().sort();
+  const splits: Array<{ firstKey: string; ratio: number }> = [];
+  const walk = (node: LayoutNode): void => {
+    if (node.type === 'pane') return;
+    splits.push({ firstKey: firstKey(flattenPanes(node.first)), ratio: node.ratio });
+    walk(node.first);
+    walk(node.second);
+  };
+  walk(root);
+  splits.sort((a, b) => (a.firstKey < b.firstKey ? -1 : a.firstKey > b.firstKey ? 1 : 0));
+  return { paneIds, splits };
+}
+
+export function shouldHoldHeat(opts: {
+  prior: SplitFingerprint | null | undefined;
+  current: SplitFingerprint;
+  acceptedFocus: boolean;
+  epsilon?: number;
+}): { hold: boolean; reason: 'accepted-focus' | 'no-prior' | 'pane-set-changed' | 'user-drag' | 'within-eps' } {
+  if (opts.acceptedFocus) return { hold: false, reason: 'accepted-focus' };
+  if (!opts.prior) return { hold: false, reason: 'no-prior' };
+  if (opts.prior.paneIds.join('\0') !== opts.current.paneIds.join('\0')) {
+    return { hold: false, reason: 'pane-set-changed' };
+  }
+  const eps = opts.epsilon ?? HEAT_HOLD_EPSILON;
+  const priorMap: Record<string, number> = {};
+  for (const s of opts.prior.splits) priorMap[s.firstKey] = s.ratio;
+  for (const s of opts.current.splits) {
+    const prev = priorMap[s.firstKey];
+    if (prev === undefined) continue;
+    if (Math.abs(prev - s.ratio) > eps) return { hold: true, reason: 'user-drag' };
+  }
+  return { hold: false, reason: 'within-eps' };
+}
+
+export function applyHeatOps(root: LayoutNode, ops: HeatOp[]): LayoutNode {
+  const clone = (n: LayoutNode): LayoutNode =>
+    n.type === 'pane' ? { ...n } : { type: 'split', direction: n.direction, ratio: n.ratio, first: clone(n.first), second: clone(n.second) };
+  const tree = clone(root);
+  const setAt = (node: LayoutNode, path: boolean[], ratio: number): void => {
+    if (node.type !== 'split') return;
+    if (path.length === 0) {
+      node.ratio = ratio;
+      return;
+    }
+    setAt(path[0] ? node.second : node.first, path.slice(1), ratio);
+  };
+  for (const op of ops) setAt(tree, op.path, op.ratio);
+  return tree;
+}

@@ -87,10 +87,19 @@ export const MAX_BATCH_PACK_BYTES = 10 * 1024 * 1024; // 10MB limit per batch
  * branch's large tool results before `ctx.compact()` rewrites the prefix.
  * Exported (rather than inlined in index.ts) so the gate behaviour is unit-testable.
  */
+export interface ExcerptMiddlePick {
+  text: string;
+  label: string;
+}
+
+/** P0-3 seam: async middle-window picker (jev-backed); null keeps the legacy halves. */
+export type PickMiddleExcerpt = (text: string, excerptBudgetBytes: number) => Promise<ExcerptMiddlePick | null>;
+
 export function createCompactionBatchPackHook(deps: {
   getObsConfig: () => ObservationPackConfig;
   getManifest?: () => RuntimeRoleManifest | null;
   getSessionId?: () => string | undefined;
+  pickMiddleExcerpt?: PickMiddleExcerpt;
 }): (sessionRoot: string, ctx: unknown) => Promise<void> {
   return async (sessionRoot: string, ctx: unknown): Promise<void> => {
     const obsConfig = deps.getObsConfig();
@@ -113,6 +122,7 @@ export function createCompactionBatchPackHook(deps: {
       sessionId,
       messages,
       obsConfig,
+      pickMiddleExcerpt: deps.pickMiddleExcerpt,
     });
   };
 }
@@ -149,12 +159,16 @@ export async function packOneMessage(opts: {
   charLength: number;
   obsConfig: ObservationPackConfig;
   log?: PackLogOptions;
+  pickMiddleExcerpt?: PickMiddleExcerpt;
 }): Promise<PackMessageResult | null> {
-  const { sessionRoot, toolName, toolCallId, text, textBytes, charLength, obsConfig, log } = opts;
+  const { sessionRoot, toolName, toolCallId, text, textBytes, charLength, obsConfig, log, pickMiddleExcerpt } = opts;
   const contentHash = sha256Hex(text);
   const obsId = deriveObservationId(toolName, toolCallId, contentHash);
   const originalTokens = estimateTokens(text);
   const lines = countLines(text);
+  const middle = pickMiddleExcerpt
+    ? (await pickMiddleExcerpt(text, obsConfig.excerptBytes)) ?? undefined
+    : undefined;
   const placeholder = formatObservationPlaceholder({
     id: obsId,
     toolName,
@@ -164,6 +178,7 @@ export async function packOneMessage(opts: {
     text,
     fullSends: obsConfig.fullSends,
     excerptBudget: obsConfig.excerptBytes,
+    middle,
   });
   const placeholderTokens = estimateTokens(placeholder);
   const removedTokens = Math.max(0, originalTokens - placeholderTokens);
@@ -225,9 +240,10 @@ export async function packOneMessage(opts: {
 export async function batchPackObservations(opts: {
   sessionRoot: string;
   sessionId?: string;
-  messages: readonly any[];
+  messages: readonly unknown[];
   obsConfig: ObservationPackConfig;
   limits?: { maxItems?: number; maxBytes?: number };
+  pickMiddleExcerpt?: PickMiddleExcerpt;
 }): Promise<number> {
   const { sessionRoot, sessionId, messages, obsConfig } = opts;
   if (!obsConfig.enabled || !sessionRoot || !Array.isArray(messages)) return 0;
@@ -271,6 +287,7 @@ export async function batchPackObservations(opts: {
       charLength,
       obsConfig,
       log: { logEnabled: obsConfig.logEnabled, event: 'packed-batch', sessionId, extra: { source: 'compaction' } },
+      pickMiddleExcerpt: opts.pickMiddleExcerpt,
     });
 
     if (packed) {
@@ -286,10 +303,11 @@ export interface ObservationPackDeps {
   getConfig?: (ctx: ExtensionContext) => EfficiencyConfig;
   getRuntimeManifest?: () => RuntimeRoleManifest | null;
   getRemainingHorizon?: () => number;
+  pickMiddleExcerpt?: PickMiddleExcerpt;
 }
 
 export function registerObservationPack(deps: ObservationPackDeps): void {
-  const { pi, getConfig, getRuntimeManifest } = deps;
+  const { pi, getConfig, getRuntimeManifest, pickMiddleExcerpt } = deps;
 
   // 1. Register obs_recall tool
   pi.registerTool({
@@ -521,6 +539,7 @@ export function registerObservationPack(deps: ObservationPackDeps): void {
             sessionId,
             extra: { sendCount, tailTokensAfter },
           },
+          pickMiddleExcerpt,
         });
         if (!packed) continue;
 

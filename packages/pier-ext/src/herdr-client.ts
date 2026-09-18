@@ -66,6 +66,22 @@ export interface PaneListItem {
   terminalTitleStripped?: string | null;
 }
 
+export interface PaneLayoutCell {
+  paneId: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  focused: boolean;
+}
+
+export interface PaneLayoutSnapshot {
+  tabId: string | null;
+  zoomed: boolean;
+  focusedPaneId: string | null;
+  panes: PaneLayoutCell[];
+}
+
 export interface OpenPluginPaneOptions {
   pluginId: string;
   entrypoint: string;
@@ -161,7 +177,7 @@ export interface HerdrClientLike {
   /** v1.2: Focus a pane before adding it to a group tab. */
   focusPane(paneId: string): Promise<void>;
   /** v1.2: Split a new shell pane in the current tab after focus, placing it in the group tab; return its pane ID. */
-  splitPane(opts: { direction?: 'left' | 'right' | 'up' | 'down'; cwd?: string; env?: Record<string, string>; targetPaneId?: string; focus?: boolean }): Promise<string>;
+  splitPane(opts: { direction?: 'left' | 'right' | 'up' | 'down'; cwd?: string; env?: Record<string, string>; targetPaneId?: string; focus?: boolean; ratio?: number }): Promise<string>;
   /** v1.2: Close a pane; observed behavior kills its process tree and herdr closes an empty tab. */
   closePane(paneId: string): Promise<void>;
   /** v1.2: Create a tab with a root shell pane, returning tabId/paneId for group-tab infrastructure. */
@@ -170,6 +186,8 @@ export interface HerdrClientLike {
   listPanes(): Promise<PaneListItem[]>;
   /** D91: Export the tab layout tree, locating it by paneId or tabId; best effort returns null on failure. */
   exportLayout(opts?: { paneId?: string; tabId?: string }): Promise<{ tabId: string | null; zoomed: boolean; root: unknown; focusedPaneId: string | null } | null>;
+  /** 0.9.1: live pane rects for the tab containing paneId. Best effort returns null. */
+  paneLayout(opts?: { paneId?: string }): Promise<PaneLayoutSnapshot | null>;
   /** v1.3: List tabs (tab.list); fields follow the observed schema. */
   tabList(): Promise<TabInfo[]>;
   /** v1.3: Get tab details (tab.get); return null when absent. */
@@ -251,6 +269,9 @@ export class NoopHerdrClient implements HerdrClientLike {
     return [];
   }
   async exportLayout(): Promise<null> {
+    return null;
+  }
+  async paneLayout(): Promise<null> {
     return null;
   }
   async tabList(): Promise<TabInfo[]> {
@@ -527,15 +548,28 @@ export class HerdrClient implements HerdrClientLike {
     await this.request('pane.focus', { pane_id: paneId });
   }
 
-  async splitPane(opts: { direction?: 'left' | 'right' | 'up' | 'down'; cwd?: string; env?: Record<string, string>; targetPaneId?: string; focus?: boolean } = {}): Promise<string> {
-    const result = (await this.request('pane.split', {
+  async splitPane(opts: { direction?: 'left' | 'right' | 'up' | 'down'; cwd?: string; env?: Record<string, string>; targetPaneId?: string; focus?: boolean; ratio?: number } = {}): Promise<string> {
+    const params: Record<string, unknown> = {
       direction: opts.direction ?? 'right',
       ...(opts.targetPaneId ? { target_pane_id: opts.targetPaneId } : {}),
       ...(opts.cwd ? { cwd: opts.cwd } : {}),
       ...(opts.env ? { env: opts.env } : {}),
-      // pane.split defaults to focus=false; forward it so the intent is explicit and greppable.
       ...(opts.focus !== undefined ? { focus: opts.focus } : {}),
-    })) as Record<string, unknown>;
+      ...(opts.ratio !== undefined ? { ratio: opts.ratio } : {}),
+    };
+    try {
+      return await this.splitPaneRequest(params);
+    } catch (err) {
+      if (opts.ratio === undefined) throw err;
+      const msg = String((err as Error)?.message ?? err);
+      if (!/unknown|invalid_params|unexpected/i.test(msg)) throw err;
+      const { ratio: _ratio, ...rest } = params;
+      return await this.splitPaneRequest(rest);
+    }
+  }
+
+  private async splitPaneRequest(params: Record<string, unknown>): Promise<string> {
+    const result = (await this.request('pane.split', params)) as Record<string, unknown>;
     const paneId = findIdIn(result, 'pane_id');
     if (!paneId) throw new Error('pane.split: no pane_id in response');
     return paneId;
@@ -586,6 +620,40 @@ export class HerdrClient implements HerdrClientLike {
         root: layout.root ?? null,
         // D-4: focus heat needs to know which pane the human is on; layout.export reports it.
         focusedPaneId: typeof layout.focused_pane_id === 'string' ? layout.focused_pane_id : null,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  async paneLayout(opts: { paneId?: string } = {}): Promise<PaneLayoutSnapshot | null> {
+    try {
+      const result = (await this.request('pane.layout', {
+        ...(opts.paneId ? { pane_id: opts.paneId } : {}),
+      })) as Record<string, unknown> | null;
+      const layout = (result?.layout ?? result) as Record<string, unknown> | null | undefined;
+      if (!layout || typeof layout !== 'object' || !Array.isArray(layout.panes)) return null;
+      const panes: PaneLayoutCell[] = [];
+      for (const raw of layout.panes) {
+        if (!raw || typeof raw !== 'object') continue;
+        const p = raw as Record<string, unknown>;
+        const rect = (p.rect && typeof p.rect === 'object') ? p.rect as Record<string, unknown> : p;
+        const paneId = typeof p.pane_id === 'string' ? p.pane_id : null;
+        if (!paneId) continue;
+        panes.push({
+          paneId,
+          x: Number(rect.x) || 0,
+          y: Number(rect.y) || 0,
+          w: Number(rect.width ?? rect.w) || 0,
+          h: Number(rect.height ?? rect.h) || 0,
+          focused: p.focused === true,
+        });
+      }
+      return {
+        tabId: typeof layout.tab_id === 'string' ? layout.tab_id : null,
+        zoomed: Boolean(layout.zoomed),
+        focusedPaneId: typeof layout.focused_pane_id === 'string' ? layout.focused_pane_id : null,
+        panes,
       };
     } catch {
       return null;

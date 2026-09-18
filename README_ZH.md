@@ -158,7 +158,7 @@ docs/              # 安装手册、role 档案说明、侧边栏 role 配置
 
 ```sh
 npm install --ignore-scripts
-npm test          # node --test，588 项单测（规划器 / todo 重放 / 反冻结陈旧度 / 会话尾 / GC / 生命周期 / 渲染器 / 选择题选择器 / 子代理输出）
+npm test          # node --test，809 项单测（规划器 / todo 重放 / 反冻结陈旧度 / 会话尾 / GC / 生命周期 / 渲染器 / 选择题选择器 / 子代理输出 / jev 决策层：诊断门·结算排序·摘录选窗）
 ```
 
 ## 配置与环境变量
@@ -181,6 +181,13 @@ npm test          # node --test，588 项单测（规划器 / todo 重放 / 反�
 | `PIER_TERM_IDLE_MS` | `1800000` | ms | 终端闲置多久后提醒一次 |
 | `PIER_TODO_GRACE_MS` | `30000` | ms | 未完成 todo 提醒前的静默宽限 |
 | `PIER_TRACE` | – | 开关 | 把诊断信息（工具渲染器、被吞掉的异常）写到 stderr |
+| `PIER_JEV_ENABLE` | `0` | 开关 | jev 决策层(TypeSafe System One 分类)总开关;逐点 fail-open,详见 `docs/rfc-jev-integration.md` |
+| `PIER_JEV_LOG` | `0` | 开关 | 写 `efficiency-logs/jev.jsonl`(只记元数据与 hash,不记明文) |
+| `PIER_JEV_API_KEY` | – | – | API key;优先级 env > 配置 `jev.apiKey` > `TYPESAFE_API_KEY` |
+| `PIER_JEV_MODEL` | `jev-1.13.0` | – | 钉住的版本化模型 id(别名漂移会破坏校准阈值) |
+| `PIER_JEV_TIMEOUT_MS` | `2000` | ms | 单次 jev 调用总预算(AbortController 硬杀) |
+| `PIER_JEV_MIN_CONFIDENCE` | `0.6` | – | Choice/Score 答案采纳的最低置信度 |
+| `PIER_JEV_BASE_URL` | – | – | API 根地址覆盖(中转/网关) |
 
 **命名**：`PIER_*` 是 pier 选项的规范前缀；历史写法 `PI_HERDR_*` 仍作为别名被读取（空值视为未设置）。
 交给子进程的**契约**名保持不变（`PI_HERDR_SUBAGENT`、`PI_HERDR_ROLE_MANIFEST`、`PI_HERDR_TUI`、
