@@ -105,7 +105,7 @@ export async function handleReducerToolResult(
     if (!gate) return undefined;
     const result = await gate.ask(diagnosticGateRequest(command), {
       questionId: 'epr-diagnostic-gate',
-      timeoutMs: 1000, // tool-result path; only regex-missed commands reach here
+      timeoutMs: 1500, // measured: cold TLS handshake hit 1002ms and timed out at 1s (e2e 2026-09-18); warm calls run 250-770ms
       sessionId: ctx.sessionManager?.getSessionId?.(),
       extra: { site: 'epr-gate', commandSha256: sha256Hex(command) },
       enrich: ({ answers }) => {

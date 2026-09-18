@@ -75,6 +75,7 @@ import { installConfigCommand } from './config-command.ts';
 import { CompactCoordinator } from './compact-coordinator.ts';
 import { handleReducerToolResult, type ToolResultEventLike } from './reducer-invoker.ts';
 import {
+  isValidSessionId,
   pruneSessionObjects,
   resolveSessionRoot,
 } from './efficiency-store.ts';
@@ -224,16 +225,29 @@ export default async function (pi: ExtensionAPI) {
           getSessionId?: () => string;
         };
       }).sessionManager;
-      return (
-        sm?.getSessionFile?.() ??
-        sm?.getSessionId?.() ??
-        process.env.PI_SESSION_FILE ??
-        process.env.PI_SESSION_ID ??
-        ''
+      return bareSessionId(
+        sm?.getSessionFile?.()
+          ?? sm?.getSessionId?.()
+          ?? process.env.PI_SESSION_FILE
+          ?? process.env.PI_SESSION_ID
+          ?? '',
       );
     } catch {
-      return process.env.PI_SESSION_FILE ?? '';
+      return bareSessionId(process.env.PI_SESSION_FILE ?? '');
     }
+  }
+
+  /**
+   * pi may hand back the full transcript file path; the id used for
+   * `herdr-pi/<id>/` dirs is the bare UUID suffix of `<timestamp>_<uuid>.jsonl`.
+   * resolveSessionRoot rejects path-shaped ids (SAFE_SESSION_ID_RE), which
+   * silently nulls every consumer of the module-level sessionRoot.
+   */
+  function bareSessionId(raw: string): string {
+    const base = raw.replaceAll('\\', '/').split('/').pop()!.replace(/\.jsonl$/, '');
+    const cut = base.lastIndexOf('_');
+    const candidate = cut >= 0 ? base.slice(cut + 1) : base;
+    return isValidSessionId(candidate) ? candidate : raw;
   }
 
   function mirrorTodos(): void {
@@ -357,7 +371,6 @@ export default async function (pi: ExtensionAPI) {
       (ctx as { sessionManager?: { getSessionDir?: () => string | undefined } })?.sessionManager?.getSessionDir?.(),
       sessionId,
     );
-    rebuildFromBranch(ctx);
     // v1.3 M9 fix (observed): on resume pi restores widget state from the session;
     // calling setWidget again breaks the TUI '/' command-panel route ('/' would be sent to the model as message text).
     const reason = (event as { reason?: string } | undefined)?.reason;
