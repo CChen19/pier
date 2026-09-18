@@ -41,6 +41,8 @@ async function makeFixture(opts: { brokenRole?: boolean; reservedRole?: boolean;
   const agentDir = join(base, 'agent');
   const herdrDir = join(base, 'herdr-plugin');
   const rolesDir = join(cwd, '.pi-herdr', 'roles');
+  const userRolesDir = join(base, 'user-roles');
+  await mkdir(userRolesDir, { recursive: true });
   const userConfigPath = join(base, 'user-efficiency.json');
   const workspaceConfigPath = join(cwd, '.pi-herdr', 'config.json');
 
@@ -86,6 +88,7 @@ async function makeFixture(opts: { brokenRole?: boolean; reservedRole?: boolean;
     base,
     paths: { cwd, agentDir, userConfigPath, workspaceConfigPath, herdrDir, rolesDir },
     deps: {
+      rolesUserDir: userRolesDir,
       cwd,
       env: { HERDR_PLUGIN_CONFIG_DIR: herdrDir },
       isProjectTrusted: opts.trustWorkspace ?? true,

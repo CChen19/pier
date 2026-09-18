@@ -245,9 +245,10 @@ export default async function (pi: ExtensionAPI) {
    */
   function bareSessionId(raw: string): string {
     const base = raw.replaceAll('\\', '/').split('/').pop()!.replace(/\.jsonl$/, '');
-    const cut = base.lastIndexOf('_');
-    const candidate = cut >= 0 ? base.slice(cut + 1) : base;
-    return isValidSessionId(candidate) ? candidate : raw;
+    // Only strip pi's real transcript prefix (<date>T<time>Z_); arbitrary ids
+    // like PI_SESSION_FILE=sess_idx_prune must survive untouched.
+    const stripped = base.replace(/^\d{4}-\d{2}-\d{2}T[\d-]+Z_/, '');
+    return isValidSessionId(stripped) ? stripped : base;
   }
 
   function mirrorTodos(): void {

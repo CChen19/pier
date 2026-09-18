@@ -78,12 +78,14 @@ export interface LoadRoleOptions {
 }
 
 /** Resolve lookup layers in order: workspace → user-global → bundled (each layer has {label, dir}). */
-export function roleLayers(opts?: { baseDir?: string }): Array<{ label: string; dir: string }> {
+export function roleLayers(opts?: { baseDir?: string; userDir?: string }): Array<{ label: string; dir: string }> {
   const base = opts?.baseDir && isAbsolute(opts.baseDir) ? opts.baseDir
     : resolve(opts?.baseDir ?? process.cwd());
   return [
     { label: 'workspace (.pi-herdr/roles/)', dir: workspaceRolesDir(base) },
-    { label: `user (${'~/.pi/agent/herdr-pi/roles/'})`, dir: userRolesDir() },
+    // userDir exists so tests can isolate from the real ~/.pi (a role file on the
+    // dev machine once flipped a hermetic assertion).
+    { label: `user (${'~/.pi/agent/herdr-pi/roles/'})`, dir: opts?.userDir ?? userRolesDir() },
     { label: 'builtin (src/roles/)', dir: ROLES_DIR },
   ];
 }

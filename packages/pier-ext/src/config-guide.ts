@@ -80,6 +80,8 @@ export interface ConfigGuideDeps {
   herdrPluginConfigDir?: string;
   /** Repository root used to probe the dev-mode boot-config.json. */
   repoRoot?: string;
+  /** User-level roles dir override (defaults to ~/.pi/agent/herdr-pi/roles). */
+  rolesUserDir?: string;
 }
 
 export interface ConfigGuideSnapshot {
@@ -197,7 +199,7 @@ export function collectConfigSnapshot(deps: ConfigGuideDeps = {}): ConfigGuideSn
   files.env.push({ path: '(process environment)', label: 'env', exists: true });
 
   /* ── roles ────────────────────────────────────────────────────────────── */
-  const layerDirs = roleLayers({ baseDir: cwd });
+  const layerDirs = roleLayers({ baseDir: cwd, userDir: deps.rolesUserDir });
   const roleIssues: string[] = [];
   const roleNames = new Set<string>();
   const customLayerNames = new Set<string>();
