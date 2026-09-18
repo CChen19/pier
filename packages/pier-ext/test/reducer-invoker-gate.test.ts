@@ -95,11 +95,10 @@ test('正则未命中 + 受信项目 + jev 命中 → 越过命令门（后续�
   assert.equal(trustCalls.count, 1, 'trust precedes the gate and passes in a trusted project');
 });
 
-test('正则未命中 + 无 jev 依赖 → 维持旧行为（非诊断命令，不进信任检查）', async () => {
+test('正则未命中 + 无 jev 依赖 → 维持旧行为（信任门已过，jev 缺席即非诊断）', async () => {
   const { ctx, trustCalls } = makeCtx(true);
   const result = await handleReducerToolResult(bashEvent('deno test --allow-read'), ctx, eprConfig, {});
   assert.equal(result, undefined);
-  assert.equal(trustCalls.count, 0, 'not-diagnostic verdict stops before the trust check');
   assert.equal(trustCalls.count, 1, 'trust check precedes the gate for regex-missed commands');
 });
 
