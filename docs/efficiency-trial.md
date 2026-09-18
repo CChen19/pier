@@ -195,15 +195,23 @@ PI_HERDR_COMPACT_ENABLE=1 PI_HERDR_COMPACT_LOG=1 PI_HERDR_CACHE_RATIO=auto pi
 但性质不同:它**不做任何 I/O 语义**,只给三处手写判断补一个"第二意见",
 且**逐点 fail-open**——关掉、没 key、超时、429、低置信度,行为都与从前逐字节一致。
 
-| 接入点 | 触发条件 | jev 问什么 | 回退 |
-|---|---|---|---|
-| EPR 诊断命令门 | 正则清单**未命中**的 bash 命令(命中即短路不调 API) | 命令类型 Choice + 是否诊断输出 Noul,1s 预算 | 维持"非诊断命令"(不提炼) |
-| 结算通知排序 | 折叠批量 **>3 条**时(≤3 不调) | 每条一个相关性 Score + 失败 Noul,一次调用;阈值 0.7(CJK 折扣) | 到达序前 3(现行为) |
-| OBS 摘录选窗 | 大输出含**失败信号行**且 jev 可用(否则不调) | 头/尾/首信号窗/最密窗 哪个最有信息量 Choice | 头尾对半劈半(现行为) |
+| 接入点 | **前置(不开则零调用)** | 触发条件 | jev 问什么 | 回退 |
+|---|---|---|---|---|
+| EPR 诊断命令门 | **EPR 开启**(`evidencePreservingReducer.enabled`) | 正则清单**未命中**的 bash 命令(命中即短路不调 API) | 命令类型 Choice + 是否诊断输出 Noul,1s 预算 | 维持"非诊断命令"(不提炼) |
+| 结算通知排序 | 无(独立于三机制,只需 jev 可用) | 折叠批量 **>3 条**时(≤3 不调)——需并行子代理结算攒批 | 每条一个相关性 Score + 失败 Noul,一次调用;阈值 0.7(CJK 折扣) | 到达序前 3(现行为) |
+| OBS 摘录选窗 | **OBS 开启**(`observationPack.enabled`) | 大输出已打包且含**失败信号行**(否则不调) | 头/尾/首信号窗/最密窗 哪个最有信息量 Choice | 头尾对半劈半(现行为) |
+
+> **后台 usage=0?先对这张表。** jev 层自己不产生调用——它是上面三机制的"第二意见"。
+> 只开 `jev.enabled` 而 EPR/OBS 都关着时,唯一可能触发的是结算排序,而它要求一次
+> flush 攒下 **>3 条**结算;普通单代理会话一条都不会发,后台 usage=0 属**预期**而非故障。
+> 本地以 `jev.jsonl` 为准(开 `logEnabled`),比后台面板更即时。
 
 **开始试用**:把上面配置示例的 `jev` 段写进 `~/.pi/agent/herdr-pi/config.json`
 (用户级)或 `<repo>/.pi-herdr/config.json`(受信工作区,整体覆盖不深合并),
-填上 `apiKey`,重开 pi 会话即可;`PIER_JEV_ENABLE=1` 可临时开。
+填上 `apiKey`,**并开启想要点亮的宿主机制(EPR / OBS)**,重开 pi 会话即可;
+`PIER_JEV_ENABLE=1` 可临时开。最快点亮路径:同时开 EPR,跑一条正则清单外的
+诊断命令(`deno test` / `bun test` / `mix test`),第一次工具结果即产生一条
+`epr-diagnostic-gate` 调用。
 
 **看什么**:`/pier-config show efficiency` 会列出 `jev.*` 全部键的生效值与来源;
 日志在 `<sessionDir>/herdr-pi/<sessionId>/efficiency-logs/jev.jsonl`
