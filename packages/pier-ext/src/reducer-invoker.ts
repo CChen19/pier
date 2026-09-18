@@ -82,10 +82,25 @@ export async function handleReducerToolResult(
   if (event.toolName !== 'bash') return undefined;
   const command = typeof event.input?.command === 'string' ? event.input.command.trim() : '';
   if (!command) return undefined;
+  // 1.5 Project trust boundary — BEFORE the jev gate: an untrusted project must
+  // not send commands to a third-party API even when user-level EPR is on;
+  // the host mechanism refuses here, so its second opinion must not fire either.
+  const isTrusted =
+    typeof (ctx as { isProjectTrusted?: () => boolean }).isProjectTrusted === 'function'
+      ? (ctx as { isProjectTrusted: () => boolean }).isProjectTrusted()
+      : false;
+  if (!isTrusted) {
+    if (!untrustedWarningEmitted) {
+      untrustedWarningEmitted = true;
+      console.warn('[pi-herdr] EPR 提炼已在未受信任项目中被安全禁用');
+    }
+    return undefined;
+  }
+
+  // 2. jev diagnostic gate: only for regex-missed commands (P0-1, RFC
+  // docs/rfc-jev-integration.md §3). The regex fast path stays authoritative;
+  // any jev failure keeps the "not diagnostic" verdict.
   if (!isDiagnosticCommand(command)) {
-    // P0-1 (RFC docs/rfc-jev-integration.md §3): the regex missed — widen the
-    // funnel through jev before giving up. The regex fast path stays
-    // authoritative; any jev failure keeps the "not diagnostic" verdict.
     const gate = opts?.jev;
     if (!gate) return undefined;
     const result = await gate.ask(diagnosticGateRequest(command), {
@@ -102,20 +117,6 @@ export async function handleReducerToolResult(
     if (!result.ok) return undefined;
     if (!evaluateDiagnosticGate(result.answers, gate.getMinConfidence()).hit) return undefined;
   }
-
-  // 2. Project trust boundary check
-  const isTrusted =
-    typeof (ctx as { isProjectTrusted?: () => boolean }).isProjectTrusted === 'function'
-      ? (ctx as { isProjectTrusted: () => boolean }).isProjectTrusted()
-      : false;
-  if (!isTrusted) {
-    if (!untrustedWarningEmitted) {
-      untrustedWarningEmitted = true;
-      console.warn('[pi-herdr] EPR 提炼已在未受信任项目中被安全禁用');
-    }
-    return undefined;
-  }
-
   // 3. Find primary log text block
   const logBlock = event.content.find((b) => b && b.type === 'text' && typeof b.text === 'string');
   if (!logBlock || typeof logBlock.text !== 'string') return undefined;

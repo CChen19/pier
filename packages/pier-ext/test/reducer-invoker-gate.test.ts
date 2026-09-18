@@ -1,8 +1,9 @@
 /**
  * P0-1 门序单测（RFC docs/rfc-jev-integration.md §3）。
- * 缝：handleReducerToolResult 的命令门——正则先短路；未命中才问 jev；
- * jev 任何失败都退回"非诊断命令"（现行为）。用 isProjectTrusted 的调用与否
- * 观察控制流是否越过了命令门。
+ * 缝：handleReducerToolResult 的命令门与信任边界次序——
+ *   bash → 正则(命中短路) → 信任门(未受信不外发) → jev 门(仅正则漏判)。
+ * jev 任何失败都退回"非诊断命令"（现行为）。
+ * 信任门用调用计数观察；jev 命中用 asks 记录观察。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -30,15 +31,16 @@ function bashEvent(command: string): ToolResultEventLike {
   };
 }
 
-function makeCtx(): { ctx: ExtensionContext; trustCalls: { count: number } } {
+/** pi ctx surface is structural; only these members are read. */
+function makeCtx(trusted: boolean): { ctx: ExtensionContext; trustCalls: { count: number } } {
   const trustCalls = { count: 0 };
   const ctx = {
     sessionManager: { getSessionId: () => 's1', getSessionDir: () => '/tmp' },
     isProjectTrusted: () => {
       trustCalls.count++;
-      return false;
+      return trusted;
     },
-  } as unknown as ExtensionContext; // pi ctx surface is structural; only these members are read
+  } as unknown as ExtensionContext;
   return { ctx, trustCalls };
 }
 
@@ -66,42 +68,52 @@ function makeGate(hit: boolean): { dep: JevEprGateDependency; asks: string[] } {
   };
 }
 
-test('正则命中（cargo test）→ 不问 jev，直接进入信任检查', async () => {
-  const { ctx, trustCalls } = makeCtx();
+test('正则命中（cargo test）→ 不问 jev；未受信项目停在信任门', async () => {
+  const { ctx, trustCalls } = makeCtx(false);
   const { dep, asks } = makeGate(false);
   const result = await handleReducerToolResult(bashEvent('cargo test'), ctx, eprConfig, { jev: dep });
-  assert.equal(result, undefined); // untrusted project stops later, after the gate
-  assert.equal(asks.length, 0, 'regex fast path must not call jev');
-  assert.equal(trustCalls.count, 1, 'gate passed via regex');
-});
-
-test('正则未命中且无 jev 依赖 → 维持旧行为（非诊断命令）', async () => {
-  const { ctx, trustCalls } = makeCtx();
-  const result = await handleReducerToolResult(bashEvent('deno test --allow-read'), ctx, eprConfig, {});
   assert.equal(result, undefined);
-  assert.equal(trustCalls.count, 0);
+  assert.equal(asks.length, 0, 'regex fast path must not call jev');
+  assert.equal(trustCalls.count, 1, 'regex hit reaches the trust check');
 });
 
-test('正则未命中 + jev 命中 → 问一次 epr-diagnostic-gate 并越过命令门', async () => {
-  const { ctx, trustCalls } = makeCtx();
+test('正则未命中 + 未受信项目 → 信任门先于 jev：不外发命令', async () => {
+  const { ctx, trustCalls } = makeCtx(false);
   const { dep, asks } = makeGate(true);
   const result = await handleReducerToolResult(bashEvent('deno test --allow-read'), ctx, eprConfig, { jev: dep });
   assert.equal(result, undefined);
-  assert.deepEqual(asks, ['epr-diagnostic-gate']);
-  assert.equal(trustCalls.count, 1, 'jev hit passes the command gate');
+  assert.equal(asks.length, 0, 'untrusted project must not send commands to a third-party API');
+  assert.equal(trustCalls.count, 1);
 });
 
-test('正则未命中 + jev 失败 → 退回旧行为，不进信任检查', async () => {
-  const { ctx, trustCalls } = makeCtx();
+test('正则未命中 + 受信项目 + jev 命中 → 越过命令门（后续因日志过短返回）', async () => {
+  const { ctx, trustCalls } = makeCtx(true);
+  const { dep, asks } = makeGate(true);
+  const result = await handleReducerToolResult(bashEvent('deno test --allow-read'), ctx, eprConfig, { jev: dep });
+  assert.equal(result, undefined, 'content below minBytes stops reduction later');
+  assert.deepEqual(asks, ['epr-diagnostic-gate']);
+  assert.equal(trustCalls.count, 1, 'trust precedes the gate and passes in a trusted project');
+});
+
+test('正则未命中 + 无 jev 依赖 → 维持旧行为（非诊断命令，不进信任检查）', async () => {
+  const { ctx, trustCalls } = makeCtx(true);
+  const result = await handleReducerToolResult(bashEvent('deno test --allow-read'), ctx, eprConfig, {});
+  assert.equal(result, undefined);
+  assert.equal(trustCalls.count, 0, 'not-diagnostic verdict stops before the trust check');
+  assert.equal(trustCalls.count, 1, 'trust check precedes the gate for regex-missed commands');
+});
+
+test('正则未命中 + 受信项目 + jev 失败 → 退回旧行为', async () => {
+  const { ctx, trustCalls } = makeCtx(true);
   const { dep, asks } = makeGate(false);
   const result = await handleReducerToolResult(bashEvent('mix test'), ctx, eprConfig, { jev: dep });
   assert.equal(result, undefined);
   assert.deepEqual(asks, ['epr-diagnostic-gate']);
-  assert.equal(trustCalls.count, 0);
+  assert.equal(trustCalls.count, 1, 'trust check precedes the gate for regex-missed commands');
 });
 
 test('非 bash 工具 → 命令门之前就返回', async () => {
-  const { ctx, trustCalls } = makeCtx();
+  const { ctx, trustCalls } = makeCtx(true);
   const { dep, asks } = makeGate(true);
   const event = { ...bashEvent('cargo test'), toolName: 'read' };
   const result = await handleReducerToolResult(event, ctx, eprConfig, { jev: dep });
