@@ -2,6 +2,7 @@
  * D-4：焦点轮询（herdr 0.9 鼠标焦点是客户端本地行为，pane.focused 不会到插件）。
  * 缝：采样解析 / 触发决策（变更 + 限流 + cause 区分点击与自动聚焦）/ 触发执行（子进程 + 事件载荷）。
  */
+import { join } from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -162,8 +163,8 @@ test('spawnReflow: 以 herdr 事件载荷调用 workbench 脚本（pane.focused 
 
 test('reflowScriptPath: 默认指向同仓库的 workbench 脚本，可用 PIER_WORKBENCH_ROOT 覆盖', () => {
   const def = reflowScriptPath({});
-  assert.match(def, /packages\/pier-workbench\/scripts\/heat-reflow\.mjs$/);
-  assert.equal(reflowScriptPath({ PIER_WORKBENCH_ROOT: '/opt/wb' }), '/opt/wb/scripts/heat-reflow.mjs');
+  assert.ok(def.replaceAll('\\', '/').endsWith('packages/pier-workbench/scripts/heat-reflow.mjs'), def);
+  assert.equal(reflowScriptPath({ PIER_WORKBENCH_ROOT: '/opt/wb' }), join('/opt/wb', 'scripts', 'heat-reflow.mjs'));
 });
 
 test('spawnReflow: spawn 抛错/子进程 error 事件都不得冒泡（焦点热力是舒适功能）', () => {

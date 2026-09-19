@@ -223,7 +223,15 @@ test('startPipeServer (F04): listen 失败必须可见（onError），且无人�
   // 用目录占住 socket 路径：unlink 是 best-effort 删不掉目录，listen 必然 EADDRINUSE（实测 5ms 内）。
   const name = `pi-herdr-badpath-${process.pid}-${Date.now()}`;
   const p = pipePathFor(name);
-  fs.mkdirSync(p, { recursive: true });
+  // Occupy the socket address. POSIX: a directory on the file path (unlink-proof -> EADDRINUSE).
+  // Windows: pipe names live in the kernel namespace — mkdirSync would throw EPERM, so occupy
+  // the name with a live server instead (libuv binds with FIRST_PIPE_INSTANCE -> EADDRINUSE).
+  const squatter = net.createServer(() => {});
+  if (process.platform === 'win32') {
+    await new Promise<void>((resolve) => squatter.listen(p, () => resolve()));
+  } else {
+    fs.mkdirSync(p, { recursive: true });
+  }
   try {
     const seen = await new Promise<Error | null>((resolve) => {
       let server: net.Server | null = null;
@@ -245,6 +253,7 @@ test('startPipeServer (F04): listen 失败必须可见（onError），且无人�
     await new Promise((r) => setTimeout(r, 300));
     assert.ok(true);
   } finally {
-    fs.rmSync(p, { recursive: true, force: true });
+    await new Promise<void>((resolve) => squatter.close(() => resolve()));
+    if (process.platform !== 'win32') fs.rmSync(p, { recursive: true, force: true });
   }
 });

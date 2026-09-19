@@ -7,6 +7,7 @@
  * touching the developer's live herdr session.
  */
 import { test } from 'node:test';
+import { herdrSocketTarget } from '../src/herdr-client.ts';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as net from 'node:net';
@@ -96,7 +97,7 @@ function fakeHerdrServer(socketPath: string, focuses: Array<string | null>): Pro
     });
   });
   return new Promise((resolve) => {
-    server.listen(socketPath, () => {
+    server.listen(herdrSocketTarget(socketPath), () => {
       resolve({
         calls,
         close: () => new Promise<void>((done) => { 

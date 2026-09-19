@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:net';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { HERDR_PROTOCOL_EXPECTED, HerdrClient } from '../src/herdr-client.ts';
+import { HERDR_PROTOCOL_EXPECTED, HerdrClient, herdrSocketTarget } from '../src/herdr-client.ts';
 import { withCleanup } from './test-utils.ts';
 
 /** Minimal, schema-shaped answers: enough for the client's response parsing to succeed. */
@@ -68,7 +68,9 @@ class RecordingServer {
       });
       sock.on('error', () => { /* client may hang up */ });
     });
-    await new Promise<void>((resolve) => this.server!.listen(this.socketPath, () => resolve()));
+    // Raw filesystem socket paths fail with EACCES on Windows; route through the
+    // production transport helper (identity on POSIX, named pipe on win32).
+    await new Promise<void>((resolve) => this.server!.listen(herdrSocketTarget(this.socketPath), () => resolve()));
   }
 
   async close(): Promise<void> {
