@@ -292,11 +292,13 @@ test('D41 stop 提醒：未配置 stopReminder 时不注册催办钩子', async 
   await ctx.fiber.dispose();
 });
 
-test('core/todo：闸门深度>0 → widget 折叠一行；归零恢复；rerender 槽生效', async () => {
+test('core/todo：widget 始终单行、闸门时只留摘要、完成后清除', async () => {
   const pi = fakePi();
   let depth = 0;
-  const captured: string[][] = [];
-  const widgetCtx = { ui: { setWidget: (_id: string, lines: string[]) => { captured.push(lines); } } };
+  type WidgetFactory = ((tui: unknown, theme: unknown) => { render(width: number): string[] }) | undefined;
+  const captured: WidgetFactory[] = [];
+  const widgetCtx = { ui: { setWidget: (_id: string, content: WidgetFactory) => { captured.push(content); } } };
+  const rendered = (): string[] => captured.at(-1)?.(null, null).render(120) ?? [];
   const { state } = await mount(pi, undefined, { getBlockedDepth: () => depth });
   assert.equal(typeof state.rerenderWidget, 'function', 'rerender 槽已回填');
 
@@ -306,17 +308,21 @@ test('core/todo：闸门深度>0 → widget 折叠一行；归零恢复；rerend
       { content: 'b', status: 'pending' },
     ],
   }, undefined, undefined, widgetCtx);
-  state.renderWidget(widgetCtx);
-  assert.ok((captured.at(-1) ?? []).length > 1, '闸门关着 → 全量窗口');
+  assert.deepEqual(rendered(), ['todo: ▶1  ○1 · ▶ a · /todos']);
 
   depth = 1;
-  state.rerenderWidget(); // index enterBlocked 路径
-  const collapsed = captured.at(-1) ?? [];
-  assert.equal(collapsed.length, 1, '闸门开着 → 一行摘要');
-  assert.match(collapsed[0], /^todo: 1▶ 1○ /);
-  assert.match(collapsed[0], /\/todos/);
+  state.rerenderWidget();
+  assert.deepEqual(rendered(), ['todo: ▶1  ○1 · /todos']);
 
   depth = 0;
-  state.rerenderWidget(); // index exitBlocked 路径
-  assert.ok((captured.at(-1) ?? []).length > 1, '闸门释放 → 恢复全量');
+  state.rerenderWidget();
+  assert.deepEqual(rendered(), ['todo: ▶1  ○1 · ▶ a · /todos']);
+
+  await pi.tools.get('todo_write')?.execute?.(null, {
+    todos: [
+      { content: 'a', status: 'completed' },
+      { content: 'b', status: 'completed' },
+    ],
+  }, undefined, undefined, widgetCtx);
+  assert.equal(captured.at(-1), undefined, '全部完成后显式移除 widget');
 });

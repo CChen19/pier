@@ -14,12 +14,12 @@ import type { TodosService } from '../todos-service.ts';
 import { planTodoReadHook } from '../todo-read-hook.ts';
 import { TODO_REMINDER_CUSTOM_TYPE, planStopTodoReminder, todoReminderGraceMs } from '../todo-reminder-core.ts';
 import { makeProgressUpdate } from '../subagent-core.ts';
-import { TODO_DETAILS_KEY, TODO_TOOL_NAME, formatTodoConfirmation, type TodoItem } from '../vocab.ts';
+import { TODO_DETAILS_KEY, TODO_TOOL_NAME, countTodos, formatTodoConfirmation, type TodoItem } from '../vocab.ts';
 import { toolError } from '../tool-error.ts'
 
 /** Raw tool arguments: every field is validated inside the action handlers. */
 type ToolParams = Record<string, unknown> | undefined;;
-import { formatAge, isArchived } from '../stale-core.ts';
+import { formatAge, isArchived, openTodos } from '../stale-core.ts';
 import {
   TODO_EDIT_CUSTOM_TYPE,
   completionTransitions,
@@ -30,7 +30,8 @@ import {
   revertedCompleted,
   validateTodos,
 } from '../todo-core.ts';
-import { anchorTodoRange, formatTodoSummary, renderTodoGroups } from '../todo-window.ts';
+import { formatTodoSummary, renderTodoGroups, TODO_MARKS } from '../todo-window.ts';
+import { truncateStyled } from '../ansi-text.ts';
 import { swallow } from '../swallow.ts';
 
 export interface TodoUiSlot {
@@ -71,49 +72,46 @@ const TOOL_DESCRIPTION = [
   'Delegated work belongs on this list too. When you hand an entry to a subagent, append ` <sub>` to its content (the subagent is doing it, not you); when the subagent settles, a matching entry is auto-completed — you will see "Reconciled:" in the settlement note. If no auto-match fired, update the entry yourself.',
 ].join(' ');
 
-/** Stay within pi interactive mode's ten-line widget cap instead of relying on head truncation. */
-export const WIDGET_MAX_LINES = 10;
+/** The persistent todo widget is deliberately a single-line status strip. */
+export const WIDGET_MAX_LINES = 1;
+
+function formatWidgetSummary(items: readonly TodoItem[]): string {
+  const c = countTodos(items);
+  const visible: string[] = [];
+  if (c.inProgress > 0) visible.push(`▶${c.inProgress}`);
+  if (c.pending > 0) visible.push(`○${c.pending}`);
+  if (c.blocked > 0) visible.push(`■${c.blocked}`);
+  if (c.completed > 0) visible.push(`✓${c.completed}`);
+  return `todo: ${visible.join('  ')}`;
+}
 
 /**
- * Keep the active task visible within WIDGET_MAX_LINES instead of truncating to a fixed head or
- * tail. The window anchors on the first in-progress item, then the last open item, then recent
- * completions. A +N line points to /todos when the full plan cannot fit. This fixes 01a03c0d,
- * where active work scrolled out while only the final entries remained visible.
+ * Show only the aggregate state and the most useful open item. The full plan remains available
+ * through /todos. Settled lists disappear immediately instead of occupying fixed editor space.
  */
 export function widgetLines(
   items: readonly TodoItem[],
   opts?: { archivedAgeMs?: number | null; blockedDepth?: number | null },
 ): string[] {
-  if (items.length === 0) return [];
-  // Human gate open (ask_user_question waiting): the question + editor own the fixed area, so the
-  // widget collapses to the one-line summary — /todos still reaches the full list. Without this,
-  // a 10-line widget plus a multi-line question leaves almost no scrollable transcript
-  // (user-reported: both blocks visible ⇒ history range too small).
+  if (items.length === 0 || openTodos(items) === 0) return [];
   if ((opts?.blockedDepth ?? 0) > 0) {
-    return [`${formatTodoSummary(items)} · /todos 全量`];
-  }
-  // Collapse archived plans to two lines so stale work cannot monopolize the widget.
-  if (opts?.archivedAgeMs != null) {
-    return [
-      `${formatTodoSummary(items)} · archived ${formatAge(opts.archivedAgeMs)}`,
-      '  archived — /todos 全量',
-    ];
+    return [`${formatWidgetSummary(items)} · /todos`];
   }
 
-  // Reserve summary and overflow lines, then shrink around the anchor because phase headers also consume the budget.
-  const renderBudget = WIDGET_MAX_LINES - 1 - 1;
-  const [start, end] = anchorTodoRange(
-    items,
-    (s, e) => renderTodoGroups(items.slice(s, e)).length <= renderBudget,
-  );
-  const kept = items.slice(start, end);
-  const hidden = items.filter((_, i) => i < start || i >= end);
-  const lines = [formatTodoSummary(items), ...renderTodoGroups(kept)];
-  if (hidden.length > 0) {
-    const hiddenCompleted = hidden.filter((it) => it.status === 'completed').length;
-    lines.push(`   +${hidden.length} hidden (${hiddenCompleted}✓) · /todos 全量`);
-  }
-  return lines;
+  const focus = items.find((it) => it.status === 'in_progress')
+    ?? items.find((it) => it.status === 'pending')
+    ?? items.find((it) => it.status === 'blocked');
+  if (!focus) return [];
+  const blocker = focus.status === 'blocked' && focus.blocker ? ` — ${focus.blocker}` : '';
+  return [`${formatWidgetSummary(items)} · ${TODO_MARKS[focus.status]} ${focus.content}${blocker} · /todos`];
+}
+
+/** Width-aware component so a long task remains one physical terminal row. */
+export function todoWidgetComponent(line: string): { render(width: number): string[]; invalidate(): void } {
+  return {
+    render: (width: number) => [truncateStyled(line, width)],
+    invalidate() { /* No cached state. */ },
+  };
 }
 
 export default function todoPlugin(ctx: Context): void {
@@ -129,12 +127,15 @@ export default function todoPlugin(ctx: Context): void {
       : null;
   }
 
+  type WidgetComponent = { render(width: number): string[]; invalidate(): void };
+  type WidgetContent = ((tui: unknown, theme: unknown) => WidgetComponent) | undefined;
+
   /** Name the guarded event UI once so callers do not repeat unsafe inline assertions. */
-  function widgetUi(eventCtx: unknown): { setWidget?: (id: string, lines: string[]) => void } | undefined {
+  function widgetUi(eventCtx: unknown): { setWidget?: (id: string, content: WidgetContent) => void } | undefined {
     if (eventCtx === null || typeof eventCtx !== 'object' || !('ui' in eventCtx)) return undefined;
     const ui = (eventCtx as { ui: unknown }).ui; // Safe after the property guard above.
     return ui !== null && typeof ui === 'object'
-      ? (ui as { setWidget?: (id: string, lines: string[]) => void })
+      ? (ui as { setWidget?: (id: string, content: WidgetContent) => void })
       : undefined;
   }
 
@@ -143,10 +144,14 @@ export default function todoPlugin(ctx: Context): void {
   function renderWidget(eventCtx: unknown): void {
     if (eventCtx !== null && eventCtx !== undefined) lastEventCtx = eventCtx;
     try {
-      widgetUi(eventCtx)?.setWidget?.('todos', widgetLines(todos.items, {
+      const lines = widgetLines(todos.items, {
         archivedAgeMs: archivedAgeMs(),
         blockedDepth: getBlockedDepth?.() ?? 0,
-      }));
+      });
+      const content: WidgetContent = lines[0] === undefined
+        ? undefined
+        : () => todoWidgetComponent(lines[0]!);
+      widgetUi(eventCtx)?.setWidget?.('todos', content);
     } catch {
       /* Older pi versions may omit widget support without disabling todo tracking. */
     }
