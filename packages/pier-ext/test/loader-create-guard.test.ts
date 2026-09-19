@@ -41,6 +41,15 @@ test('update does not uninstall first', () => {
   assert.match(install, /pi', \['update'/);
 });
 
+test('personal fork refuses mutating installer commands without --dev', () => {
+  const root = fileURLToPath(new URL('../../../', import.meta.url));
+  const cli = join(root, 'install.mjs');
+  const blocked = spawnSync(process.execPath, [cli, 'update'], { encoding: 'utf8' });
+  assert.notEqual(blocked.status, 0);
+  assert.match(blocked.stderr, /fork is dev-only/);
+  assert.match(blocked.stderr, /update --dev/);
+});
+
 test('version --json and --help', () => {
   const root = fileURLToPath(new URL('../../../', import.meta.url));
   const cli = join(root, 'install.mjs');

@@ -72,6 +72,15 @@ const HERDR_SPEC = optValue('herdr-spec') ?? 'July24/pier/packages/pier-workbenc
 const log = (m) => console.log(m);
 const die = (m) => { console.error(`✗ ${m}`); process.exit(1); };
 
+// This personal fork is intentionally dev-only. Refuse every mutating user-mode path so an
+// accidental `node install.mjs update` cannot replace the linked checkout with npm:pi-pier.
+const informational = command === 'help' || command === 'version'
+  || flags.has('--help') || flags.has('-h') || flags.has('--version') || flags.has('-v');
+const mutating = command === null || command === 'install' || command === 'update' || command === 'uninstall';
+if (!dev && !informational && mutating) {
+  die('this fork is dev-only; rerun from ~/Projects/pier with --dev (for example: node install.mjs update --dev)');
+}
+
 /* ── Utility functions ────────────────────────────────────────────── */
 function which(bin) {
   try {
