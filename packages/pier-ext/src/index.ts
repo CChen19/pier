@@ -67,6 +67,7 @@ import {
   buildExcerptWindows,
   composeNoticeRanking,
   evaluateExcerptPick,
+  excerptAskIsSafe,
   excerptPickRequest,
   noticeRankRequest,
 } from './jev-core.ts';
@@ -156,12 +157,14 @@ export default async function (pi: ExtensionAPI) {
     if (!jevRuntime.available) return null;
     const halfBudget = Math.floor(excerptBudgetBytes / 2);
     const windows = buildExcerptWindows(text, halfBudget);
-    if (windows.length === 0) return null; // no failure-signal lines -> keep halves, no API call
-    const request = excerptPickRequest(
-      windows,
-      completeLineExcerpt(text, halfBudget, false),
-      completeLineExcerpt(text, excerptBudgetBytes - halfBudget, true),
-    );
+    if (windows.length === 0) return null; // degenerate budget only — the always-on mid window keeps candidates non-empty
+    const headExcerpt = completeLineExcerpt(text, halfBudget, false);
+    const tailExcerpt = completeLineExcerpt(text, excerptBudgetBytes - halfBudget, true);
+    // Since the 2026-09-19 flip every packed output reaches here; credential-
+    // shaped text in the request state never leaves the process (§8 privacy
+    // boundary) — keep the legacy halves instead.
+    if (!excerptAskIsSafe(windows, headExcerpt, tailExcerpt)) return null;
+    const request = excerptPickRequest(windows, headExcerpt, tailExcerpt);
     if (!request) return null;
     const result = await jevRuntime.ask(request, {
       questionId: 'obs-excerpt-window',

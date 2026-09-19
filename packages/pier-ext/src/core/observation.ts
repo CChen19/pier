@@ -160,15 +160,19 @@ export async function packOneMessage(opts: {
   obsConfig: ObservationPackConfig;
   log?: PackLogOptions;
   pickMiddleExcerpt?: PickMiddleExcerpt;
+  /** Precomputed middle excerpt (the batch path prefetches concurrently); null = none. */
+  middle?: ExcerptMiddlePick | null;
 }): Promise<PackMessageResult | null> {
   const { sessionRoot, toolName, toolCallId, text, textBytes, charLength, obsConfig, log, pickMiddleExcerpt } = opts;
   const contentHash = sha256Hex(text);
   const obsId = deriveObservationId(toolName, toolCallId, contentHash);
   const originalTokens = estimateTokens(text);
   const lines = countLines(text);
-  const middle = pickMiddleExcerpt
-    ? (await pickMiddleExcerpt(text, obsConfig.excerptBytes)) ?? undefined
-    : undefined;
+  const middle = opts.middle !== undefined
+    ? (opts.middle ?? undefined)
+    : pickMiddleExcerpt
+      ? (await pickMiddleExcerpt(text, obsConfig.excerptBytes)) ?? undefined
+      : undefined;
   const placeholder = formatObservationPlaceholder({
     id: obsId,
     toolName,
@@ -251,11 +255,20 @@ export async function batchPackObservations(opts: {
   const maxItems = opts.limits?.maxItems ?? MAX_BATCH_PACK_ITEMS;
   const maxBytes = opts.limits?.maxBytes ?? MAX_BATCH_PACK_BYTES;
 
-  let packedCount = 0;
-  let accumulatedBytes = 0;
-
+  // Pass 1 — select candidates with the deterministic checks (memo, receipt,
+  // size, soft byte cap). Selection is optimistic on bytes: a later store
+  // failure can only pack fewer items, never more than the caps allow.
+  interface BatchCandidate {
+    toolName: string;
+    toolCallId: string;
+    text: string;
+    textBytes: number;
+    charLength: number;
+  }
+  const candidates: BatchCandidate[] = [];
+  let selectedBytes = 0;
   for (let i = 0; i < messages.length; i++) {
-    if (packedCount >= maxItems) break;
+    if (candidates.length >= maxItems) break;
     const msg = messages[i];
     if (!msg || msg.role !== 'toolResult' || (msg as { isError?: boolean }).isError) continue;
     const content = (msg as { content?: Array<{ type: string; text?: string }> }).content;
@@ -276,24 +289,36 @@ export async function batchPackObservations(opts: {
     if (textBytes < obsConfig.thresholdBytes) continue;
 
     // Check soft maxBytes limit before packing
-    if (accumulatedBytes + textBytes > maxBytes && packedCount > 0) break;
+    if (selectedBytes + textBytes > maxBytes && candidates.length > 0) break;
+    selectedBytes += textBytes;
+    candidates.push({ toolName, toolCallId, text, textBytes, charLength });
+  }
+  if (candidates.length === 0) return 0;
 
+  // Pass 2 — prefetch middle excerpts CONCURRENTLY. Since the 2026-09-19
+  // jev-first flip every packed output asks jev; a serial loop would block
+  // onBeforeCompact for up to maxItems × (0.25–0.77s) per compaction.
+  const picker = opts.pickMiddleExcerpt;
+  const middles = picker
+    ? await Promise.all(candidates.map((c) => picker(c.text, obsConfig.excerptBytes)))
+    : [];
+
+  // Pass 3 — pack with the prefetched excerpts (store failures pack fewer).
+  let packedCount = 0;
+  for (let i = 0; i < candidates.length; i++) {
+    const candidate = candidates[i]!;
     const packed = await packOneMessage({
       sessionRoot,
-      toolName,
-      toolCallId,
-      text,
-      textBytes,
-      charLength,
+      toolName: candidate.toolName,
+      toolCallId: candidate.toolCallId,
+      text: candidate.text,
+      textBytes: candidate.textBytes,
+      charLength: candidate.charLength,
       obsConfig,
       log: { logEnabled: obsConfig.logEnabled, event: 'packed-batch', sessionId, extra: { source: 'compaction' } },
-      pickMiddleExcerpt: opts.pickMiddleExcerpt,
+      middle: picker ? (middles[i] ?? null) : undefined,
     });
-
-    if (packed) {
-      packedCount++;
-      accumulatedBytes += packed.originalBytes;
-    }
+    if (packed) packedCount++;
   }
   return packedCount;
 }

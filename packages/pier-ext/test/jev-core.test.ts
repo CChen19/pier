@@ -13,7 +13,9 @@ import {
   diagnosticGateRequest,
   evaluateDiagnosticGate,
   evaluateExcerptPick,
+  excerptAskIsSafe,
   excerptPickRequest,
+  isDiagnosticGateUnanswered,
   noticeRankRequest,
   parseJevAnswers,
   type JevAnswer,
@@ -84,6 +86,14 @@ test('evaluateDiagnosticGate：命中 / 非目标 / 低置信 / 非诊断输出'
   assert.equal(evaluateDiagnosticGate(gateAnswers('build_test_run', 0.9, DIAGNOSTIC_OUTPUT_MIN_NOUL - 0.01), 0.6).reason, 'non-diagnostic-output');
 });
 
+test('isDiagnosticGateUnanswered：missing/低置信 = 未答（回退正则）；确信拒绝与命中 = 已答', () => {
+  assert.equal(isDiagnosticGateUnanswered(evaluateDiagnosticGate({}, 0.6)), true);
+  assert.equal(isDiagnosticGateUnanswered(evaluateDiagnosticGate(gateAnswers('build_test_run', 0.5, 0.99), 0.6)), true);
+  assert.equal(isDiagnosticGateUnanswered(evaluateDiagnosticGate(gateAnswers('install_deps', 0.99, 0.99), 0.6)), false);
+  assert.equal(isDiagnosticGateUnanswered(evaluateDiagnosticGate(gateAnswers('build_test_run', 0.9, 0.2), 0.6)), false);
+  assert.equal(isDiagnosticGateUnanswered(evaluateDiagnosticGate(gateAnswers('build_test_run', 0.9, 0.95), 0.6)), false);
+});
+
 // ---------------------------------------------------------------------------
 // P0-2 结算排序
 // ---------------------------------------------------------------------------
@@ -147,12 +157,18 @@ function logWithMiddleFailure(): string {
   return `${head}\n${middle}\n${tail}`;
 }
 
-test('buildExcerptWindows：首信号行窗口含错误行；无信号 → 空数组（不调 API）', () => {
+test('buildExcerptWindows：首信号行窗口含错误行；无信号 → 恒在中段窗（2026-09-19 翻转）', () => {
   const windows = buildExcerptWindows(logWithMiddleFailure(), 512);
   assert.ok(windows.length >= 1);
   assert.equal(windows[0]!.id, 'first_signal');
   assert.ok(windows[0]!.text.includes('Error: assertion failed'));
-  assert.equal(buildExcerptWindows('nothing wrong here\n'.repeat(100), 512).length, 0);
+
+  // No failure-signal lines (e.g. CJK logs the English regex cannot see):
+  // the always-on mid window keeps jev in the loop instead of skipping the call.
+  const plain = Array.from({ length: 100 }, (_, i) => `plain ${i}`).join('\n');
+  const midOnly = buildExcerptWindows(plain, 512);
+  assert.deepEqual(midOnly.map((w) => w.id), ['mid']);
+  assert.ok(midOnly[0]!.text.startsWith('plain 50'), 'mid window anchors at the middle line');
 });
 
 test('excerptPickRequest/evaluateExcerptPick：候选入选项；keep_head_tail 与低置信 → null', () => {
@@ -169,11 +185,25 @@ test('excerptPickRequest/evaluateExcerptPick：候选入选项；keep_head_tail 
     window: { type: 'choice', choice: 'keep_head_tail', probabilities: {}, confidence: 0.9 },
   };
   assert.equal(evaluateExcerptPick(keep, 0.6), null);
+  const midPick: Record<string, JevAnswer> = {
+    window: { type: 'choice', choice: 'mid', probabilities: {}, confidence: 0.8 },
+  };
+  assert.equal(evaluateExcerptPick(midPick, 0.6), 'mid');
   const low: Record<string, JevAnswer> = {
     window: { type: 'choice', choice: 'first_signal', probabilities: {}, confidence: 0.4 },
   };
   assert.equal(evaluateExcerptPick(low, 0.6), null);
   assert.equal(excerptPickRequest([], 'h', 't'), null);
+});
+
+test('excerptAskIsSafe：state 任一部分含凭据形文本 → false（翻转后每包都外发，密钥留在本地）', () => {
+  const clean = buildExcerptWindows(Array.from({ length: 100 }, (_, i) => `plain ${i}`).join('\n'), 256);
+  assert.equal(clean.length > 0, true);
+  assert.equal(excerptAskIsSafe(clean, 'head', 'tail'), true);
+  assert.equal(excerptAskIsSafe(clean, 'Authorization: Bearer sk-abcdefghijklmnop12', 'tail'), false);
+  assert.equal(excerptAskIsSafe(clean, 'head', 'api_key=sk-abcdefghij123456'), false);
+  const secretWindow = [{ id: 'mid' as const, label: 'm', text: 'password: sk-abcdefghij123456789012' }];
+  assert.equal(excerptAskIsSafe(secretWindow, 'head', 'tail'), false);
 });
 
 // ---------------------------------------------------------------------------

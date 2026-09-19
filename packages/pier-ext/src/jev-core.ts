@@ -13,7 +13,7 @@
  *  - any answer below its confidence gate counts as unanswered -> caller
  *    fails open to the existing heuristic.
  */
-import { FAILURE_SIGNAL } from './reducer-core.ts';
+import { containsLikelySecret, FAILURE_SIGNAL } from './reducer-core.ts';
 
 // ---------------------------------------------------------------------------
 // Request/response shapes (closed set)
@@ -178,6 +178,17 @@ export function evaluateDiagnosticGate(
   return { hit: true, reason: 'hit', confidence: kind.confidence, choice: kind.choice, noul: output.noul };
 }
 
+/**
+ * Flip semantics (2026-09-19, user directive): jev is the primary judge and
+ * the regex list is the fallback. The regex list only decides when jev never
+ * produced a usable answer — call failure, malformed answers, or a below-gate
+ * confidence. A confident not-build-test / non-diagnostic-output verdict is an
+ * authoritative rejection even for commands the regex list would match.
+ */
+export function isDiagnosticGateUnanswered(verdict: DiagnosticGateVerdict): boolean {
+  return verdict.reason === 'missing-answer' || verdict.reason === 'low-confidence';
+}
+
 // ---------------------------------------------------------------------------
 // P0-2: settlement-notice relevance ranking
 // ---------------------------------------------------------------------------
@@ -273,7 +284,7 @@ export function composeNoticeRanking(
 // P0-3: OBS excerpt window candidates (head/tail halves miss the middle)
 // ---------------------------------------------------------------------------
 
-export type ExcerptWindowId = 'first_signal' | 'densest';
+export type ExcerptWindowId = 'first_signal' | 'densest' | 'mid';
 
 export interface ExcerptWindow {
   readonly id: ExcerptWindowId;
@@ -307,9 +318,12 @@ function buildLineWindow(lines: readonly string[], start: number, budgetBytes: n
 }
 
 /**
- * Generate code-owned middle-window candidates for a packed observation:
- * the region around the first failure-signal line, and the densest cluster
- * of failure-signal lines within one half-budget. Deterministic, no model.
+ * Generate code-owned middle-window candidates for a packed observation.
+ * Failure-signal windows (first hit, densest cluster) when present, plus a
+ * plain middle-of-output window that is ALWAYS offered (2026-09-19 flip): jev
+ * judges every packed output — including logs whose failure lines the English
+ * FAILURE_SIGNAL regex cannot see (CJK output, exit-code-only failures).
+ * Deterministic, no model.
  */
 export function buildExcerptWindows(text: string, halfBudgetBytes: number): ExcerptWindow[] {
   if (halfBudgetBytes <= 0) return [];
@@ -318,28 +332,35 @@ export function buildExcerptWindows(text: string, halfBudgetBytes: number): Exce
   for (let i = 0; i < lines.length; i++) {
     if (FAILURE_SIGNAL.test(lines[i]!)) signalLines.add(i);
   }
-  if (signalLines.size === 0) return [];
 
   const out: ExcerptWindow[] = [];
   const seen = new Set<string>();
 
-  const first = Math.min(...signalLines);
-  const firstWindow = buildLineWindow(lines, Math.max(0, first - 2), halfBudgetBytes, signalLines);
-  if (firstWindow !== null && !seen.has(firstWindow.text)) {
-    seen.add(firstWindow.text);
-    out.push({ id: 'first_signal', label: 'first failure-signal region', text: firstWindow.text });
+  if (signalLines.size > 0) {
+    const first = Math.min(...signalLines);
+    const firstWindow = buildLineWindow(lines, Math.max(0, first - 2), halfBudgetBytes, signalLines);
+    if (firstWindow !== null && !seen.has(firstWindow.text)) {
+      seen.add(firstWindow.text);
+      out.push({ id: 'first_signal', label: 'first failure-signal region', text: firstWindow.text });
+    }
+
+    // Densest cluster: anchor at every signal line, extend greedily while in budget.
+    let best: LineWindow | null = null;
+    for (const anchor of signalLines) {
+      const window = buildLineWindow(lines, anchor, halfBudgetBytes, signalLines);
+      if (window === null) continue;
+      if (best === null || window.signalCount > best.signalCount) best = window;
+    }
+    if (best !== null && !seen.has(best.text)) {
+      seen.add(best.text);
+      out.push({ id: 'densest', label: 'densest failure-signal region', text: best.text });
+    }
   }
 
-  // Densest cluster: anchor at every signal line, extend greedily while in budget.
-  let best: LineWindow | null = null;
-  for (const anchor of signalLines) {
-    const window = buildLineWindow(lines, anchor, halfBudgetBytes, signalLines);
-    if (window === null) continue;
-    if (best === null || window.signalCount > best.signalCount) best = window;
-  }
-  if (best !== null && !seen.has(best.text)) {
-    seen.add(best.text);
-    out.push({ id: 'densest', label: 'densest failure-signal region', text: best.text });
+  const midAnchor = Math.min(Math.floor(lines.length / 2), Math.max(0, lines.length - 1));
+  const midWindow = buildLineWindow(lines, midAnchor, halfBudgetBytes, signalLines);
+  if (midWindow !== null && !seen.has(midWindow.text)) {
+    out.push({ id: 'mid', label: 'middle region of the output', text: midWindow.text });
   }
   return out;
 }
@@ -377,5 +398,23 @@ export function evaluateExcerptPick(
   const picked = answers.window;
   if (picked === undefined || picked.type !== 'choice') return null;
   if (picked.confidence < minConfidence) return null;
-  return picked.choice === 'first_signal' || picked.choice === 'densest' ? picked.choice : null;
+  return picked.choice === 'first_signal' || picked.choice === 'densest' || picked.choice === 'mid'
+    ? picked.choice
+    : null;
+}
+
+/**
+ * Local privacy gate for the excerpt-pick request (2026-09-19 flip): the
+ * request state is the head/tail excerpts plus candidate windows, and since
+ * the flip it is sent for EVERY packed output — a path the EPR secret gate
+ * never covers. Credential-shaped text in any state part keeps the whole
+ * request local (legacy halves, no API call).
+ */
+export function excerptAskIsSafe(
+  middleWindows: readonly ExcerptWindow[],
+  headExcerpt: string,
+  tailExcerpt: string,
+): boolean {
+  const parts = [headExcerpt, tailExcerpt, ...middleWindows.map((w) => w.text)];
+  return !parts.some((part) => containsLikelySecret(part));
 }

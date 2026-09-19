@@ -13,7 +13,7 @@
 |---|---|---|---|
 | **ObservationPack (OBS)** | 大工具输出（默认 >10KB）发满 `fullSends` 轮后，在**投影层**替换为占位符 + `obs_recall` 分页取回（会话 JSONL 不变） | 不再每轮重放巨型输出 | 长测试/构建日志反复出现时 |
 | **EPR (Evidence-Preserving Reducer)** | `bash` 诊断命令（test/build/lint 类）的长日志在进程内用轻量模型提炼成"收据"，**原文强制落盘可回读** | 一轮省掉整段日志重放 | 经常跑 `npm test`/`pytest`/`cargo test` 且日志很长 |
-| **jev 决策层** | 可选的 TypeSafe "System One" 分类调用,给下面三机制补判断:EPR 诊断命令门(正则漏判时)、结算通知按相关性排序、OBS 摘录选中段 | 清单外工具链不再漏提炼;关键失败不被折叠;少一次 recall | 愿意配一个 Typesafe API key 时 |
+| **jev 决策层** | 可选的 TypeSafe "System One" 分类调用,给下面三机制补判断:EPR 诊断命令门(jev 优先、正则兜底)、结算通知按相关性排序、OBS 摘录选中段(中段窗恒在) | 清单外工具链不再漏提炼;关键失败不被折叠;少一次 recall | 愿意配一个 Typesafe API key 时 |
 
 四者互相独立，可单独开；互斥规则（EPR 收据不再打包、`obs_recall` 输出不提炼等）已内置。
 
@@ -162,6 +162,10 @@ PI_HERDR_COMPACT_ENABLE=1 PI_HERDR_COMPACT_LOG=1 PI_HERDR_CACHE_RATIO=auto pi
 - **EPR 会把日志发给模型**：`localOnly: true` 时只归档不提炼；命中 `api_key|authorization|bearer|access_token|secret` 特征的行会直接放弃提炼、原样输出全文（遥测只记 `reason:"likely-secret"`）。
 - **未受信项目的工作区配置整份忽略**；EPR 另外还会在运行时校验 `ctx.isProjectTrusted()`。
 - **回滚**：删掉环境变量 / 把配置里的 `enabled` 置 `false` 即可即时恢复；已产生的日志与对象只影响磁盘占用（会被自动剪枝），不会影响会话正确性。
+- **jev 关闭时的护栏**(2026-09-19 翻转,门序重排后):EPR 的执行序为 廉价前置(截断或
+  预览 ≥ minBytes)→ 诊断门(纯代码正则)→ 全文解析/密钥扫描。jev 关闭时诊断门退化为
+  正则判定,候选集合、证据行(`truncated-source`/`likely-secret`)分布、输出解析次数
+  与翻转前**完全一致**——无护栏例外。
 
 ---
 
@@ -192,16 +196,17 @@ PI_HERDR_COMPACT_ENABLE=1 PI_HERDR_COMPACT_LOG=1 PI_HERDR_CACHE_RATIO=auto pi
 ## 8. jev 决策层(P0-1/2/3,2026-09-18)
 
 设计全文见 `docs/rfc-jev-integration.md`。与上面三机制同住一个配置平面,
-但性质不同:它**不做任何 I/O 语义**,只给三处手写判断补一个"第二意见",
+但性质不同:它**不做任何 I/O 语义**,只给三处判断供给模型裁决(2026-09-19 起
+P0-1/P0-3 为 **jev 优先、纯代码兜底**;P0-2 本就 jev 优先),
 且**逐点 fail-open**——关掉、没 key、超时、429、低置信度,行为都与从前逐字节一致。
 
 | 接入点 | **前置(不开则零调用)** | 触发条件 | jev 问什么 | 回退 |
 |---|---|---|---|---|
-| EPR 诊断命令门 | **EPR 开启**(`evidencePreservingReducer.enabled`) | 正则清单**未命中**的 bash 命令(命中即短路不调 API) | 命令类型 Choice + 是否诊断输出 Noul,1s 预算 | 维持"非诊断命令"(不提炼) |
+| EPR 诊断命令门 | **EPR 开启**(`evidencePreservingReducer.enabled`) | 输出达提炼前置门(截断或预览 ≥ minBytes,默认 4KB)的候选 bash 命令(**每个候选都问**;小输出零调用;正则清单降级为兜底) | 命令类型 Choice + 是否诊断输出 Noul,1.5s 预算 | jev 不可用/失败/低置信 → 回退正则清单判定;确信拒绝则不提炼(权威) |
 | 结算通知排序 | 无(独立于三机制,只需 jev 可用) | 折叠批量 **>3 条**时(≤3 不调)——需并行子代理结算攒批 | 每条一个相关性 Score + 失败 Noul,一次调用;阈值 0.7(CJK 折扣) | 到达序前 3(现行为) |
-| OBS 摘录选窗 | **OBS 开启**(`observationPack.enabled`) | 大输出已打包且含**失败信号行**(否则不调) | 头/尾/首信号窗/最密窗 哪个最有信息量 Choice | 头尾对半劈半(现行为) |
+| OBS 摘录选窗 | **OBS 开启**(`observationPack.enabled`) | 大输出已打包(**中段候选窗恒在**,不再要求失败信号行——CJK 日志同样覆盖) | 头/尾/首信号窗/最密窗/中段窗 哪个最有信息量 Choice | 头尾对半劈半(现行为) |
 
-> **后台 usage=0?先对这张表。** jev 层自己不产生调用——它是上面三机制的"第二意见"。
+> **后台 usage=0?先对这张表。** jev 层自己不产生调用——调用仍由宿主机制与触发条件门住(2026-09-19 翻转后,jev 在 EPR 门/摘录选窗是**优先判断**,失败/不可用才回退纯代码逻辑)。
 > 只开 `jev.enabled` 而 EPR/OBS 都关着时,唯一可能触发的是结算排序,而它要求一次
 > flush 攒下 **>3 条**结算;普通单代理会话一条都不会发,后台 usage=0 属**预期**而非故障。
 > 本地以 `jev.jsonl` 为准(开 `logEnabled`),比后台面板更即时。
@@ -209,8 +214,8 @@ PI_HERDR_COMPACT_ENABLE=1 PI_HERDR_COMPACT_LOG=1 PI_HERDR_CACHE_RATIO=auto pi
 **开始试用**:把上面配置示例的 `jev` 段写进 `~/.pi/agent/herdr-pi/config.json`
 (用户级)或 `<repo>/.pi-herdr/config.json`(受信工作区,整体覆盖不深合并),
 填上 `apiKey`,**并开启想要点亮的宿主机制(EPR / OBS)**,重开 pi 会话即可;
-`PIER_JEV_ENABLE=1` 可临时开。最快点亮路径:同时开 EPR,跑一条正则清单外的
-诊断命令(`deno test` / `bun test` / `mix test`),第一次工具结果即产生一条
+`PIER_JEV_ENABLE=1` 可临时开。最快点亮路径:同时开 EPR,跑任一条输出 ≥4KB 的
+bash 命令(2026-09-19 翻转后正则清单内外都会先问 jev),第一次工具结果即产生一条
 `epr-diagnostic-gate` 调用。
 
 **看什么**:`/pier-config show efficiency` 会列出 `jev.*` 全部键的生效值与来源;
@@ -218,7 +223,11 @@ PI_HERDR_COMPACT_ENABLE=1 PI_HERDR_COMPACT_LOG=1 PI_HERDR_CACHE_RATIO=auto pi
 (`questionId`/`latencyMs`/`usage`/`verdict`/`fallback` 原因;`stateHash`/`stateBytes`
 代替明文——排查时对不上内容属预期)。
 
-**隐私边界**:发给 TypeSafe 的 state 只有——命令行字符串(P0-1)、
-结算摘要 + master 当前 in_progress todo 文本(P0-2,D1 决策:直接发送,不设开关)、
-候选摘录窗文本(P0-3)。官方声明不用客户数据训练(企业版 ZDR,见 Legal)。
-日志原文与凭据形字符串不会出现在任何 jev 请求里(EPR 的 LIKELY_SECRET 门在其自身路径上)。
+**隐私边界**(2026-09-19 翻转后实情):发给 TypeSafe 的 state 只有——
+候选命令的**命令行字符串**(P0-1。翻转前外发的恰是**清单外**命令——正则命中即短路
+从不外发;且旧门在尺寸检查之前,`ls` 这类小输出也会发。翻转后改为**清单内外都发**,
+但仅限越过提炼前置门的候选,小输出零外发)、结算摘要 + master 当前 in_progress todo
+文本(P0-2,D1 决策:直接发送,不设开关)、被打包输出的头/中/尾**摘录窗文本**(P0-3,
+翻转前仅含英文失败信号行的输出才外发,现在所有被打包输出都发)。**P0-1/P0-3 出网前
+各跑一次本地 `LIKELY_SECRET` 门,凭据形字符串不出现在这两条路径的任何请求里**;
+P0-2 按上述 D1 决策无此门。官方声明不用客户数据训练(企业版 ZDR,见 Legal)。

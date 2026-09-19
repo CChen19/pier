@@ -367,6 +367,65 @@ test('ObservationPack: batchPackObservations pre-packs large observations at OCC
   }
 });
 
+test('ObservationPack: batch prefetches middle excerpts concurrently, one pick per candidate (2026-09-19 flip)', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'pier-obs-parallel-test-'));
+  try {
+    clearObservationMemoForTest();
+    const config = {
+      ...DEFAULT_EFFICIENCY_CONFIG.observationPack,
+      enabled: true,
+      thresholdBytes: 500,
+    };
+    const messages = [1, 2, 3].map((n) => ({
+      role: 'toolResult',
+      toolName: 'bash',
+      toolCallId: `tc_parallel_${n}`,
+      content: [{ type: 'text', text: `PARALLEL ${n}: long line...\n`.repeat(50) }],
+    }));
+
+    // Deterministic concurrency probe: every pick blocks on `release`; only a
+    // concurrent prefetch lets all three be in flight at once. No real timers.
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let calls = 0;
+    const release = Promise.withResolvers<void>();
+    const turn = async (): Promise<void> => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      setImmediate(resolve);
+      await promise;
+    };
+    const pickMiddleExcerpt = async () => {
+      calls++;
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await release.promise;
+      inFlight--;
+      return { text: 'mid window', label: 'test window' };
+    };
+
+    const batch = batchPackObservations({
+      sessionRoot: tempDir,
+      sessionId: 'session_parallel',
+      messages,
+      obsConfig: config,
+      pickMiddleExcerpt,
+    });
+    // Drain the event loop: a serial implementation would sit on its first
+    // pending pick; a concurrent one has all three parked on `release`.
+    for (let i = 0; i < 10; i++) await turn();
+    release.resolve();
+    const packedCount = await batch;
+
+    assert.equal(packedCount, 3);
+    // A serial loop would block onBeforeCompact for candidates × jev latency.
+    assert.equal(maxInFlight, 3, 'prefetch must run concurrently, not serially');
+    assert.equal(calls, 3, 'the prefetched middle is consumed; packing must not re-pick');
+  } finally {
+    clearObservationMemoForTest();
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('ObservationPack: multi-block content matches memoKey and avoids recalculation (P1 fix §13.1)', async () => {
   const tempDir = await mkdtemp(join(tmpdir(), 'pier-obs-multiblock-test-'));
   const sessionId = 'session_test_06';
