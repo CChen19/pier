@@ -50,7 +50,18 @@ import {
 import { WRITE_LOCK_ENV } from './lock-core.ts';
 import { ABORT_STOP_REASON, planSettleWake } from './settle-wake-core.ts';
 import { composeForRole } from './manifest-compose.ts';
+import type { ComposedForRole } from './manifest-compose.ts';
 import { parseRuntimeManifest, planActiveTools, planToolGate, type RuntimeRoleManifest } from './tool-gate.ts';
+import {
+  initialRoleState,
+  latestRoleManifestRecord,
+  manifestFromRecord,
+  planRoleSwitch,
+  planSwitchActiveTools,
+  roleRecordDiffers,
+} from './role-state.ts';
+import { readdirSync } from 'node:fs';
+import { RESERVED_ROLE_NAMES, roleLayers } from './role-loader.ts';
 
 import { formatPaneTitle } from './pane-title.ts';
 import { registerSlimFrame, updateSlimFrame } from './slim-frame.ts';
@@ -124,6 +135,7 @@ function composeMasterRuntime(): RuntimeRoleManifest | null {
       permissions: manifest.permissions,
       unknownTools: manifest.unknownTools,
       services: role.services ?? {},
+      ...(role.guidelines?.length ? { guidelines: role.guidelines } : {}),
     };
   } catch (err) {
     console.error(`[pi-herdr] master manifest invalid (fail-open): ${err instanceof Error ? err.message : String(err)}`);
@@ -137,10 +149,19 @@ function composeMasterRuntime(): RuntimeRoleManifest | null {
 export default async function (pi: ExtensionAPI) {
   const mode = planIndexMode();
   const isSubagent = mode.isSubagent;
-  const runtimeManifest =
+  const initialManifest =
     parseRuntimeManifest(process.env.PI_HERDR_ROLE_MANIFEST) ??
     (mode.composeMaster ? composeMasterRuntime() : null);
-  const todos = new TodosService(TodosService.configFromRuntime(runtimeManifest, isSubagent));
+  // P0: role-resolution base dir carried by the master at spawn (spawn composes against ITS
+  // checkout; an isolate/worktree worker's own cwd would resolve a different or absent
+  // .pi-herdr/roles/). Falls back to this pane's cwd for masters and bare pi.
+  const roleBase = process.env.PI_HERDR_ROLE_BASE || process.cwd();
+  // P0 (RFC docs/rfc-pi-0.86-dynamic-tools.md §4.2): mutable role state. The manifest parsed at
+  // process start is only the INITIAL value — mid-session switches replace it whole, and resume
+  // replays the last `pi-herdr.role-manifest` entry (session_start). All read sites go through
+  // roleState.manifest so the visible layer and the mandatory gate never drift apart.
+  const roleState = initialRoleState(initialManifest);
+  const todos = new TodosService(TodosService.configFromRuntime(initialManifest, isSubagent));
   const { client, env } = createHerdrClient();
   let effConfig: EfficiencyConfig = resolveEfficiencyConfig();
   const coordinator = new CompactCoordinator();
@@ -363,6 +384,77 @@ export default async function (pi: ExtensionAPI) {
 
   /* ── Lifecycle ────────────────────────────────────────────────────── */
 
+  /**
+   * P0 same-origin sync (RFC §4.3): reconcile roleState against the CURRENT branch point and
+   * re-anchor side effects. Runs on session_start (resume) AND session_tree (/tree, /fork) —
+   * pi's tool deltas are transcript entries, so navigating to a point before a switch reverts
+   * the loadout there; without the same replay here the gate/guidelines would keep the
+   * post-switch manifest while the visible layer shows the pre-switch one.
+   * Idempotent: replay only when the last role-manifest entry is a switch to a different role;
+   * the anchor write happens only on change; the D77 prune is a no-op when already pruned.
+   */
+  function syncRoleFromBranch(ctx: unknown): void {
+    if (!roleState.manifest) return;
+    try {
+      const branchEntries =
+        (ctx as { sessionManager?: { getBranch?: () => readonly unknown[] } }).sessionManager?.getBranch?.() ?? [];
+      const record = latestRoleManifestRecord(branchEntries);
+      // Only a switched role different from the current manifest is restored — the env value stays
+      // authoritative for unswitched sessions (and role files may have changed on disk since the
+      // switch, so the recorded tools/permissions are replayed verbatim).
+      if (record && record.origin === 'switch' && record.role !== roleState.manifest.role) {
+        roleState.manifest = manifestFromRecord(record);
+        roleState.origin = 'switch';
+        roleState.switchedBy = record.switchedBy ?? null;
+        roleState.switchedAt = record.ts ?? null;
+        console.error(`[pi-herdr] role replay: ${record.role} (switchedBy ${record.switchedBy ?? '?'})`);
+      }
+      // Change-only write: appending on every session_start would overwrite "last entry" with
+      // the env value and break the replay above for resumed switched sessions.
+      if (roleRecordDiffers(record, roleState)) {
+        const m = roleState.manifest;
+        pi.appendEntry(ROLE_MANIFEST_CUSTOM_TYPE, {
+          version: 1,
+          role: m.role,
+          manifestVersion: m.version,
+          tools: m.tools,
+          permissions: m.permissions,
+          unknownTools: m.unknownTools ?? 'deny',
+          ...(m.guidelines?.length ? { guidelines: m.guidelines } : {}),
+          ...(roleState.origin === 'switch'
+            ? { origin: 'switch' as const, switchedBy: roleState.switchedBy ?? undefined }
+            : {}),
+          ts: Date.now(),
+        });
+      }
+    } catch {
+      /* Best effort recording; the mandatory layer does not depend on the session log. */
+    }
+    // D93: sidebar identity is the role name (display_agent takes precedence over detected agent).
+    // master → 'master'; worker → manifest.role (prettify worker-default as worker).
+    const roleDisplay = roleState.manifest.role === 'worker-default' ? 'worker' : roleState.manifest.role;
+    void client.reportDisplayAgent(roleDisplay);
+    // Tier 2: badge from the effective manifest (post-replay), kept visible while idle.
+    roleBadge = `role ${roleState.manifest.role} v${roleState.manifest.version ?? '?'} (${roleState.manifest.tools.length} tools)`;
+    // D77 visible layer: remove tools outside the manifest from the model's view after all plugins load.
+    // Intersection semantics prevent clearing everything; master without a manifest stays full.
+    // pi 0.86: setActiveTools is recorded in the transcript as a tool delta, so the pruned loadout
+    // survives resume and branch navigation natively (RFC docs/rfc-pi-0.86-dynamic-tools.md §4.3).
+    try {
+      const active = pi.getActiveTools();
+      const vis = planActiveTools(roleState.manifest.tools, active, {
+        unknownTools: roleState.manifest.unknownTools,
+        permissions: roleState.manifest.permissions,
+      });
+      if (vis?.changed) {
+        pi.setActiveTools(vis.next);
+        console.error(`[pi-herdr] D77 visible-layer: role ${roleState.manifest.role} tools ${active.length} → ${vis.next.length}`);
+      }
+    } catch {
+      /* Best effort visible layer; the mandatory layer remains active. */
+    }
+  }
+
   pi.on('session_start', async (event, ctx) => {
     sessionId = resolveSessionId(ctx);
     const cwd = (ctx as { cwd?: string }).cwd ?? process.cwd();
@@ -389,41 +481,7 @@ export default async function (pi: ExtensionAPI) {
     // D93: sidebar identity is the role name (display_agent takes precedence over detected agent, actions.rs:563 in 0.8.2).
     // master → 'master'; worker → manifest.role (prettify worker-default as worker).
     // A bare pi without a manifest does not report, so ordinary pi sessions remain undisturbed.
-    if (runtimeManifest) {
-      const roleDisplay = runtimeManifest.role === 'worker-default' ? 'worker' : runtimeManifest.role;
-      void client.reportDisplayAgent(roleDisplay);
-    }
-    // Tier 2: worker role manifest parsed at process start supplies the badge and authoritative session record.
-    // The custom entry mirrors D38 todo-edit and anchors execution-time replay.
-    if (runtimeManifest) {
-      roleBadge = `role ${runtimeManifest.role} v${runtimeManifest.version ?? '?'} (${runtimeManifest.tools.length} tools)`;
-      try {
-        (pi as { appendEntry?: (customType: string, data: unknown) => void }).appendEntry?.(
-          ROLE_MANIFEST_CUSTOM_TYPE,
-          { version: 1, role: runtimeManifest.role, manifestVersion: runtimeManifest.version, tools: runtimeManifest.tools, permissions: runtimeManifest.permissions, unknownTools: runtimeManifest.unknownTools ?? 'deny', ts: Date.now() },
-        );
-      } catch {
-        /* Best effort recording. */
-      }
-      // D77 visible layer: remove tools outside the manifest from the model's view after all plugins load at session_start.
-      // Intersection semantics prevent clearing everything; master without a manifest stays full. Missing APIs are skipped for old pi compatibility.
-      const piTools = pi as { getActiveTools?: () => string[]; setActiveTools?: (names: string[]) => void };
-      if (typeof piTools.getActiveTools === 'function' && typeof piTools.setActiveTools === 'function') {
-        try {
-          const active = piTools.getActiveTools();
-          const vis = planActiveTools(runtimeManifest.tools, active, {
-            unknownTools: runtimeManifest.unknownTools,
-            permissions: runtimeManifest.permissions,
-          });
-          if (vis?.changed) {
-            piTools.setActiveTools?.(vis.next);
-            console.error(`[pi-herdr] D77 visible-layer: role ${runtimeManifest.role} tools ${active.length} → ${vis.next.length}`);
-          }
-        } catch {
-          /* Best effort visible layer; the mandatory layer remains active. */
-        }
-      }
-    }
+    syncRoleFromBranch(ctx);
     reportAgent('idle', null);
     // Self-healing: a gate does not survive a process restart, but the ask marker lives in herdr
     // with a 24h TTL, so a session killed while a dialog was open would otherwise keep the pane
@@ -436,9 +494,10 @@ export default async function (pi: ExtensionAPI) {
    * (V56 acceptance anchor). Master and label-only workers without a manifest remain open.
    * Rate limiting was removed (WS-D6): we own the permission boundary; plugin integrators own resource quotas. */
   pi.on('tool_call', async (event: { toolName?: string }) => {
-    if (!runtimeManifest) return;
+    const manifest = roleState.manifest;
+    if (!manifest) return;
     const tool = typeof event?.toolName === 'string' ? event.toolName : '';
-    const gate = planToolGate(tool, runtimeManifest);
+    const gate = planToolGate(tool, manifest);
     if (gate.kind === 'deny') {
       // terminate (pi 0.84.1+) stops a batch whose results are all terminating without another
       // model call, so a blocked worker tool no longer costs an extra round trip.
@@ -448,21 +507,170 @@ export default async function (pi: ExtensionAPI) {
       console.error(`${gate.notice} (v1 soft-approval: allowed, hard gate lands in v2)`);
       // Durable trace (V56 anchor): TUI redraw erases stderr, so the session custom entry is authoritative.
       try {
-        (pi as { appendEntry?: (customType: string, data: unknown) => void }).appendEntry?.(
-          APPROVAL_NEEDED_CUSTOM_TYPE,
-          { role: runtimeManifest.role, tool, ts: Date.now() },
-        );
+        pi.appendEntry(APPROVAL_NEEDED_CUSTOM_TYPE, { role: manifest.role, tool, ts: Date.now() });
       } catch {
         /* Best effort. */
       }
     }
   });
 
+  /* ── P0: mid-session role switching (RFC docs/rfc-pi-0.86-dynamic-tools.md §4) ──
+   * pi 0.86 records setActiveTools changes as transcript tool deltas (toolsRemoved/toolsAdded
+   * before the next request), so a switch survives resume/branch. The gate reads
+   * roleState.manifest, so mandatory and visible layers swap atomically. Callers: /pier-role
+   * (human; widening asks confirm) and the pipe 'role' request (master; free). */
+  async function applyRoleSwitch(
+    roleName: string,
+    switchedBy: string,
+  ): Promise<{ ok: boolean; message: string }> {
+    const current = roleState.manifest;
+    if (!current) {
+      return { ok: false, message: 'Error: role system not armed (no manifest; bare pi sessions cannot switch roles)' };
+    }
+    const name = roleName.trim();
+    if (name === '') return { ok: false, message: 'Error: role name is required (see /pier-role with no argument)' };
+    if (name === current.role) return { ok: true, message: `role is already ${name}` };
+    let composed: ComposedForRole;
+    try {
+      // Resolve against the spawn-inherited base (the master's checkout), matching how the
+      // initial manifest was composed — an isolate/worktree worker's own cwd is the wrong base.
+      composed = composeForRole(name, [], { loadRoleOpts: { baseDir: roleBase } });
+    } catch (err) {
+      return { ok: false, message: `Error: role "${name}" unavailable: ${(err as Error).message}` };
+    }
+    const next: RuntimeRoleManifest = {
+      role: composed.role.role,
+      version: composed.role.version,
+      tools: composed.manifest.tools,
+      permissions: composed.manifest.permissions,
+      unknownTools: composed.manifest.unknownTools,
+      services: composed.role.services ?? {},
+      ...(composed.role.guidelines?.length ? { guidelines: composed.role.guidelines } : {}),
+    };
+    const plan = planRoleSwitch(current.tools, next.tools);
+    // Universe = ALL registered tools, not the current active set: a switch may re-admit tools
+    // that an earlier session_start prune removed, which intersection semantics would lose.
+    // Stance opts mirror planActiveTools so an allow-stance role keeps unlisted registered tools.
+    const registered = pi.getAllTools().map((t) => t.name);
+    const nextActive = planSwitchActiveTools(next.tools, registered, {
+      unknownTools: next.unknownTools,
+      permissions: next.permissions,
+    });
+    pi.setActiveTools(nextActive);
+    // Re-derive construction-time consumers of the manifest: TodosService captured
+    // services.todos.mode at startup, so a switch to a different mode must reach it or the old
+    // serial/parallel behavior silently persists.
+    todos.config.allowParallelInProgress = TodosService.configFromRuntime(next, isSubagent).allowParallelInProgress;
+    roleState.manifest = next;
+    roleState.origin = 'switch';
+    roleState.switchedBy = switchedBy;
+    roleState.switchedAt = Date.now();
+    roleBadge = `role ${next.role} v${next.version ?? '?'} (${next.tools.length} tools)`;
+    try {
+      pi.appendEntry(ROLE_MANIFEST_CUSTOM_TYPE, {
+        version: 1,
+        role: next.role,
+        manifestVersion: next.version,
+        tools: next.tools,
+        permissions: next.permissions,
+        unknownTools: next.unknownTools ?? 'deny',
+        ...(next.guidelines?.length ? { guidelines: next.guidelines } : {}),
+        origin: 'switch' as const,
+        switchedBy,
+        ts: Date.now(),
+      });
+    } catch {
+      /* Best effort recording; the switch itself is already effective. */
+    }
+    void client
+      .reportDisplayAgent(next.role === 'worker-default' ? 'worker' : next.role)
+      .catch(() => {});
+    const diff = [
+      plan.added.length ? `+${plan.added.join(', ')}` : null,
+      plan.removed.length ? `-${plan.removed.join(', ')}` : null,
+    ]
+      .filter(Boolean)
+      .join(' ');
+    return {
+      ok: true,
+      message: `role ${current.role} → ${next.role}${diff ? ` (${diff})` : ''}; active tools: ${nextActive.length}`,
+    };
+  }
+
+  pi.registerCommand('pier-role', {
+    description:
+      'Show the current role + available role names, or switch: /pier-role <name> (widening beyond the current toolset asks for confirmation)',
+    handler: async (args: unknown, ctx: unknown) => {
+      const ui = (ctx as { ui?: { notify?: (t: string, l?: string) => void; confirm?: (t: string, m: string) => Promise<boolean> } }).ui;
+      const notify = (text: string, level: 'info' | 'error') => ui?.notify?.(text, level) ?? console.error(text);
+      const current = roleState.manifest;
+      if (!current) {
+        notify('Role system not armed (no manifest).', 'error');
+        return;
+      }
+      const name = typeof args === 'string' ? args.trim() : '';
+      if (name === '') {
+        const names = new Set<string>(RESERVED_ROLE_NAMES);
+        for (const layer of roleLayers({ baseDir: roleBase })) {
+          try {
+            for (const f of readdirSync(layer.dir)) {
+              if (f.endsWith('.json')) names.add(f.slice(0, -'.json'.length));
+            }
+          } catch {
+            /* Layer directory absent; later layers still apply. */
+          }
+        }
+        notify(
+          `Current role: ${current.role} (origin: ${roleState.origin}). Available: ${[...names].sort().join(', ')}`,
+          'info',
+        );
+        return;
+      }
+      try {
+        const preview = composeForRole(name, [], { loadRoleOpts: { baseDir: roleBase } });
+        const plan = planRoleSwitch(current.tools, preview.manifest.tools);
+        // Q2: humans may widen (after confirm) — the human is the final authority in the pane.
+        if (plan.widening && ui?.confirm) {
+          const okToWiden = await ui.confirm(
+            'Widen role toolset',
+            `Role "${name}" adds tools beyond the current set (${plan.added.join(', ')}). Switch anyway?`,
+          );
+          if (!okToWiden) {
+            notify('Role switch cancelled.', 'info');
+            return;
+          }
+        }
+      } catch (err) {
+        notify(`Error: role "${name}" unavailable: ${(err as Error).message}`, 'error');
+        return;
+      }
+      const res = await applyRoleSwitch(name, 'human');
+      notify(res.message, res.ok ? 'info' : 'error');
+    },
+  });
+
+  /* P0 §4.6: per-role guidelines ride the before_agent_start prompt-section diff. Writing the
+   * same string each turn is a no-op delta (pi diffs sections); removal happens when the current
+   * role has no guidelines, so a switch away cleans the section on the next turn. */
+  pi.on('before_agent_start', async (event) => {
+    const sections = event.systemPromptOptions?.sections;
+    if (!sections) return;
+    const m = roleState.manifest;
+    if (m?.guidelines?.length) {
+      const text = `Role "${m.role}" operating constraints:\n${m.guidelines.map((g) => `- ${g}`).join('\n')}`;
+      if (sections['pier-role'] !== text) sections['pier-role'] = text;
+    } else {
+      delete sections['pier-role'];
+    }
+  });
 
   // Session-tree navigation (/tree, /fork): reconstruction preserves branch correctness.
   pi.on('session_tree', async (_event, ctx) => {
     sessionId = resolveSessionId(ctx);
     rebuildFromBranch(ctx);
+    // P0: pi reverts the transcript loadout at the navigated branch point; the gate manifest,
+    // guidelines, badge and sidebar identity must follow the same point (same-origin, RFC §4.3).
+    syncRoleFromBranch(ctx);
     todoUi.renderWidget(ctx);
     mirrorTodos();
   });
@@ -554,7 +762,7 @@ export default async function (pi: ExtensionAPI) {
         cancelReminder: todoUi.cancelReminder,
         onBeforeCompact: createCompactionBatchPackHook({
           getObsConfig: () => effConfig.observationPack,
-          getManifest: () => runtimeManifest,
+          getManifest: () => roleState.manifest,
           getSessionId: () => sessionId,
           pickMiddleExcerpt,
         }),
@@ -664,7 +872,7 @@ export default async function (pi: ExtensionAPI) {
   registerObservationPack({
     pi,
     getConfig: () => effConfig,
-    getRuntimeManifest: () => runtimeManifest,
+    getRuntimeManifest: () => roleState.manifest,
     pickMiddleExcerpt,
     getRemainingHorizon: () => {
       const usage = (latestCtx as { getContextUsage?: () => { contextWindow?: number } })?.getContextUsage?.();
@@ -834,6 +1042,7 @@ export default async function (pi: ExtensionAPI) {
         sendUserMessageAs,
         abort: () => { latestCtx?.abort?.(); },
         setPendingMachineRequest: (next) => { pendingMachineRequest = next; },
+        applyRoleSwitch,
       }));
     } catch {
       /* Pipe name collision (rare): this session has no channel; callers report an error after ping times out. */

@@ -43,9 +43,9 @@ The installer also verifies node / pi / herdr versions, probes local paths, and 
 | Tool | Purpose |
 |---|---|
 | `todo_write` | Full-replacement todo list. Session JSONL is the single source of truth; correct rollback on branch switches. Projected live onto the pane title (`▶i ○p ■b ✓c (N/M) · current task`). `/todos` command to view/edit/unblock |
-| `subagent` | Delegate self-contained subtasks to an isolated pi session in its own herdr pane. Actions: `spawn` (default; foreground / parallel / background), `list`, `send`, `interrupt`, `resume`, `output` (incremental preview of a running subagent's pane output) |
-| `terminal` | Persistent interactive shells in dedicated herdr panes. Actions: `open`, `send`, `read`, `signal`, `close`, `list` |
+| `subagent` | Delegate self-contained subtasks to an isolated pi session in its own herdr pane. Actions: `spawn` (default; foreground / parallel / background), `list`, `send`, `interrupt`, `resume`, `output` (incremental preview of a running subagent's pane output), `role` (switch that worker's role profile mid-session — pi 0.86 records the toolset change as a transcript delta, so it applies on the worker's next request and survives resume) |
 | `ask_user_question` | Human gate: 2-5 authored options plus a trailing free-text row (`allowOther: false` for pure choice); multiple related questions per call. A `multi: true` question opens an interactive toggle list (space toggles, `a` all, enter confirms, esc declines); pane shows blocked in herdr while waiting |
+| `terminal` | Persistent interactive shells in dedicated herdr panes. Actions: `open`, `send`, `read`, `signal`, `close`, `list` |
 
 ### Commands
 
@@ -53,6 +53,7 @@ The installer also verifies node / pi / herdr versions, probes local paths, and 
 |---|---|
 | `/todos` | Show the todo list, or edit it: `/todos done|drop|rm|unblock <fuzzy match>` |
 | `/locks` | Show write locks held by this pane and by live panes — the **human/operator view** of the write-lock beacons (herdr only). Agents see the holders inside their own write warnings; the raw tokens are readable via `herdr agent list` |
+| `/pier-role` | Show the current role + available role names, or switch mid-session: `/pier-role <name>` (pi ≥ 0.86; widening beyond the current toolset asks for confirmation; the switch lands as a transcript tool delta) |
 | `/pier-config` | Read-only configuration guide over five planes: bare call = index + hands a guided change to the agent; `show [plane\|all]` = effective value + source (`env > workspace > user > default`); `check` = validate all planes; `doc [path]` = write a report |
 
 ### Behaviors
@@ -62,7 +63,7 @@ The installer also verifies node / pi / herdr versions, probes local paths, and 
 - **Role gate stops early**: a tool call denied by the role manifest returns `terminate`, so a batch whose results are all terminating ends without another model round trip
 - **Readable transcript**: pier's own session entries (todo edits, subagent/terminal registries, role manifests, soft approvals) and its reminder messages render as compact cards instead of raw JSON
 - **Soft locks**: write paths register per-pane beacons; conflicts warn (default) or block (`PI_HERDR_WRITE_LOCK=1`) instead of racing silently. Warnings name **every** holder — the audience split is: agent reads its own tool-result warning, human reads `/locks` (or `herdr agent list` for the raw token table). `write`/`edit` only — `bash` writes are not covered
-- **Role profiles**: built-in `master` / `worker-default`; custom roles mount from `.pi-herdr/roles/<name>.json`. Toolsets converge per role — deny rules cannot be bypassed
+- **Role profiles**: built-in `master` / `worker-default`; custom roles mount from `.pi-herdr/roles/<name>.json`. Toolsets converge per role — deny rules cannot be bypassed. A role manifest may carry `guidelines` (behavior constraints a toolset cannot express); they ride the system prompt as a `pier-role` section each turn. Masters can switch a worker's role remotely via `subagent action:"role"`; humans can switch the pane they are in via `/pier-role`
 - **Settlement notices folded**: background subagent completions inject between turns (max 3 shown, rest collapsed) instead of flood-filling at run end
 
 ## Scope & degradation
@@ -104,7 +105,7 @@ pi overwrites tools/commands by name; event listeners stack.
 ## Requirements
 
 - Node ≥ 22
-- pi ≥ 0.84.4 (`@earendil-works/pi-coding-agent`)
+- pi ≥ 0.86.0 (`@earendil-works/pi-coding-agent`) — dynamic toolset (transcript-backed `setActiveTools` deltas) and role switching require it
 - **herdr ≥ 0.9.0** — required for subagents / pane integration / notifications (see the IMPORTANT note above); without it only the todo loop and `ask_user_question` load
 
 ## Development

@@ -150,7 +150,14 @@ export function createSpawnAction(h: SpawnActionHost): SpawnAction {
           permissions: manifest.permissions,
           unknownTools: manifest.unknownTools,
           services: role.services ?? {},
+          // P0 §4.6: without this the worker's parseRuntimeManifest yields no guidelines and the
+          // pier-role prompt section silently no-ops for exactly the spawned workers that matter.
+          ...(role.guidelines?.length ? { guidelines: role.guidelines } : {}),
         }),
+        // P0: role resolution base — the worker's /pier-role and pipe 'role' switch must resolve
+        // workspace .pi-herdr/roles/ against the MASTER's checkout (spawn semantics), not the
+        // worker pane's own cwd (which for isolate/worktree workers is a different directory).
+        PI_HERDR_ROLE_BASE: masterCwd,
       };
       // WS-D10: Route the model by role; omission intentionally uses the process default.
       if (typeof role.model === 'string' && role.model.trim()) roleModel = role.model.trim();

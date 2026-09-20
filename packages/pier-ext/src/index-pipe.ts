@@ -24,6 +24,8 @@ export interface PipeHandlerSession {
   sendUserMessageAs: (content: string, mode: 'steer' | 'followUp') => Promise<void>;
   abort: () => void;
   setPendingMachineRequest: (req: MachineRequest | null) => void;
+  /** P0 (RFC §4.4): apply a role switch requested over the pipe (master → worker). */
+  applyRoleSwitch: (role: string, switchedBy: string) => Promise<{ ok: boolean; message: string }>;
 }
 
 export async function handlePipeRequest(
@@ -51,6 +53,12 @@ export async function handlePipeRequest(
       s.abort();
       s.setPendingMachineRequest(null);
       return { type: 'ok', id: req.id };
+    case 'role': {
+      const res = await s.applyRoleSwitch(req.role, s.paneId || 'pipe');
+      return res.ok
+        ? { type: 'ok', id: req.id, detail: res.message }
+        : { type: 'error', id: req.id, message: res.message };
+    }
     case 'reply': {
       s.port.current?.applyReplySession(req.paneId, req.sessionFile);
       // B8: the claim key is `${paneId}:${requestId}` and the poll loop claims exactly the same shape

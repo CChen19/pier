@@ -30,6 +30,7 @@ test('handlePipeRequest: ping / prompt / steer follow_up / interrupt', async () 
     sendUserMessageAs: async (content: string, mode: 'steer' | 'followUp') => { asMsgs.push({ text: content, mode }); },
     abort: () => { aborted++; },
     setPendingMachineRequest: (req: MachineRequest | null) => { state.pending = req; },
+    applyRoleSwitch: async () => ({ ok: true, message: 'stub' }),
   };
 
   assert.deepEqual(await handlePipeRequest({ type: 'ping', id: '1' }, session), {
@@ -73,6 +74,7 @@ test('handlePipeRequest: reply binds port, claims once, delivers notice', async 
     sendUserMessageAs: async () => {},
     abort: () => {},
     setPendingMachineRequest: () => {},
+    applyRoleSwitch: async () => ({ ok: true, message: 'stub' }),
   };
 
   const req = {
@@ -113,6 +115,7 @@ test('handlePipeRequest reply (B8): claim key 与 poll-loop 同源（子进程�
     sendUserMessageAs: async () => {},
     abort: () => {},
     setPendingMachineRequest: (req: MachineRequest | null) => { state.pending = req; },
+    applyRoleSwitch: async () => ({ ok: true, message: 'stub' }),
   };
 
   // 父进程（poll-loop 侧）发送的 id：`prompt-<taskId>`（core/subagent.ts:976）
@@ -130,4 +133,40 @@ test('handlePipeRequest reply (B8): claim key 与 poll-loop 同源（子进程�
   assert.deepEqual(claims, [`p2:${sentId}`]);
   // poll-loop 侧的 key 形状：`${paneId}:${requestId}`（subagent-poll-loop.ts:217）
   assert.equal(`${'p2'}:${requestIdForPoller}`, claims[0]);
+});
+
+// P0 (RFC §4.4): master → worker 的 role 切换走 pipe。ok/error 语义与混合版本对端（旧 worker
+// 答 unknown type role）都必须如实回传，master 侧据此向模型报告。
+test('handlePipeRequest: role 切换 ok/error 如实回传', async () => {
+  const calls: Array<{ role: string; by: string }> = [];
+  const okSession = {
+    paneId: 'w1',
+    port: emptySubagentPortBox(),
+    claimSettleNotice: () => true,
+    deliverNotice: async () => {},
+    sendUserMessageIn: async () => {},
+    sendUserMessageAs: async () => {},
+    abort: () => {},
+    setPendingMachineRequest: () => {},
+    applyRoleSwitch: async (role: string, by: string) => {
+      calls.push({ role, by });
+      return { ok: true, message: 'role worker-default → reviewer (+bash)' };
+    },
+  };
+  assert.deepEqual(await handlePipeRequest({ type: 'role', id: 'r1', role: 'reviewer' }, okSession), {
+    type: 'ok',
+    id: 'r1',
+    detail: 'role worker-default → reviewer (+bash)',
+  });
+  assert.deepEqual(calls, [{ role: 'reviewer', by: 'w1' }], 'switchedBy = 目标 pane 的请求来源标识');
+
+  const errSession = {
+    ...okSession,
+    applyRoleSwitch: async () => ({ ok: false, message: 'Error: role "nope" unavailable: ROLE_NOT_FOUND' }),
+  };
+  assert.deepEqual(await handlePipeRequest({ type: 'role', id: 'r2', role: 'nope' }, errSession), {
+    type: 'error',
+    id: 'r2',
+    message: 'Error: role "nope" unavailable: ROLE_NOT_FOUND',
+  });
 });

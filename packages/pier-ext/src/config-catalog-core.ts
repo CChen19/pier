@@ -120,6 +120,7 @@ const ROLE_KNOBS: readonly ConfigKnob[] = [
   { plane: 'roles', key: 'version', kind: 'string', impact: 'Role profile version string', docRef: 'docs/sidebar-role-config.md' },
   { plane: 'roles', key: 'model', kind: 'string', impact: 'Dispatch routing: provider/model for panes spawned with this role', docRef: 'docs/sidebar-role-config.md' },
   { plane: 'roles', key: 'description', kind: 'string', impact: 'Human description shown in role listings', docRef: 'docs/sidebar-role-config.md' },
+  { plane: 'roles', key: 'guidelines', kind: 'string', impact: 'Per-role behavior constraints injected as a pier-role prompt section each turn (RFC rfc-pi-0.86-dynamic-tools §4.6)', docRef: 'docs/rfc-pi-0.86-dynamic-tools.md' },
   { plane: 'roles', key: 'manifest.tools', kind: 'string', impact: 'Visible tool names for the role', docRef: 'docs/sidebar-role-config.md' },
   { plane: 'roles', key: 'manifest.rules', kind: 'string', impact: 'Permission map: tool name → allow|ask|deny', docRef: 'docs/sidebar-role-config.md' },
   { plane: 'roles', key: 'manifest.unknownTools', kind: 'enum', impact: 'Stance for tools missing from manifest.tools: allow|deny', docRef: 'docs/sidebar-role-config.md' },

@@ -122,3 +122,35 @@ test('surface：hmr 真实时序——后置 disposeKey 不得杀死新世代（
   assert.equal(v1Fired, 1, '旧世代监听自挂载 v2 起已 no-op（不双触发）');
   assert.equal(v2Fired, 1, '新世代监听正常触发');
 });
+
+// P1（RFC docs/rfc-pi-0.86-dynamic-tools.md §5）：pi 0.86+ 的 on() 返回 unsubscribe。
+// 退休时真摘除——监听列表缩短，分发不再遍历死 handler；工具仍走墓碑（pi 无 unregisterTool）。
+test('surface：pi 0.86 unsubscribe——退休真摘除监听，列表缩短', async () => {
+  const base = fakePi();
+  const removed: string[] = [];
+  const pi = {
+    ...base,
+    on(event: string, handler: (...a: unknown[]) => unknown) {
+      base.on(event, handler);
+      return () => {
+        const list = base.listeners.get(event) ?? [];
+        base.listeners.set(event, list.filter((h) => h !== handler));
+        removed.push(event);
+      };
+    },
+  };
+  const s = new PiSurface(pi);
+  const scoped = s.forModule('core/a');
+  let fired = 0;
+  scoped.on('turn_start', () => { fired++; });
+  scoped.registerTool({ name: 't1', execute: async () => 'OK' });
+  emit(pi, 'turn_start');
+  assert.equal(fired, 1);
+  assert.deepEqual(removed, [], '存活期不提前摘除');
+
+  s.disposeModule('core/a');
+  assert.deepEqual(removed, ['turn_start'], '退休即调用 unsubscribe');
+  assert.deepEqual(pi.listeners.get('turn_start') ?? [], [], '监听列表真缩短');
+  const r = await callTool(pi, 't1') as { content: Array<{ text: string }> };
+  assert.match(r.content[0].text, /disposed/, '工具仍走墓碑 inert');
+});

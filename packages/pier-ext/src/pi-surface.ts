@@ -1,9 +1,10 @@
 /**
  * Proxy the pi ExtensionAPI registration surface (D79).
  *
- * pi exposes registration without unregister APIs: tools overwrite by name, but event
- * listeners accumulate. HMR therefore needs tombstoned, generation-scoped wrappers so
- * old listeners become inert while the latest generation remains active.
+ * pi 0.86+: `pi.on()` returns an unsubscribe function, so event handlers are truly removed
+ * when their generation retires (P1, RFC docs/rfc-pi-0.86-dynamic-tools.md §5). Tools and
+ * commands still have no unregister API: tools overwrite by name, so retired generations
+ * keep tombstoned wrappers there (inert execute / inert handler).
  *
  * Because HMR emits reload after mounting the replacement (d87), mounting a key retires
  * older generations immediately. The ledger then collects only generations registered
@@ -28,6 +29,21 @@ interface Group {
   alive: boolean;
   /** Monotonic mount generation used by the ledger disposer to determine its collection boundary. */
   epoch: number;
+  /** pi 0.86+ `pi.on()` unsubscribes for this generation; drained on retirement. */
+  unsubscribes: Array<() => void>;
+}
+
+/** Flip the tombstone and drain any native unsubscribes; retirement must never throw. */
+function retireGroup(group: Group): void {
+  group.alive = false;
+  for (const off of group.unsubscribes) {
+    try {
+      off();
+    } catch {
+      /* Best effort: a failing unsubscribe must not abort the rest of retirement. */
+    }
+  }
+  group.unsubscribes.length = 0;
 }
 
 /** Proxy for pi's registration surface (D79); non-registration methods (append/exec/setActiveTools, etc.) pass through raw. */
@@ -59,8 +75,8 @@ export class PiSurface<P extends object> {
   forModule(key: string): ScopedSurface {
     this.epochCounter += 1;
     const epoch = this.epochCounter;
-    for (const g of this.generations.get(key) ?? []) g.alive = false;
-    const group: Group = { alive: true, epoch };
+    for (const g of this.generations.get(key) ?? []) retireGroup(g);
+    const group: Group = { alive: true, epoch, unsubscribes: [] };
     this.generations.set(key, [group]);
     this.groups.set(key, group);
     if (this.ledger && !this.ledgerEntryEpoch.has(key)) {
@@ -72,7 +88,7 @@ export class PiSurface<P extends object> {
           key,
           (this.generations.get(key) ?? []).filter((g) => {
             if (g.epoch <= bound) {
-              g.alive = false;
+              retireGroup(g);
               return false;
             }
             return true;
@@ -105,8 +121,17 @@ export class PiSurface<P extends object> {
           .registerCommand?.(name, wrapped ? { ...options, handler: wrapped } : options);
       },
       on: (event, handler) => {
+        // The wrapper is a pass-through while alive and a tombstone after retirement; when pi
+        // (0.86+) returns an unsubscribe, retirement additionally removes the registration so
+        // HMR churn cannot grow the dispatch list. The `on` view of generic P is the same
+        // unchecked DI seam as registerTool/registerCommand above; its return is typeof-narrowed.
         const wrapped = (...a: unknown[]) => (group!.alive ? handler(...a) : undefined);
-        (this.pi as { on?: (e: string, h: (...a: unknown[]) => unknown) => void }).on?.(event, wrapped);
+        const unsubscribe: unknown = (
+          this.pi as { on?: (e: string, h: (...a: unknown[]) => unknown) => unknown }
+        ).on?.(event, wrapped);
+        if (typeof unsubscribe === 'function') {
+          group.unsubscribes.push(unsubscribe as () => void);
+        }
       },
     };
   }
@@ -114,7 +139,7 @@ export class PiSurface<P extends object> {
   /** Retire all generations for a key during explicit disposal; return false when the key is absent. */
   disposeModule(key: string): boolean {
     const had = this.groups.has(key);
-    for (const g of this.generations.get(key) ?? []) g.alive = false;
+    for (const g of this.generations.get(key) ?? []) retireGroup(g);
     this.generations.delete(key);
     this.groups.delete(key);
     this.ledgerEntryEpoch.delete(key);

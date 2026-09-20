@@ -45,7 +45,7 @@ pier 由**两个半区**组成，各装一处：
 ### 环境要求
 
 - Node ≥ 22
-- pi ≥ 0.84.4（`@earendil-works/pi-coding-agent`）
+- pi ≥ 0.86.0（`@earendil-works/pi-coding-agent`）——动态工具集（transcript 持久化的 `setActiveTools` delta）与角色切换依赖此版本
 - herdr ≥ 0.9.0（macOS / Linux / Windows；Windows 为 preview beta）
 
 ### 一键安装（推荐）

@@ -115,14 +115,26 @@ export function terminalsLines(data: unknown, theme: RenderTheme, expanded: bool
 }
 
 export function roleManifestLines(data: unknown, theme: RenderTheme): string[] {
-  const rec = (data ?? {}) as { role?: unknown; manifestVersion?: unknown; tools?: unknown; permissions?: unknown };
+  const rec = (data ?? {}) as {
+    role?: unknown;
+    manifestVersion?: unknown;
+    tools?: unknown;
+    permissions?: unknown;
+    origin?: unknown;
+    switchedBy?: unknown;
+  };
   const role = typeof rec.role === 'string' ? rec.role : '?';
   const version = typeof rec.manifestVersion === 'string' || typeof rec.manifestVersion === 'number' ? String(rec.manifestVersion) : '?';
   const tools = Array.isArray(rec.tools) ? rec.tools.length : 0;
   const gates = Object.values((rec.permissions ?? {}) as Record<string, unknown>)
     .filter((v) => v === 'deny' || v === 'ask').length;
   const tail = gates > 0 ? theme.fg('warning', ` · ${gates} gated`) : '';
-  return [`${theme.fg('accent', theme.bold('role'))} ${role} ${theme.fg('dim', `v${version} · ${tools} tools`)}${tail}`];
+  // P0: switch provenance — origin 'switch' marks a mid-session swap (vs the session_start anchor).
+  const switched =
+    rec.origin === 'switch'
+      ? theme.fg('accent', ` ⇄ ${typeof rec.switchedBy === 'string' && rec.switchedBy ? rec.switchedBy : '?'}`)
+      : '';
+  return [`${theme.fg('accent', theme.bold('role'))} ${role} ${theme.fg('dim', `v${version} · ${tools} tools`)}${tail}${switched}`];
 }
 
 export function approvalLines(data: unknown, theme: RenderTheme): string[] {
