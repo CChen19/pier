@@ -399,15 +399,18 @@ export default async function (pi: ExtensionAPI) {
       const branchEntries =
         (ctx as { sessionManager?: { getBranch?: () => readonly unknown[] } }).sessionManager?.getBranch?.() ?? [];
       const record = latestRoleManifestRecord(branchEntries);
-      // Only a switched role different from the current manifest is restored — the env value stays
-      // authoritative for unswitched sessions (and role files may have changed on disk since the
-      // switch, so the recorded tools/permissions are replayed verbatim).
-      if (record && record.origin === 'switch' && record.role !== roleState.manifest.role) {
+      // Restore whenever the branch point's LAST record names a different role — switch records
+      // AND plain anchors both carry the full manifest. The anchor case is the /tree path back to
+      // a pre-switch point: pi has already reverted the loadout there, so roleState must follow
+      // or the D77 prune below would intersect A∩B and silently drop the tools the switch added.
+      // Name equality alone (tools drift tolerated) keeps the env value authoritative on plain
+      // resume; role files may have changed on disk since the record, so replay is verbatim.
+      if (record && record.role !== roleState.manifest.role) {
         roleState.manifest = manifestFromRecord(record);
-        roleState.origin = 'switch';
+        roleState.origin = record.origin === 'switch' ? 'switch' : 'env';
         roleState.switchedBy = record.switchedBy ?? null;
         roleState.switchedAt = record.ts ?? null;
-        console.error(`[pi-herdr] role replay: ${record.role} (switchedBy ${record.switchedBy ?? '?'})`);
+        console.error(`[pi-herdr] role replay: ${record.role} (origin ${record.origin ?? 'env'}, switchedBy ${record.switchedBy ?? '?'})`);
       }
       // Change-only write: appending on every session_start would overwrite "last entry" with
       // the env value and break the replay above for resumed switched sessions.
