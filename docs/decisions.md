@@ -71,3 +71,5 @@
 | D103 | 能效多级配置与独立遥测闭环：支持环境变量覆盖、项目信任安全门控与细粒度 JSONL 审计流水 | `packages/pier-ext/src/efficiency-config-core.ts:368` |
 | D104 | 配置说明只读命令与 agent 引导式改配置（5 平面目录、生效值+来源、schema 漂移守卫） | `packages/pier-ext/src/config-catalog-core.ts:1` |
 | D105 | Pier 侧边栏 agent 视图不设 harness 过滤（`filter: null`，任何 agent 都显示），只保留 attention-first 排序：`agent.view.set` 全局替换 herdr 内置 Agents 投影，任何过滤都会静默隐藏未列入的 harness | `packages/pier-workbench/src/agent-view.ts:79` |
+| D106 | pi 0.86 基线升级：动态工具集走 transcript 持久化（`setActiveTools` delta 存活于 resume/branch），删除 feature-detect 兼容层；`pi.on()` 原生 unsubscribe 真摘除退休世代监听（tombstone 保留给 tool/command） | `packages/pier-ext/src/pi-surface.ts:1` |
+| D107 | 会话中角色切换（P0）：roleState 可变状态 + `/pier-role`（人，放宽需 confirm）+ pipe `role` 请求（master 自由）；切换以注册全集为论域重算 active（可找回被 D77 裁掉的工具）；resume 从最后一条 role-manifest entry 重放 gate manifest（变更才写防覆盖）；per-role `guidelines` 作为 `pier-role` prompt section 幂等注入 | `packages/pier-ext/src/role-state.ts:1` |

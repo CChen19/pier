@@ -45,7 +45,7 @@ pier ships as **two halves**, installed separately:
 ### Requirements
 
 - Node ≥ 22
-- pi ≥ 0.84.4 (`@earendil-works/pi-coding-agent`)
+- pi ≥ 0.86.0 (`@earendil-works/pi-coding-agent`) — dynamic toolset (transcript-backed `setActiveTools` deltas) and role switching require it
 - herdr ≥ 0.9.0 (macOS / Linux / Windows; Windows is preview beta)
 
 ### One-shot install (recommended)

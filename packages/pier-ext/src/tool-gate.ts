@@ -14,6 +14,8 @@ export interface RuntimeRoleManifest {
       mode?: 'serial' | 'parallel';
     };
   };
+  /** P0 per-role guidelines (RFC §4.6): injected as a `pier-role` prompt section each turn. */
+  guidelines?: string[];
 }
 
 /** Why: Preserve the established compatibility and safety behavior. */
@@ -25,6 +27,11 @@ export function parseRuntimeManifest(envValue: string | undefined): RuntimeRoleM
     // Why: Preserve the established compatibility and safety behavior (D82).
     if (m.unknownTools !== undefined && m.unknownTools !== 'allow' && m.unknownTools !== 'deny') {
       m.unknownTools = 'deny';
+    }
+    if (m.guidelines !== undefined) {
+      m.guidelines = Array.isArray(m.guidelines)
+        ? m.guidelines.filter((g) => typeof g === 'string' && g.trim() !== '')
+        : undefined;
     }
     return m;
   } catch {

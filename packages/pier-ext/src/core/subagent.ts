@@ -63,7 +63,7 @@ interface SubagentDeps {
 
 const SUBAGENT_DESCRIPTION = [
   'Delegate a self-contained subtask to an isolated subagent that runs in its own herdr pane as an interactive pi session (separate context window; it does NOT see this conversation). A human can also open that pane and talk to the subagent directly.',
-  '`action` (optional, default "spawn"): spawn | resume | list | send | interrupt | output.',
+  '`action` (optional, default "spawn"): spawn | resume | list | send | interrupt | output | role.',
   '[spawn] `description`: short display label for the pane; `prompt`: the COMPLETE task — include all needed context, since only the prompt reaches the subagent. The description also doubles as the todo-reconcile key: when delegating a todo entry, use the entry content WITHOUT its ` <sub>` marker as the description, and the entry is auto-completed when this subagent settles.',
   '[spawn] The subagent shares this workspace and works independently; the result is its final text answer.',
   '[spawn] Concurrent delegation is supported: several spawn calls in one message run in parallel (at most 4 at once). Use this for well-scoped, independent subtasks; do not delegate the current step itself.',
@@ -75,6 +75,7 @@ const SUBAGENT_DESCRIPTION = [
   '[list] no extra parameters: list background subagents with live state (running / idle), pane ids, last activity, role, and descriptions. Foreground one-shot panes are not listed.',
   '[send] `agentId` + `message`: follow-up to a background subagent. If working, delivered at next tool-call gap (steer, seconds); if idle, wakes a new turn. After settle, send to wake it; do not spawn a duplicate.',
   '[interrupt] `agentId`: abort the current turn (fire-and-return). The pane stays; you can send again.',
+  '[role] `agentId` + `role`: switch that worker\'s role profile mid-session (pi 0.86 transcript tool delta — the new toolset applies on its next request and survives resume). Same role resolution as spawn; the reply reports the tool diff. Use when a task outgrew its delegation (needs more tools) or should be narrowed.',
   '[output] `agentId` (required, the subagent pane id): view incremental output of a running or background subagent since the last output call. Text returned to the model is bounded (default 6000 chars) with status metadata (running/idle/blocked/settled), revision, truncated flag, and whether the buffer reset/scrolled (restart: true). Use this to observe subagent progress before settlement.',
 ].join(' ');
 
@@ -547,6 +548,43 @@ export default function subagentPlugin(ctx: Context): void {
         return toolError(`Error: failed to reach subagent ${entry.paneId}: ${(err as Error).message}`);
       }
   }
+  async function executeSubagentRole(params: Record<string, unknown> | undefined, toolCtx?: unknown) {
+      const rawId = String(params?.agentId ?? params?.taskId ?? '').trim();
+      const cwd = (toolCtx as { cwd?: string })?.cwd ?? process.cwd();
+      const roleName = String(params?.role ?? '').trim();
+      if (!roleName) {
+        return toolError('Error: action "role" requires a target profile in `role` (same resolution as spawn)');
+      }
+      const resolved = resolveSubEntry(rawId, cwd);
+      if ('error' in resolved) {
+        return toolError(resolved.error);
+      }
+      const entry = resolved.entry;
+      try {
+        // Same revival semantics as send: the pane is only a host, so a closed task comes back first.
+        if (entry.status === 'closed') {
+          await reviveEntry(entry);
+          subs.set(entry.paneId, entry);
+          persistSubs();
+        }
+        const ready = await waitSubReady(entry.cwd, entry.paneId);
+        if (!ready.ok) throw new Error(ready.message);
+        const res = await pipeRequestTo(entry.cwd, entry.paneId, {
+          type: 'role',
+          id: `role-${Date.now()}`,
+          role: roleName,
+        });
+        if (res.type !== 'ok') {
+          throw new Error(`pipe role rejected: ${res.type === 'error' ? res.message : 'unknown response'}`);
+        }
+        return {
+          content: [{ type: 'text', text: `Subagent ${entry.paneId}: ${res.detail ?? `switched to ${roleName}`}` }],
+          details: { paneId: entry.paneId, role: roleName },
+        };
+      } catch (err) {
+        return toolError(`Error: failed to switch subagent ${entry.paneId} to role ${roleName}: ${(err as Error).message}`);
+      }
+  }
   const outputActionDeps = {
     client,
     resolveEntry: (rawId: string, cwd: string) => resolveSubEntry(rawId, cwd),
@@ -576,7 +614,7 @@ export default function subagentPlugin(ctx: Context): void {
     label: 'Subagent',
     // B4: the model picks tools from the system prompt's snippet/guideline surface; this tool is the
     // one place where delegation decisions are made, so state them here rather than hoping for recall.
-    promptSnippet: 'subagent: delegate a self-contained task to a pi worker pane (spawn/isolate/background/send/output/interrupt/resume/list).',
+    promptSnippet: 'subagent: delegate a self-contained task to a pi worker pane (spawn/isolate/background/send/output/interrupt/resume/list/role).',
     promptGuidelines: [
       'Use subagent when the work is self-contained and the result is what matters: pipelines that would flood this context, long builds/test runs, or independent parts of a bigger change that can proceed in parallel.',
       'Prefer run_in_background: true for work that will not finish in a few tool calls, then collect with action: "output" — a foreground subagent blocks this turn.',
@@ -594,17 +632,18 @@ export default function subagentPlugin(ctx: Context): void {
         Type.Literal('send'),
         Type.Literal('interrupt'),
         Type.Literal('output'),
+        Type.Literal('role'),
       ], { description: 'Operation to perform (default: spawn)' })),
       description: Type.Optional(Type.String({ description: '[spawn] Short label for this subtask (pane title)' })),
       prompt: Type.Optional(Type.String({ description: '[spawn] The complete self-contained task for the subagent' })),
       run_in_background: Type.Optional(Type.Boolean({ description: '[spawn] Return immediately with an agentId; the subagent keeps running in its own pane (default false)' })),
       cwd: Type.Optional(Type.String({ description: '[spawn] Working directory for the subagent (absolute, or relative to this workspace). Use it to delegate into a git worktree: panes group by worktree — same checkout as you share your tab; a separate worktree gets its own tab named after the worktree directory. Create worktrees yourself with git worktree add. Use isolate:true instead when you want a FRESH worktree created for this task rather than targeting an existing one' })),
       isolate: Type.Optional(Type.Boolean({ description: '[spawn] Create a fresh git worktree and run the subagent there. Use when the task writes files heavily and independently — in parallel with your own edits or other workers\' — or needs its own clean, reviewable diff. For read-mostly or sequential helper work omit it (shared checkout, writes guarded by the write-lock); use `cwd` only to target an existing directory/worktree (e.g. a retained pier worktree). Mechanics: branch pier/<slug> from your HEAD under ~/.herdr/worktrees/<repo>/; its writes cannot conflict with your checkout; panes group into a tab named after the worktree; the prompt is prefixed with commit discipline (commit to its branch, never push); on settle you get a diff summary. Review with git log/diff HEAD..<branch>, merge with git merge --no-ff <branch>; once merged and clean the worktree auto-removes (branch kept). Mutually exclusive with cwd' })),
-      role: Type.Optional(Type.String({ description: '[spawn] Role label or profile name. When role matches a profile (searched: workspace .pi-herdr/roles/ → user-global ~/.pi/agent/herdr-pi/roles/ → builtin), the worker toolset becomes the composed manifest. Unknown role names remain display labels only.' })),
+      role: Type.Optional(Type.String({ description: '[spawn|role] Role label or profile name. [spawn] When role matches a profile (searched: workspace .pi-herdr/roles/ → user-global ~/.pi/agent/herdr-pi/roles/ → builtin), the worker toolset becomes the composed manifest. Unknown role names remain display labels only. [role] Target profile for the mid-session switch' })),
       tab: Type.Optional(Type.String({ description: '[spawn] Name of a task tab to place the subagent into (join if exists, otherwise create). Default placement groups by git worktree.' })),
       allowed_tools: Type.Optional(Type.Array(Type.String(), { description: '[spawn] Additional tools for role composition (union with role baseline)' })),
       taskId: Type.Optional(Type.String({ description: '[resume] The task id to revive from the delegation ledger' })),
-      agentId: Type.Optional(Type.String({ description: '[send|interrupt|output] The subagent id (herdr pane id)' })),
+      agentId: Type.Optional(Type.String({ description: '[send|interrupt|output|role] The subagent id (herdr pane id)' })),
       message: Type.Optional(Type.String({ description: '[send] The follow-up message' })),
       max_chars: Type.Optional(Type.Integer({ description: '[output] Maximum characters of output delta to return (default 6000, 100-16000)' })),
     }),
@@ -624,8 +663,9 @@ export default function subagentPlugin(ctx: Context): void {
       if (action === 'send') return executeSubagentSend(params, toolCtx);
       if (action === 'interrupt') return executeSubagentInterrupt(params, toolCtx);
       if (action === 'output') return executeSubagentOutput(params, toolCtx, outputActionDeps);
+      if (action === 'role') return executeSubagentRole(params, toolCtx);
       if (action !== 'spawn') {
-        return toolError(`Error: unknown action "${action}" (valid: spawn, resume, list, send, interrupt, output)`);
+        return toolError(`Error: unknown action "${action}" (valid: spawn, resume, list, send, interrupt, output, role)`);
       }
       return executeSubagentSpawn(params, toolCtx, onUpdate);
     },

@@ -22,6 +22,8 @@ export interface RoleManifest {
    */
   model?: string;
   description?: string;
+  /** P0 per-role guidelines (RFC §4.6): behavior constraints a tool set cannot express; injected as a prompt section. */
+  guidelines?: string[];
   manifest: {
     /** Baseline tools (non-empty; must include todo_write + ask_user_question for coordination). */
     tools: string[];
@@ -65,7 +67,7 @@ export function validateRoleManifest(input: unknown): ValidateResult {
   }
 
   /* ── Top-level keys ── */
-  const KNOWN_TOP = new Set(['role', 'version', 'model', 'description', 'manifest', 'services']);
+  const KNOWN_TOP = new Set(['role', 'version', 'model', 'description', 'guidelines', 'manifest', 'services']);
   for (const k of Object.keys(input)) {
     if (!KNOWN_TOP.has(k)) issues.push(`未知顶层键 "${k}"（契约外字段，检查拼写）`);
   }
@@ -90,6 +92,19 @@ export function validateRoleManifest(input: unknown): ValidateResult {
   /* ── optional description ── */
   if (input.description !== undefined && typeof input.description !== 'string') {
     issues.push('description 必须是字符串');
+  }
+
+  /* ── optional guidelines (P0: per-role behavior constraints) ── */
+  if (input.guidelines !== undefined) {
+    if (!Array.isArray(input.guidelines)) {
+      issues.push('guidelines 必须是字符串数组');
+    } else if (input.guidelines.length === 0) {
+      issues.push('guidelines 为空数组时请直接省略该字段');
+    } else if (!input.guidelines.every((g) => typeof g === 'string' && g.trim() !== '')) {
+      issues.push('guidelines 的每一项必须是非空字符串');
+    } else if (input.guidelines.length > 20) {
+      issues.push('guidelines 最多 20 条（prompt 预算保护）');
+    }
   }
 
   /* ── manifest ── */

@@ -26,6 +26,12 @@ export class ManifestError extends Error {
   }
 }
 
+/** Return contract of composeForRole: the role profile plus the composed effective manifest. */
+export interface ComposedForRole {
+  role: RoleManifest;
+  manifest: ComposedManifest;
+}
+
 export function composeManifest(sources: ManifestSources): ComposedManifest {
   const baseline = sources.roleBaseline.filter((t): t is string => typeof t === 'string' && t.trim() !== '');
   if (baseline.length === 0) {
@@ -75,7 +81,7 @@ export function composeForRole(
   roleName: string,
   modelSuggested: readonly string[],
   opts?: { loadRole?: typeof loadRoleConfig; loadRoleOpts?: Parameters<typeof loadRoleConfig>[1] },
-): { role: RoleManifest; manifest: ComposedManifest } {
+): ComposedForRole {
   const load = opts?.loadRole ?? loadRoleConfig;
   const role = load(roleName, opts?.loadRoleOpts);
   const manifest = composeManifest({
