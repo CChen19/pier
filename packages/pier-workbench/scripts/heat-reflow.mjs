@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+process.exit(0); /* pier-noheat */
 /**
  * M23: pane.focused / created / closed / agent_status_changed -> focus heat reflow.
  * Bypasses cordis: user-mode plugin checkout does not have @deepseek-ai/cordis.
